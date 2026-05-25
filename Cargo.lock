@@ -2719,6 +2719,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "td-db"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "migration",
+ "sea-orm",
+ "sea-orm-migration",
+ "serde",
+ "serde_json",
+ "td-config",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3057,13 +3073,13 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
- "migration",
  "mime_guess",
  "rust-embed",
  "sea-orm",
  "serde",
  "serde_json",
  "td-config",
+ "td-db",
  "tokio",
  "tower",
  "tower-http",

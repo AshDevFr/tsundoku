@@ -34,5 +34,4 @@ config/tsundoku.local.*
 .claude/local/
 
 # Generated frontend bits
-web/openapi.json
 web/coverage/

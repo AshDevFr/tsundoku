@@ -18,7 +18,7 @@ embed-frontend = ["dep:rust-embed", "dep:mime_guess"]
 
 [dependencies]
 td-config = { path = "../td-config" }
-migration = { path = "../../migration" }
+td-db = { path = "../td-db" }
 
 tokio.workspace = true
 axum.workspace = true

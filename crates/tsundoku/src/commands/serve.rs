@@ -3,15 +3,15 @@ use std::sync::Arc;
 
 use anyhow::Context;
 
-use crate::{api, db};
+use crate::api;
 
 pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     let cfg = td_config::load(&config_path)
         .with_context(|| format!("loading config from {}", config_path.display()))?;
     super::init_tracing(&cfg);
 
-    let db = db::connect(&cfg).await?;
-    db::run_migrations(&db).await?;
+    let db = td_db::connect(&cfg).await?;
+    td_db::run_migrations(&db).await?;
 
     let state = Arc::new(api::AppState { db });
     let app = api::router(state, &cfg);

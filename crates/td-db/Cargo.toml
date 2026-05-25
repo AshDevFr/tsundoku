@@ -1,0 +1,22 @@
+[package]
+name = "td-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Storage layer for tsundoku: SQLite connection helper, sea-orm entities, repositories"
+
+[dependencies]
+td-config = { path = "../td-config" }
+migration = { path = "../../migration" }
+
+sea-orm.workspace = true
+sea-orm-migration.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

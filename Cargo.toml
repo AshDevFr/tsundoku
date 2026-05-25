@@ -2,6 +2,7 @@
 members = [
     "crates/tsundoku",
     "crates/td-config",
+    "crates/td-db",
     "migration",
 ]
 resolver = "2"

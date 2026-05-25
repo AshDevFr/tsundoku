@@ -1,6 +1,5 @@
 mod api;
 mod commands;
-mod db;
 
 use std::path::PathBuf;
 
