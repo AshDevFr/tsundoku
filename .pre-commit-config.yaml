@@ -1,0 +1,35 @@
+# Pre-commit hooks for tsundoku
+# Install with: make setup-hooks (or: pre-commit install)
+# Run manually: pre-commit run --all-files
+
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: Rust format
+        entry: cargo fmt --
+        language: system
+        types: [rust]
+        pass_filenames: true
+
+      - id: cargo-clippy
+        name: Rust clippy (warnings only)
+        entry: bash -c 'cargo clippy --workspace --all-targets -- -W clippy::all || true'
+        language: system
+        types: [rust]
+        pass_filenames: false
+        verbose: true
+
+      - id: openapi-sync
+        name: Check OpenAPI files are in sync
+        entry: ./scripts/check-openapi-sync.sh
+        language: script
+        files: ^(crates/.*\.rs|web/openapi\.json|web/src/types/api\.generated\.ts)$
+        pass_filenames: false
+
+      - id: frontend-lint-fix
+        name: Fix frontend lint issues
+        entry: make frontend-lint-fix
+        language: system
+        files: ^web/.*$
+        pass_filenames: false

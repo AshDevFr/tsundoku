@@ -1,0 +1,463 @@
+# Unified CI/CD workflow for tsundoku
+#
+# Based on cargo-dist with custom additions for testing, linting, frontend, and Docker.
+#
+# Triggers:
+# - Push to main: test, lint, build artifacts, push Docker with 'main' tag
+# - Push version tag: test, lint, build artifacts, push Docker with version tags, create GitHub release
+
+name: Build
+
+permissions:
+  contents: write
+  packages: write
+  attestations: write
+  id-token: write
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "**[0-9]+.[0-9]+.[0-9]+*"
+
+# Cancel in-progress runs for the same branch/tag
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Build test binaries and create a nextest archive
+  build-tests:
+    name: Build Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_VERSION: test
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Build and archive tests
+        run: cargo nextest archive --workspace --archive-file nextest-archive.tar.zst
+      - name: Upload test archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive
+          path: nextest-archive.tar.zst
+          retention-days: 1
+
+  # Run tests in parallel partitions
+  test:
+    name: Test (${{ matrix.partition }}/5)
+    needs: build-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+      - name: Download test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: nextest-archive
+      - name: Run tests (partition ${{ matrix.partition }}/5)
+        run: cargo nextest run --archive-file nextest-archive.tar.zst --partition hash:${{ matrix.partition }}/5
+
+  # fmt + clippy
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_VERSION: lint
+      RUSTC_WRAPPER: sccache
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy check
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # Frontend lint + tests + build (also publishes web/dist as an artifact so the
+  # cargo-dist build job can embed it).
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        working-directory: web
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install
+      - name: Lint check
+        working-directory: web
+        run: npm run lint
+      - name: Run tests
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          command: cd web && npm run test:run
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist
+          retention-days: 1
+
+  # Run 'dist plan' (or 'dist host create' for tags) to determine the matrix
+  plan:
+    name: Plan
+    needs: [test, lint, frontend]
+    runs-on: ubuntu-22.04
+    outputs:
+      val: ${{ steps.plan.outputs.manifest }}
+      tag: ${{ steps.info.outputs.tag }}
+      tag-flag: ${{ steps.info.outputs.tag-flag }}
+      publishing: ${{ steps.info.outputs.publishing }}
+      is-release: ${{ steps.info.outputs.is-release }}
+      version: ${{ steps.info.outputs.version }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Determine build info
+        id: info
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG_NAME="${{ github.ref_name }}"
+            VERSION="${TAG_NAME#v}"
+            echo "is-release=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+            echo "tag-flag=--tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+            echo "publishing=true" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "is-release=false" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "tag-flag=" >> "$GITHUB_OUTPUT"
+            echo "publishing=true" >> "$GITHUB_OUTPUT"
+            echo "version=main" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install dist
+        shell: bash
+        run: "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh"
+      - name: Upload cached dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin/dist
+          retention-days: 1
+      - name: Run dist plan
+        id: plan
+        shell: bash
+        run: |
+          if [[ "${{ steps.info.outputs.is-release }}" == "true" ]]; then
+            dist host --steps=create --tag=${{ steps.info.outputs.tag }} --output-format=json > plan-dist-manifest.json
+          else
+            dist plan --output-format=json > plan-dist-manifest.json
+          fi
+          echo "dist ran successfully"
+          cat plan-dist-manifest.json
+          echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
+      - name: Upload dist-manifest.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-plan-dist-manifest
+          path: plan-dist-manifest.json
+          retention-days: 1
+
+  # Build platform-specific binaries (matrix driven by `dist plan`)
+  build-local-artifacts:
+    name: build-local-artifacts (${{ join(matrix.targets, ', ') }})
+    needs:
+      - plan
+      - frontend
+    if: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix.include != null && (needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload') }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+    permissions:
+      "attestations": "write"
+      "contents": "read"
+      "id-token": "write"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Install dist
+        run: ${{ matrix.install_dist.run }}
+      - name: Fetch local artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: target/distrib/
+          merge-multiple: true
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+      - name: Build artifacts
+        run: |
+          dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
+          echo "dist ran successfully"
+      - name: Attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "target/distrib/*${{ join(matrix.targets, ', ') }}*"
+      - id: cargo-dist
+        name: Post-build
+        shell: bash
+        run: |
+          echo "paths<<EOF" >> "$GITHUB_OUTPUT"
+          dist print-upload-files-from-manifest --manifest dist-manifest.json >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-local-${{ join(matrix.targets, '_') }}
+          path: |
+            ${{ steps.cargo-dist.outputs.paths }}
+            ${{ env.BUILD_MANIFEST_NAME }}
+          retention-days: 5
+
+  # Build platform-agnostic artifacts (installers, checksums, etc.)
+  build-global-artifacts:
+    needs:
+      - plan
+      - build-local-artifacts
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install cached dist
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin/
+      - name: Setup dist
+        run: |
+          chmod +x ~/.cargo/bin/dist
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Fetch local artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: target/distrib/
+          merge-multiple: true
+      - id: cargo-dist
+        shell: bash
+        run: |
+          dist build ${{ needs.plan.outputs.tag-flag }} --output-format=json "--artifacts=global" > dist-manifest.json
+          echo "dist ran successfully"
+
+          echo "paths<<EOF" >> "$GITHUB_OUTPUT"
+          jq --raw-output ".upload_files[]" dist-manifest.json >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-build-global
+          path: |
+            ${{ steps.cargo-dist.outputs.paths }}
+            ${{ env.BUILD_MANIFEST_NAME }}
+          retention-days: 5
+
+  # Build and push multi-arch Docker image using cross-compilation
+  # (Dockerfile.cross cross-compiles ARM on x86 - no QEMU emulation)
+  docker:
+    name: Docker
+    needs: [test, lint, frontend]
+    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Determine build info
+        id: info
+        run: |
+          echo "DOCKER_REGISTRY=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "is-release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is-release=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Docker meta (release)
+        if: ${{ steps.info.outputs.is-release == 'true' }}
+        id: meta-release
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+            type=sha,prefix=sha-
+      - name: Docker meta (main)
+        if: ${{ steps.info.outputs.is-release == 'false' }}
+        id: meta-main
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=main
+            type=raw,value=latest
+            type=sha,prefix=sha-
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.cross
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.info.outputs.is-release == 'true' && steps.meta-release.outputs.tags || steps.meta-main.outputs.tags }}
+          labels: ${{ steps.info.outputs.is-release == 'true' && steps.meta-release.outputs.labels || steps.meta-main.outputs.labels }}
+          cache-from: type=registry,ref=ghcr.io/${{ env.DOCKER_REGISTRY }}-buildcache:latest
+          cache-to: type=registry,ref=ghcr.io/${{ env.DOCKER_REGISTRY }}-buildcache:latest,mode=max
+
+  # Create GitHub Release (only for tags)
+  host:
+    name: Release
+    needs:
+      - plan
+      - build-local-artifacts
+      - build-global-artifacts
+      - docker
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.is-release == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    runs-on: ubuntu-22.04
+    outputs:
+      val: ${{ steps.host.outputs.manifest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install cached dist
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin/
+      - name: Setup dist
+        run: |
+          chmod +x ~/.cargo/bin/dist
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Fetch artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: target/distrib/
+          merge-multiple: true
+      - id: host
+        shell: bash
+        run: |
+          dist host ${{ needs.plan.outputs.tag-flag }} --steps=upload --steps=release --output-format=json > dist-manifest.json
+          echo "artifacts uploaded and released successfully"
+          cat dist-manifest.json
+          echo "manifest=$(jq -c "." dist-manifest.json)" >> "$GITHUB_OUTPUT"
+      - name: Upload dist-manifest.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-dist-manifest
+          path: dist-manifest.json
+          retention-days: 5
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: artifacts
+          merge-multiple: true
+      - name: Cleanup
+        run: |
+          rm -f artifacts/*-dist-manifest.json
+      - name: Create GitHub Release
+        env:
+          PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
+          ANNOUNCEMENT_TITLE: "${{ fromJson(steps.host.outputs.manifest).announcement_title }}"
+          ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
+          RELEASE_COMMIT: "${{ github.sha }}"
+        run: |
+          echo "$ANNOUNCEMENT_BODY" > "$RUNNER_TEMP/notes.txt"
+
+          gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG \
+            --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+
+  # Clean up intermediate artifacts that are no longer needed
+  cleanup:
+    name: Cleanup
+    needs:
+      - plan
+      - build-local-artifacts
+      - build-global-artifacts
+      - host
+      - docker
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete intermediate artifacts
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            nextest-archive
+            frontend-dist
+            cargo-dist-cache
+            artifacts-plan-dist-manifest
