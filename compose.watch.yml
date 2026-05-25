@@ -1,0 +1,61 @@
+# Docker Compose with watch mode for development
+# Usage: docker compose -f docker-compose.yml -f compose.watch.yml --profile dev watch
+
+services:
+  tsundoku-dev:
+    develop:
+      watch:
+        - action: sync
+          path: ./crates
+          target: /app/crates
+          ignore:
+            - "**/*.swp"
+            - "**/*.tmp"
+
+        - action: sync
+          path: ./migration
+          target: /app/migration
+          ignore:
+            - "**/*.swp"
+            - "**/*.tmp"
+
+        - action: sync
+          path: ./Cargo.toml
+          target: /app/Cargo.toml
+
+        - action: sync
+          path: ./Cargo.lock
+          target: /app/Cargo.lock
+
+        - action: rebuild
+          path: ./Dockerfile.dev
+
+  frontend-dev:
+    develop:
+      watch:
+        - action: sync
+          path: ./web/src
+          target: /app/src
+          ignore:
+            - "**/*.swp"
+            - "**/*.tmp"
+
+        - action: sync
+          path: ./web/public
+          target: /app/public
+
+        - action: sync
+          path: ./web/vite.config.ts
+          target: /app/vite.config.ts
+
+        - action: sync
+          path: ./web/tsconfig.json
+          target: /app/tsconfig.json
+
+        - action: sync+restart
+          path: ./web/package.json
+          target: /app/package.json
+
+        - action: sync+restart
+          path: ./web/package-lock.json
+          target: /app/package-lock.json

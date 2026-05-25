@@ -1,0 +1,52 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# Frontend deps and build output (the image rebuilds these in a dedicated stage)
+web/node_modules/
+web/dist/
+web/.vite/
+web/coverage/
+
+# Local-only docs and scratch (hybrid pattern)
+.tsundoku/
+
+# Runtime data and logs
+*.db
+*.db-shm
+*.db-wal
+data/
+docker/data/
+*.log
+logs/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Docker files (avoid recursion)
+Dockerfile*
+docker-compose*.yml
+compose.*.yml
+.dockerignore
+
+# Docs (not needed in the image)
+*.md
+!README.md
+
+# Dev tooling and local config (mounted, not baked in)
+Makefile
+config/tsundoku.toml
+config/tsundoku.yaml
+config/tsundoku.local.*
+
+# IDE / OS / agent state
+.vscode/
+.idea/
+*.swp
+*.tmp
+.DS_Store
+.claude/
+.playwright-mcp/

@@ -1,0 +1,70 @@
+services:
+  # Production app
+  tsundoku:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tsundoku
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config:/app/config:ro
+      - ./docker/data:/app/data:rw
+    environment:
+      RUST_LOG: info
+    restart: unless-stopped
+    profiles:
+      - prod
+    networks:
+      - tsundoku-net
+
+  # Dev backend (cargo watch hot reload)
+  tsundoku-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: tsundoku-dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app
+      - cargo_cache:/usr/local/cargo/registry
+      - target_cache:/app/target
+      - ./config:/app/config:ro
+      - ./docker/data:/app/data:rw
+    environment:
+      RUST_BACKTRACE: "1"
+      RUST_LOG: debug
+    profiles:
+      - dev
+    networks:
+      - tsundoku-net
+
+  # Dev frontend (Vite dev server with HMR; proxies to backend)
+  frontend-dev:
+    image: node:22-alpine
+    container_name: tsundoku-frontend-dev
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/app
+      - frontend_node_modules:/app/node_modules
+    environment:
+      VITE_API_URL: http://tsundoku-dev:8080
+    depends_on:
+      - tsundoku-dev
+    profiles:
+      - dev
+    networks:
+      - tsundoku-net
+
+volumes:
+  cargo_cache:
+  target_cache:
+  frontend_node_modules:
+
+networks:
+  tsundoku-net:
+    driver: bridge

@@ -1,0 +1,131 @@
+# Cross-compilation Dockerfile for tsundoku
+#
+# Builds ARM64 and AMD64 images efficiently by:
+#   1. Always running the Rust compiler on x86_64 (native speed)
+#   2. Cross-compiling to the target architecture
+#   3. Only the final runtime stage uses the target architecture
+#
+# Avoids QEMU emulation of the Rust toolchain, which is 10-50x slower.
+#
+# Use this when GitHub Actions' native ARM runners are not available to you,
+# or when you want a single workflow that produces both architectures.
+#
+# Usage:
+#   docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.cross .
+
+# =============================================================================
+# Stage 1: Build frontend (pinned to x86_64)
+# =============================================================================
+FROM --platform=linux/amd64 node:22-alpine AS frontend-builder
+WORKDIR /web
+
+COPY web/package.json web/package-lock.json* ./
+RUN npm install
+
+COPY web/ ./
+RUN npm run build
+
+# =============================================================================
+# Stage 2: Rust toolchain with musl cross-compilers (always x86_64)
+# =============================================================================
+FROM --platform=linux/amd64 rust:1.95-bookworm AS chef
+
+RUN apt-get update && \
+    apt-get install -y \
+        build-essential \
+        pkg-config \
+        curl \
+        xz-utils \
+        clang && \
+    rm -rf /var/lib/apt/lists/*
+
+# musl.cc blocks GitHub Actions IPs, so we pull the toolchains from the
+# distribution-mirrored muslcc Docker images instead.
+COPY --from=muslcc/i686:x86_64-linux-musl /  /opt/x86_64-linux-musl-cross/
+COPY --from=muslcc/i686:aarch64-linux-musl / /opt/aarch64-linux-musl-cross/
+RUN ln -s /opt/x86_64-linux-musl-cross/bin/gcc  /usr/local/bin/x86_64-linux-musl-gcc && \
+    ln -s /opt/x86_64-linux-musl-cross/bin/g++  /usr/local/bin/x86_64-linux-musl-g++ && \
+    ln -s /opt/x86_64-linux-musl-cross/bin/ar   /usr/local/bin/x86_64-linux-musl-ar && \
+    ln -s /opt/aarch64-linux-musl-cross/bin/gcc /usr/local/bin/aarch64-linux-musl-gcc && \
+    ln -s /opt/aarch64-linux-musl-cross/bin/g++ /usr/local/bin/aarch64-linux-musl-g++ && \
+    ln -s /opt/aarch64-linux-musl-cross/bin/ar  /usr/local/bin/aarch64-linux-musl-ar
+
+RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+
+RUN mkdir -p /root/.cargo && \
+    printf '[target.aarch64-unknown-linux-musl]\nlinker = "aarch64-linux-musl-gcc"\n\n[target.x86_64-unknown-linux-musl]\nlinker = "x86_64-linux-musl-gcc"\n' \
+    > /root/.cargo/config.toml
+
+RUN cargo install cargo-chef --locked
+WORKDIR /app
+
+# =============================================================================
+# Stage 3: Prepare recipe
+# =============================================================================
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# =============================================================================
+# Stage 4: Build dependencies + application
+# =============================================================================
+FROM chef AS builder
+
+ARG TARGETARCH
+
+COPY --from=planner /app/recipe.json recipe.json
+
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+        export CC=aarch64-linux-musl-gcc CXX=aarch64-linux-musl-g++ AR=aarch64-linux-musl-ar && \
+        export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc && \
+        cargo chef cook --release --target aarch64-unknown-linux-musl --features embed-frontend --recipe-path recipe.json; \
+    else \
+        export CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ AR=x86_64-linux-musl-ar && \
+        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc && \
+        cargo chef cook --release --target x86_64-unknown-linux-musl --features embed-frontend --recipe-path recipe.json; \
+    fi
+
+COPY . .
+COPY --from=frontend-builder /web/dist ./web/dist
+
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+        export CC=aarch64-linux-musl-gcc CXX=aarch64-linux-musl-g++ AR=aarch64-linux-musl-ar && \
+        export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc && \
+        cargo build --release --target aarch64-unknown-linux-musl --features embed-frontend && \
+        cp target/aarch64-unknown-linux-musl/release/tsundoku /app/tsundoku; \
+    else \
+        export CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ AR=x86_64-linux-musl-ar && \
+        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-musl-gcc && \
+        cargo build --release --target x86_64-unknown-linux-musl --features embed-frontend && \
+        cp target/x86_64-unknown-linux-musl/release/tsundoku /app/tsundoku; \
+    fi
+
+# =============================================================================
+# Stage 5: Runtime (uses target architecture)
+# =============================================================================
+FROM alpine:latest AS runtime
+
+RUN apk add --no-cache \
+    ca-certificates \
+    libgcc \
+    libstdc++ \
+    su-exec
+
+RUN addgroup -g 1000 tsundoku && \
+    adduser -D -u 1000 -G tsundoku tsundoku
+
+WORKDIR /app
+
+COPY --from=builder /app/tsundoku /usr/local/bin/tsundoku
+
+RUN mkdir -p /app/data /app/config && \
+    chown -R tsundoku:tsundoku /app && \
+    chmod 777 /app/data /app/config
+
+ENV PUID=1000
+ENV PGID=1000
+
+EXPOSE 8080
+USER tsundoku:tsundoku
+
+CMD ["tsundoku", "serve"]

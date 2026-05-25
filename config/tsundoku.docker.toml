@@ -1,0 +1,17 @@
+# Config used by the dev container (Dockerfile.dev / docker compose dev profile).
+# Binds all interfaces and writes the SQLite DB to the mounted /app/data volume.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[database]
+url = "sqlite:///app/data/tsundoku.db?mode=rwc"
+max_connections = 16
+
+[logging]
+level = "debug"
+json = false
+
+[api]
+docs = true

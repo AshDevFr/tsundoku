@@ -1,0 +1,28 @@
+# tsundoku configuration (example).
+#
+# Copy to config/tsundoku.toml and edit, or point --config at any path.
+# YAML is also supported (config/tsundoku.yaml) if you prefer it.
+#
+# Every value can be overridden by an environment variable using the
+# TSUNDOKU_ prefix and __ for nesting, e.g.:
+#   TSUNDOKU_SERVER__PORT=9000
+#   TSUNDOKU_DATABASE__URL=postgres://...
+
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[database]
+# SQLite (default). For Postgres use:
+#   url = "postgres://user:pass@localhost:5432/tsundoku"
+# and swap the sea-orm feature to sqlx-postgres in the workspace Cargo.toml.
+url = "sqlite://data/tsundoku.db?mode=rwc"
+max_connections = 16
+
+[logging]
+level = "info"
+json = false
+
+[api]
+# Mount the Scalar API docs UI at /docs
+docs = true

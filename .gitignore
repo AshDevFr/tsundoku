@@ -1,0 +1,38 @@
+# Build artifacts
+target/
+node_modules/
+dist/
+
+# Local-only docs and scratch (hybrid pattern)
+.tsundoku/
+
+# Data
+data/
+docker/data/
+*.db
+*.db-shm
+*.db-wal
+*.log
+logs/
+
+# Local config (committed via *.example.toml; *.docker.toml is also committed)
+tsundoku.toml
+tsundoku.yaml
+config/tsundoku.toml
+config/tsundoku.yaml
+config/tsundoku.local.*
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.tmp
+
+# Tooling
+.playwright-mcp/
+.claude/local/
+
+# Generated frontend bits
+web/openapi.json
+web/coverage/

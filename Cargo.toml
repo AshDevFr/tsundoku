@@ -1,0 +1,96 @@
+[workspace]
+members = [
+    "crates/tsundoku",
+    "crates/td-config",
+    "migration",
+]
+resolver = "2"
+default-members = ["crates/tsundoku"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Sylvain Cau <sylvain.cau@gmail.com>"]
+description = "Manga discovery service that polls sources and resolves releases to MangaBaka series"
+
+[workspace.dependencies]
+# Runtime
+tokio = { version = "1.52", features = ["full"] }
+async-trait = "0.1"
+futures-util = "0.3"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Errors and tracing
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Web framework
+# Real-time defaults to SSE (axum::response::sse). Add the "ws" feature only if
+# you specifically need WebSockets.
+axum = { version = "0.8", features = ["multipart"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+axum-extra = { version = "0.12", features = ["cookie"] }
+http-body-util = "0.1"
+
+# Database
+sea-orm = { version = "1.1", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
+sea-orm-migration = { version = "1.1", features = ["runtime-tokio-rustls"] }
+
+# CLI and config
+clap = { version = "4", features = ["derive"] }
+figment = { version = "0.10", features = ["toml", "yaml", "env"] }
+
+# OpenAPI
+utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.2"
+utoipa-scalar = { version = "0.3", features = ["axum"] }
+
+# HTTP client
+reqwest = { version = "0.13", features = ["json", "rustls-tls", "stream"] }
+
+# Common types
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+bytes = "1"
+
+# Scheduling
+tokio-cron-scheduler = "0.15"
+
+# Asset embedding (for the SPA)
+rust-embed = "8"
+mime_guess = "2"
+
+# Concurrent caches
+dashmap = "6"
+
+# Cryptography (optional, common enough to declare once)
+argon2 = "0.5"
+jsonwebtoken = "10"
+sha2 = "0.11"
+hmac = "0.13"
+base64 = "0.22"
+hex = "0.4"
+rand = "0.10"
+
+[workspace.metadata.dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+features = ["embed-frontend"]
+installers = ["shell", "powershell"]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+pr-run-mode = "plan"
+install-updater = false
+install-path = "CARGO_HOME"

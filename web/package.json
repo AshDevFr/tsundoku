@@ -1,0 +1,43 @@
+{
+  "name": "tsundoku-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:mock": "VITE_MOCK_API=true vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "vitest",
+    "test:run": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage",
+    "generate:types": "openapi-typescript ./openapi.json -o ./src/types/api.generated.ts"
+  },
+  "dependencies": {
+    "@mantine/core": "^9.2.0",
+    "@mantine/hooks": "^9.2.0",
+    "@mantine/notifications": "^9.2.0",
+    "@tanstack/react-query": "^5.100.0",
+    "@tanstack/react-router": "^1.170.0",
+    "openapi-fetch": "^0.17.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zustand": "^5.0.13"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
+    "@testing-library/jest-dom": "^6.9.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react-swc": "^4.3.1",
+    "jsdom": "^29.1.0",
+    "msw": "^2.14.0",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "~6.0.0",
+    "vite": "^8.0.0",
+    "vitest": "^4.1.0"
+  }
+}

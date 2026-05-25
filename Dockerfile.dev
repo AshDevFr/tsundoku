@@ -1,0 +1,59 @@
+# Development Dockerfile with hot reload (cargo-watch)
+
+FROM rust:1.95-alpine
+
+RUN apk add --no-cache \
+    pkgconf \
+    openssl-dev \
+    openssl-libs-static \
+    musl-dev \
+    build-base \
+    curl \
+    libstdc++ \
+    libgcc \
+    clang \
+    mold \
+    nodejs \
+    npm \
+    sqlite
+
+RUN cargo install cargo-watch cargo-nextest --locked
+
+WORKDIR /app
+
+# Copy workspace manifests for dependency caching
+COPY Cargo.toml Cargo.lock ./
+COPY migration/Cargo.toml ./migration/
+COPY crates/ ./crates/
+RUN find ./crates -mindepth 2 -maxdepth 2 -name "src" -prune -o -type d -print
+
+# Stub source files so the dependency layer can build
+RUN find ./crates -mindepth 1 -maxdepth 1 -type d | while read -r dir; do \
+        mkdir -p "$dir/src" && \
+        if [ -f "$dir/Cargo.toml" ] && grep -q "\[\[bin\]\]" "$dir/Cargo.toml"; then \
+            echo "fn main() {}" > "$dir/src/main.rs"; \
+        else \
+            : > "$dir/src/lib.rs"; \
+        fi; \
+    done && \
+    mkdir -p migration/src && \
+    echo "pub use sea_orm_migration::prelude::*; pub struct Migrator; impl MigratorTrait for Migrator { fn migrations() -> Vec<Box<dyn MigrationTrait>> { vec![] } }" > migration/src/lib.rs && \
+    cargo build && \
+    find ./crates -mindepth 2 -maxdepth 2 -name src -type d -exec rm -rf {} + && \
+    rm -rf migration/src && \
+    find target/debug/.fingerprint -name "tsundoku-*" -prune -exec rm -rf {} + 2>/dev/null || true
+
+# The real source is bind-mounted via docker compose; cargo watch picks up changes.
+EXPOSE 8080
+
+CMD ["cargo", "watch", \
+    "-w", "Cargo.toml", \
+    "-w", "Cargo.lock", \
+    "-w", "crates/", \
+    "-w", "migration/", \
+    "-i", "web/**", \
+    "-i", ".tsundoku/**", \
+    "-i", "*.md", \
+    "-i", "Dockerfile*", \
+    "-i", "docker-compose*.yml", \
+    "-x", "run -- serve --config /app/config/tsundoku.docker.toml"]
