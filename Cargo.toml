@@ -5,6 +5,8 @@ members = [
     "crates/td-db",
     "crates/td-metadata",
     "crates/td-metadata-mangabaka",
+    "crates/td-source",
+    "crates/td-source-nyaa",
     "migration",
 ]
 resolver = "2"

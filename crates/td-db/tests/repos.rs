@@ -450,6 +450,85 @@ async fn provider_cache_state_appends_and_returns_latest() {
 }
 
 #[tokio::test]
+async fn persist_discovered_upserts_release_and_attaches_formats() {
+    use chrono::{TimeZone, Utc};
+    use td_source::{DiscoveredRelease, ExternalLinks};
+
+    let db = fresh_db().await;
+    let release = DiscoveredRelease {
+        source_kind: "nyaa".into(),
+        source_name: "trusted".into(),
+        external_id: "2111533".into(),
+        title: "Some Series v01".into(),
+        link: "https://nyaa.si/view/2111533".into(),
+        magnet: Some("magnet:?xt=urn:btih:deadbeef".into()),
+        torrent_url: Some("https://nyaa.si/download/2111533.torrent".into()),
+        ddl_url: None,
+        info_hash: Some("deadbeef".into()),
+        size_bytes: Some(11_600_000),
+        files: vec![
+            "Some Series v01.cbz".into(),
+            "cover.jpg".into(),
+            "Some Series v02.cbz".into(),
+        ],
+        description_html: Some("<a href=\"https://anilist.co/manga/123\">AL</a>".into()),
+        external_links: ExternalLinks {
+            anilist: Some("https://anilist.co/manga/123".into()),
+            ..Default::default()
+        },
+        posted_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+    };
+
+    let id = releases_repo::persist_discovered(&db, &release, 1_700_000_100)
+        .await
+        .unwrap();
+    assert_eq!(id, "nyaa:trusted:2111533");
+
+    let got = releases_repo::find_by_id(&db, &id).await.unwrap().unwrap();
+    assert_eq!(got.title, "Some Series v01");
+    assert_eq!(got.source_kind, "nyaa");
+    assert_eq!(got.source_name, "trusted");
+    assert_eq!(got.external_id, "2111533");
+    assert_eq!(got.posted_at, 1_700_000_000);
+    assert_eq!(got.observed_at, 1_700_000_100);
+    assert_eq!(got.resolution_status, "unresolved");
+    assert!(
+        got.extracted_links_json
+            .as_deref()
+            .unwrap()
+            .contains("anilist.co/manga/123"),
+        "expected external_links json to include the anilist link; got {:?}",
+        got.extracted_links_json
+    );
+    let files_json = got.files_json.as_deref().unwrap();
+    assert!(files_json.contains("cover.jpg"));
+    assert!(files_json.contains("Some Series v01.cbz"));
+
+    // Format detector dropped cover.jpg and deduped the .cbz files.
+    let mut formats = releases_repo::list_formats(&db, &id).await.unwrap();
+    formats.sort();
+    assert_eq!(formats, vec!["cbz"]);
+
+    // Re-running with a refreshed title is a no-op on duplicates and an
+    // update on mutable columns.
+    let mut updated = release.clone();
+    updated.title = "Some Series v01 (Updated)".into();
+    let id2 = releases_repo::persist_discovered(&db, &updated, 1_700_000_500)
+        .await
+        .unwrap();
+    assert_eq!(id, id2);
+
+    let after = releases_repo::find_by_id(&db, &id).await.unwrap().unwrap();
+    assert_eq!(after.title, "Some Series v01 (Updated)");
+
+    // No duplicate rows or duplicate format rows.
+    let count = releases::Entity::find().all(&db).await.unwrap().len();
+    assert_eq!(count, 1);
+    let formats = releases_repo::list_formats(&db, &id).await.unwrap();
+    assert_eq!(formats.len(), 1);
+}
+
+#[tokio::test]
 async fn fts5_returns_series_matched_by_title_and_alternate_titles() {
     let db = fresh_db().await;
 

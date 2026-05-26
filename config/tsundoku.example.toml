@@ -51,3 +51,18 @@ api_base_url           = "https://api.mangabaka.dev"
 # offline_refresh_cron = "0 4 * * 0"          # weekly Sunday 04:00 UTC
 negative_cache_ttl_days = 7
 timeout_seconds        = 60
+
+# Discovery sources. Each entry is one polled instance. The `kind` field
+# picks the implementation; per-kind options live in the matching nested
+# block (e.g. [sources.nyaa]). v1 only ships kind = "nyaa".
+#
+# [[sources]]
+# kind    = "nyaa"
+# name    = "english-manga-trusted"
+# cron    = "0 */2 * * *"     # every 2 hours; only used by the scheduler
+# enabled = true
+#   [sources.nyaa]
+#   feed_url        = "https://nyaa.si/?page=rss&c=3_1&f=2"
+#   fetch_details   = false    # set true to enrich files + external links
+#   timeout_seconds = 30
+#   site_base_url   = "https://nyaa.si"

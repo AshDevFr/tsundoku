@@ -1,6 +1,7 @@
 mod api;
 mod commands;
 mod metadata;
+mod source_registry;
 
 use std::path::PathBuf;
 
@@ -41,6 +42,16 @@ enum Commands {
         #[arg(short, long)]
         provider: Option<String>,
     },
+    /// Run a one-shot poll against the configured discovery sources (or one
+    /// named source). Releases are persisted as `unresolved`; the
+    /// resolution pipeline runs separately.
+    Poll {
+        #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
+        config: PathBuf,
+        /// Source name to poll; omit to poll every enabled source.
+        #[arg(short, long)]
+        source: Option<String>,
+    },
     /// Write the OpenAPI specification to a file
     Openapi {
         #[arg(short, long, default_value = "web/openapi.json")]
@@ -57,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::RefreshMetadata { config, provider } => {
             commands::refresh_metadata::run(config, provider).await
         }
+        Commands::Poll { config, source } => commands::poll::run(config, source).await,
         Commands::Openapi { output } => commands::openapi::run(&output),
     }
 }

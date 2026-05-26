@@ -5,10 +5,98 @@ use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
 };
+use td_source::{DiscoveredRelease, detect_formats};
 
 use crate::entities::{release_formats, releases};
 
 pub use releases::Model;
+
+/// Compute the stable internal id for a release. The PRD lists
+/// `kind:name:external_id` as one acceptable shape; we use that so the id is
+/// human-readable in logs and round-trips with the source-side observation
+/// without a UUID lookup.
+pub fn id_for(source_kind: &str, source_name: &str, external_id: &str) -> String {
+    format!("{source_kind}:{source_name}:{external_id}")
+}
+
+/// Persist one [`DiscoveredRelease`] into the storage layer: upsert the
+/// `releases` row, then idempotently attach every detected format. Returns
+/// the internal `releases.id` so callers can chain into the resolution
+/// pipeline.
+///
+/// Idempotency: `releases` upserts on `(source_kind, external_id)` (already
+/// enforced by the schema's unique constraint), and `release_formats`
+/// upserts on its composite primary key. Re-running the poll on the same
+/// upstream is a no-op apart from refreshing the mutable columns (title,
+/// magnet, posted_at, size, ...).
+pub async fn persist_discovered(
+    db: &DatabaseConnection,
+    release: &DiscoveredRelease,
+    observed_at: i64,
+) -> Result<String> {
+    let id = id_for(
+        &release.source_kind,
+        &release.source_name,
+        &release.external_id,
+    );
+    let active = to_active_model(release, &id, observed_at)?;
+
+    // Both upsert and add_format are idempotent on their unique key, so a
+    // partial-failure recovery is a re-poll. The single-writer SQLite pool
+    // makes the interleaving here serial in practice.
+    upsert(db, active).await?;
+    for fmt in detect_formats(&release.files) {
+        add_format(db, &id, fmt.as_str()).await?;
+    }
+    Ok(id)
+}
+
+/// Map a [`DiscoveredRelease`] into the sea-orm ActiveModel used for upsert.
+/// Kept private — callers go through [`persist_discovered`] so the formats
+/// attach step is not accidentally skipped.
+fn to_active_model(
+    release: &DiscoveredRelease,
+    id: &str,
+    observed_at: i64,
+) -> Result<releases::ActiveModel> {
+    let extracted_links_json = if release.external_links.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&release.external_links)?)
+    };
+    let files_json = if release.files.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&release.files)?)
+    };
+
+    Ok(releases::ActiveModel {
+        id: Set(id.to_string()),
+        source_kind: Set(release.source_kind.clone()),
+        source_name: Set(release.source_name.clone()),
+        external_id: Set(release.external_id.clone()),
+        title: Set(release.title.clone()),
+        link: Set(release.link.clone()),
+        magnet: Set(release.magnet.clone()),
+        torrent_url: Set(release.torrent_url.clone()),
+        ddl_url: Set(release.ddl_url.clone()),
+        info_hash: Set(release.info_hash.clone()),
+        size_bytes: Set(release.size_bytes.map(|n| n as i64)),
+        files_json: Set(files_json),
+        description_html: Set(release.description_html.clone()),
+        extracted_links_json: Set(extracted_links_json),
+        posted_at: Set(release.posted_at.timestamp()),
+        observed_at: Set(observed_at),
+        series_id: Set(None),
+        resolution_path: Set(None),
+        resolution_confidence: Set(None),
+        resolution_status: Set("unresolved".into()),
+        resolution_attempts: Set(0),
+        last_resolve_attempt_at: Set(None),
+        volume_span_json: Set(None),
+        chapter_span_json: Set(None),
+    })
+}
 
 pub async fn upsert(db: &DatabaseConnection, model: releases::ActiveModel) -> Result<()> {
     releases::Entity::insert(model)

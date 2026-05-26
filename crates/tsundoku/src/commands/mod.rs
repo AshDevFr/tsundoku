@@ -1,5 +1,6 @@
 pub mod migrate;
 pub mod openapi;
+pub mod poll;
 pub mod refresh_metadata;
 pub mod serve;
 

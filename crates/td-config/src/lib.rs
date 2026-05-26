@@ -20,6 +20,11 @@ pub struct AppConfig {
     pub api: ApiConfig,
     pub metadata: MetadataConfig,
     pub providers: ProvidersConfig,
+    /// Configured discovery sources. Each entry is one instance (kind +
+    /// name + cron + per-kind options). Order is not significant; the
+    /// scheduler keys on `name`.
+    #[serde(default)]
+    pub sources: Vec<SourceConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,6 +236,59 @@ impl Default for MangabakaProviderConfig {
     }
 }
 
+/// One configured discovery source. The `kind` field is a discriminator the
+/// source registry uses to pick a constructor; per-kind options live in the
+/// optional nested blocks. v1 only ships `nyaa`; adding a new kind = adding
+/// an optional nested-options field below + a registry constructor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceConfig {
+    /// Source kind discriminator (e.g. `"nyaa"`).
+    pub kind: String,
+    /// Instance name, unique across the registry. Persisted as
+    /// `releases.source_name`.
+    pub name: String,
+    /// Cron expression for the scheduler. Only used by the scheduled
+    /// poller; the one-shot `tsundoku poll --source <name>` ignores it.
+    #[serde(default)]
+    pub cron: Option<String>,
+    /// Disabled sources are skipped at registry build time.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Per-kind nested options. The relevant variant must match `kind`.
+    #[serde(default)]
+    pub nyaa: Option<NyaaSourceOptions>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Nyaa-specific options, populated from `[sources.nyaa]` under the matching
+/// `[[sources]]` entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NyaaSourceOptions {
+    pub feed_url: String,
+    /// HTTP timeout (seconds) for the feed and detail fetches.
+    pub timeout_seconds: u32,
+    /// Fetch each post's detail HTML after the RSS pass to enrich the file
+    /// list and external links. Off by default — keeps the poll cheap.
+    pub fetch_details: bool,
+    /// Override for the site base URL. Useful when the feed is proxied.
+    pub site_base_url: String,
+}
+
+impl Default for NyaaSourceOptions {
+    fn default() -> Self {
+        Self {
+            feed_url: String::new(),
+            timeout_seconds: 30,
+            fetch_details: false,
+            site_base_url: "https://nyaa.si".into(),
+        }
+    }
+}
+
 /// Load configuration, applying defaults, then the file (if present), then env.
 pub fn load(path: &Path) -> anyhow::Result<AppConfig> {
     let mut fig = Figment::from(Serialized::defaults(AppConfig::default()));
@@ -295,6 +353,57 @@ mod tests {
             p.database_url(),
             "sqlite:///var/tsundoku/db/tsundoku.db?mode=rwc"
         );
+    }
+
+    #[test]
+    fn sources_array_parses_with_nested_options() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[storage]
+data_dir = "./data"
+
+[metadata]
+active_provider = "mangabaka"
+
+[[sources]]
+kind = "nyaa"
+name = "trusted"
+cron = "*/30 * * * *"
+enabled = true
+  [sources.nyaa]
+  feed_url = "https://nyaa.si/?page=rss&f=2"
+
+[[sources]]
+kind = "nyaa"
+name = "english-manga"
+cron = "0 */2 * * *"
+  [sources.nyaa]
+  feed_url = "https://nyaa.si/?page=rss&c=3_1"
+            "#
+        )
+        .unwrap();
+
+        let cfg = load(&path).unwrap();
+        assert_eq!(cfg.sources.len(), 2);
+        assert_eq!(cfg.sources[0].name, "trusted");
+        assert_eq!(cfg.sources[0].kind, "nyaa");
+        assert!(cfg.sources[0].enabled);
+        assert_eq!(cfg.sources[0].cron.as_deref(), Some("*/30 * * * *"));
+        let opts = cfg.sources[0]
+            .nyaa
+            .as_ref()
+            .expect("nyaa nested options should be present");
+        assert_eq!(opts.feed_url, "https://nyaa.si/?page=rss&f=2");
+        // Defaults from NyaaSourceOptions::default still apply to omitted fields.
+        assert_eq!(opts.timeout_seconds, 30);
+        assert!(!opts.fetch_details);
+        // `enabled` defaults to true when omitted.
+        assert!(cfg.sources[1].enabled);
     }
 
     #[test]
