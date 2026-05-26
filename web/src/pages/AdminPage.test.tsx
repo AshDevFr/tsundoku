@@ -122,6 +122,51 @@ describe("AdminPage", () => {
     );
   });
 
+  it("renders resolution-outcome breakdown and review-queue card under metrics", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderAdmin();
+    await screen.findByText(/Metrics/, undefined, { timeout: 3000 });
+    expect(
+      await screen.findByTestId("outcome-breakdown", undefined, {
+        timeout: 3000,
+      }),
+    ).toBeInTheDocument();
+    expect(await screen.findByTestId("error-kind-donut")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("review-queue-metrics-card"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("review-queue-depth-sparkline"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the metrics section with per-source cards and a sparkline", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderAdmin();
+    expect(
+      await screen.findByText(/Metrics/, undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByTestId(
+        "metrics-card-english-manga-trusted",
+        undefined,
+        { timeout: 3000 },
+      ),
+    ).toBeInTheDocument();
+    // Success-rate badge derives 92% from 11/12.
+    expect(screen.getByText(/92% success/)).toBeInTheDocument();
+    // Inline SVG sparkline renders for the source detail buckets.
+    expect(
+      await screen.findByTestId("metrics-sparkline", undefined, {
+        timeout: 3000,
+      }),
+    ).toBeInTheDocument();
+    // Provider refresh card alongside the sources.
+    expect(
+      screen.getByTestId("provider-metrics-card-mangabaka"),
+    ).toBeInTheDocument();
+  });
+
   it("dispatches a per-source trigger", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderAdmin();

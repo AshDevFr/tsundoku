@@ -193,7 +193,7 @@ pub async fn refresh_cache(
     let db = state.db.clone();
     let locks = state.locks.clone();
     tokio::spawn(async move {
-        refresh_provider_cache::run_tick(provider, db, locks).await;
+        refresh_provider_cache::run_tick(provider, db, locks, "manual").await;
     });
 
     Ok(Json(RefreshResponse {
@@ -237,7 +237,7 @@ pub async fn refresh_all(State(state): State<AppState>) -> ApiResult<Json<Refres
         let db = state.db.clone();
         let locks = state.locks.clone();
         tokio::spawn(async move {
-            refresh_provider_cache::run_tick(provider, db, locks).await;
+            refresh_provider_cache::run_tick(provider, db, locks, "manual").await;
         });
         results.push(RefreshResponse {
             provider: id,

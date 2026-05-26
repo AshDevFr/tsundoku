@@ -9,6 +9,12 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 
 use crate::errors::ApiErrorBody;
+use crate::handlers::metrics::{
+    ErrorKindBucket, FetchLatencyDto, ProviderMetricsBucket, ProviderMetricsDetail,
+    ProviderMetricsSummary, ProviderMetricsSummaryItem, ResolutionOutcomeBreakdown,
+    ReviewQueueMetrics, ReviewQueueSnapshotDto, SourceMetricsBucket, SourceMetricsDetail,
+    SourceMetricsSummary, SourceMetricsSummaryItem, TimeToResolutionDto,
+};
 use crate::handlers::providers::{
     ProviderCacheState, ProviderConfigDto, ProviderDto, ProviderList, RefreshAllResponse,
     RefreshResponse,
@@ -22,7 +28,7 @@ use crate::handlers::sources::{
 };
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
-use crate::handlers::{health, providers, releases, series, sources, stats, tagging};
+use crate::handlers::{health, metrics, providers, releases, series, sources, stats, tagging};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -50,6 +56,11 @@ use crate::handlers::{health, providers, releases, series, sources, stats, taggi
         providers::refresh_all,
         tagging::list_genres,
         tagging::list_tags,
+        metrics::sources_summary,
+        metrics::sources_detail,
+        metrics::providers_summary,
+        metrics::providers_detail,
+        metrics::review_queue,
     ),
     components(schemas(
         ApiErrorBody,
@@ -79,6 +90,20 @@ use crate::handlers::{health, providers, releases, series, sources, stats, taggi
         RefreshAllResponse,
         TagUsageDto,
         TagList,
+        SourceMetricsSummary,
+        SourceMetricsSummaryItem,
+        SourceMetricsBucket,
+        SourceMetricsDetail,
+        ProviderMetricsSummary,
+        ProviderMetricsSummaryItem,
+        ProviderMetricsBucket,
+        ProviderMetricsDetail,
+        ResolutionOutcomeBreakdown,
+        FetchLatencyDto,
+        TimeToResolutionDto,
+        ErrorKindBucket,
+        ReviewQueueSnapshotDto,
+        ReviewQueueMetrics,
     )),
     tags(
         (name = "system", description = "Health and aggregate counters"),
@@ -86,7 +111,8 @@ use crate::handlers::{health, providers, releases, series, sources, stats, taggi
         (name = "releases", description = "Raw release feed and review queue"),
         (name = "sources", description = "Discovery-source state and triggers"),
         (name = "providers", description = "Metadata-provider state and triggers"),
-        (name = "tagging", description = "Canonical genre and tag lists for filter UI")
+        (name = "tagging", description = "Canonical genre and tag lists for filter UI"),
+        (name = "metrics", description = "Per-source / per-provider historical run metrics")
     ),
     modifiers(&BearerSecurity)
 )]

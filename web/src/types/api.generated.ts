@@ -41,6 +41,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/metrics/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Across-all-providers refresh summary. */
+        get: operations["metrics_providers_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/metrics/providers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Detailed refresh metrics for a single provider. */
+        get: operations["providers_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/metrics/review-queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Review-queue depth-over-time + median time-to-decision for the window. */
+        get: operations["review_queue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/metrics/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Across-all-sources summary over the requested window. */
+        get: operations["metrics_sources_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/metrics/sources/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Detailed metrics for a single source: summary + per-bucket counts. */
+        get: operations["sources_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers": {
         parameters: {
             query?: never;
@@ -358,12 +443,29 @@ export interface components {
             error: string;
             message: string;
         };
+        ErrorKindBucket: {
+            /** Format: int64 */
+            count: number;
+            /**
+             * @description `None` is stored when a failure row pre-dates the error_kind helper
+             *     or comes from an unwrapped legacy path; surface it as `unknown`.
+             */
+            kind: string;
+        };
         ExternalIdDto: {
             externalId: string;
             externalUrl?: string | null;
             /** Format: int64 */
             fetchedAt: number;
             provider: string;
+        };
+        FetchLatencyDto: {
+            /** Format: int64 */
+            maxMs?: number | null;
+            /** Format: double */
+            p50Ms?: number | null;
+            /** Format: double */
+            p95Ms?: number | null;
         };
         Health: {
             status: string;
@@ -432,6 +534,57 @@ export interface components {
         ProviderList: {
             items: components["schemas"]["ProviderDto"][];
         };
+        ProviderMetricsBucket: {
+            /** Format: int64 */
+            bucketStart: number;
+            /** Format: int64 */
+            failureCount: number;
+            /** Format: int64 */
+            skippedCount: number;
+            /** Format: int64 */
+            successCount: number;
+        };
+        ProviderMetricsDetail: {
+            /** Format: int64 */
+            bucketSeconds: number;
+            buckets: components["schemas"]["ProviderMetricsBucket"][];
+            fetchLatency: components["schemas"]["FetchLatencyDto"];
+            providerId: string;
+            /** Format: int64 */
+            rangeSeconds: number;
+            /** Format: int64 */
+            since: number;
+            summary?: null | components["schemas"]["ProviderMetricsSummaryItem"];
+            /** Format: int64 */
+            until: number;
+        };
+        ProviderMetricsSummary: {
+            items: components["schemas"]["ProviderMetricsSummaryItem"][];
+            /** Format: int64 */
+            rangeSeconds: number;
+            /** Format: int64 */
+            since: number;
+            /** Format: int64 */
+            until: number;
+        };
+        ProviderMetricsSummaryItem: {
+            /** Format: int64 */
+            bytesSum?: number | null;
+            /** Format: int64 */
+            failureCount: number;
+            /** Format: int64 */
+            lastStartedAt?: number | null;
+            lastStatus?: string | null;
+            providerId: string;
+            /** Format: int64 */
+            skippedCount: number;
+            /** Format: int64 */
+            successCount: number;
+            /** Format: double */
+            successRate?: number | null;
+            /** Format: int64 */
+            totalRuns: number;
+        };
         RefreshAllResponse: {
             results: components["schemas"]["RefreshResponse"][];
         };
@@ -492,6 +645,18 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
+        ResolutionOutcomeBreakdown: {
+            /** Format: int64 */
+            failed: number;
+            /** Format: int64 */
+            foreignId: number;
+            /** Format: int64 */
+            fuzzy: number;
+            /** Format: int64 */
+            knownId: number;
+            /** Format: int64 */
+            review: number;
+        };
         ReviewCandidateDto: {
             reason?: string | null;
             /** Format: double */
@@ -500,6 +665,37 @@ export interface components {
             /** Format: int32 */
             seriesId: number;
             seriesTitle: string;
+        };
+        ReviewQueueMetrics: {
+            /** Format: int64 */
+            closedCount: number;
+            /** Format: int64 */
+            rangeSeconds: number;
+            /** Format: int64 */
+            since: number;
+            snapshots: components["schemas"]["ReviewQueueSnapshotDto"][];
+            /**
+             * Format: double
+             * @description Median time (seconds) from observed to resolved, over closures in
+             *     `[since, until)`. `null` when nothing closed.
+             */
+            timeToDecisionP50Seconds?: number | null;
+            /** Format: int64 */
+            until: number;
+        };
+        ReviewQueueSnapshotDto: {
+            /** Format: int64 */
+            ambiguousCount: number;
+            /** Format: int64 */
+            capturedAt: number;
+            /** Format: int64 */
+            oldestPendingSeconds?: number | null;
+            /** Format: int64 */
+            pendingCount: number;
+            /** Format: int64 */
+            reviewPendingCount: number;
+            /** Format: int64 */
+            unresolvedCount: number;
         };
         SeriesDetail: {
             alternateTitles: string[];
@@ -584,6 +780,73 @@ export interface components {
         SourceList: {
             items: components["schemas"]["SourceDto"][];
         };
+        SourceMetricsBucket: {
+            /** Format: int64 */
+            bucketStart: number;
+            /** Format: int64 */
+            failureCount: number;
+            /** Format: int64 */
+            fetchedSum?: number | null;
+            /** Format: int64 */
+            newSum?: number | null;
+            /** Format: int64 */
+            skippedCount: number;
+            /** Format: int64 */
+            successCount: number;
+        };
+        SourceMetricsDetail: {
+            /** Format: int64 */
+            bucketSeconds: number;
+            buckets: components["schemas"]["SourceMetricsBucket"][];
+            errorKinds: components["schemas"]["ErrorKindBucket"][];
+            fetchLatency: components["schemas"]["FetchLatencyDto"];
+            /** Format: int64 */
+            rangeSeconds: number;
+            /** Format: int64 */
+            since: number;
+            sourceName: string;
+            summary?: null | components["schemas"]["SourceMetricsSummaryItem"];
+            timeToResolution: components["schemas"]["TimeToResolutionDto"];
+            /** Format: int64 */
+            until: number;
+        };
+        SourceMetricsSummary: {
+            items: components["schemas"]["SourceMetricsSummaryItem"][];
+            /** Format: int64 */
+            rangeSeconds: number;
+            /** Format: int64 */
+            since: number;
+            /** Format: int64 */
+            until: number;
+        };
+        SourceMetricsSummaryItem: {
+            /** Format: int64 */
+            failureCount: number;
+            /** Format: int64 */
+            fetchedSum?: number | null;
+            /** Format: int64 */
+            lastStartedAt?: number | null;
+            lastStatus?: string | null;
+            /** Format: int64 */
+            newSum?: number | null;
+            outcomes: components["schemas"]["ResolutionOutcomeBreakdown"];
+            /** Format: int64 */
+            resolvedSum?: number | null;
+            /** Format: int64 */
+            skippedCount: number;
+            sourceName: string;
+            /** Format: int64 */
+            successCount: number;
+            /**
+             * Format: double
+             * @description Convenience derivation: `successCount / (successCount + failureCount)`,
+             *     `null` when the denominator is zero. Saves the client from a no-op
+             *     division when nothing has run yet.
+             */
+            successRate?: number | null;
+            /** Format: int64 */
+            totalRuns: number;
+        };
         StatsResponse: {
             activeProvider: string;
             releases: components["schemas"]["ReleaseCounts"];
@@ -599,6 +862,14 @@ export interface components {
             name: string;
             /** Format: int64 */
             seriesCount: number;
+        };
+        TimeToResolutionDto: {
+            /** Format: int64 */
+            count: number;
+            /** Format: double */
+            p50Seconds?: number | null;
+            /** Format: double */
+            p95Seconds?: number | null;
         };
         UnresolvedPage: {
             items: components["schemas"]["UnresolvedRelease"][];
@@ -663,6 +934,132 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    metrics_providers_summary: {
+        parameters: {
+            query?: {
+                /** @description Sliding window for the aggregate, e.g. `24h`, `7d`. Defaults to 24h. */
+                range?: string;
+                /** @description Number of equal-width buckets. Clamped to [4, 168]. Defaults to 24. */
+                buckets?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderMetricsSummary"];
+                };
+            };
+        };
+    };
+    providers_detail: {
+        parameters: {
+            query?: {
+                /** @description Sliding window for the aggregate, e.g. `24h`, `7d`. Defaults to 24h. */
+                range?: string;
+                /** @description Number of equal-width buckets. Clamped to [4, 168]. Defaults to 24. */
+                buckets?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Provider id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderMetricsDetail"];
+                };
+            };
+        };
+    };
+    review_queue: {
+        parameters: {
+            query?: {
+                /** @description Sliding window for the aggregate, e.g. `24h`, `7d`. Defaults to 24h. */
+                range?: string;
+                /** @description Number of equal-width buckets. Clamped to [4, 168]. Defaults to 24. */
+                buckets?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewQueueMetrics"];
+                };
+            };
+        };
+    };
+    metrics_sources_summary: {
+        parameters: {
+            query?: {
+                /** @description Sliding window for the aggregate, e.g. `24h`, `7d`. Defaults to 24h. */
+                range?: string;
+                /** @description Number of equal-width buckets. Clamped to [4, 168]. Defaults to 24. */
+                buckets?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceMetricsSummary"];
+                };
+            };
+        };
+    };
+    sources_detail: {
+        parameters: {
+            query?: {
+                /** @description Sliding window for the aggregate, e.g. `24h`, `7d`. Defaults to 24h. */
+                range?: string;
+                /** @description Number of equal-width buckets. Clamped to [4, 168]. Defaults to 24. */
+                buckets?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Source instance name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceMetricsDetail"];
+                };
             };
         };
     };

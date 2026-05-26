@@ -17,9 +17,17 @@ RUN apk add --no-cache \
     npm \
     sqlite
 
-RUN cargo install cargo-watch cargo-nextest --locked
-
 WORKDIR /app
+
+# Pre-materialize the project's pinned toolchain so the runtime bind-mount
+# doesn't surprise rustup into re-downloading everything. The base image
+# ships the default profile; rust-toolchain.toml asks for minimal+rustfmt
+# +clippy, and that profile mismatch alone is enough to trigger a full
+# component sync the first time cargo runs.
+COPY rust-toolchain.toml ./
+RUN rustup show active-toolchain || rustup toolchain install
+
+RUN cargo install cargo-watch cargo-nextest --locked
 
 # Copy only workspace manifests so the dep-cache layer survives source edits.
 # Add one COPY line per workspace crate when the project grows.

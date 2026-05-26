@@ -5,6 +5,7 @@
 //! [`crate::docs::ApiDoc`].
 
 pub mod health;
+pub mod metrics;
 pub mod pagination;
 pub mod providers;
 pub mod releases;

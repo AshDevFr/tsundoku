@@ -213,6 +213,20 @@ pub async fn link_release(
         .one(db)
         .await?;
     let attempts = current.as_ref().map(|r| r.resolution_attempts).unwrap_or(0) + 1;
+    // Stamp resolved_at exactly once, the first time a release transitions
+    // to status='resolved'. Anchors the time-to-resolution percentiles the
+    // admin metrics view surfaces. Manual retries that re-resolve an
+    // already-resolved release preserve the original timestamp.
+    let resolved_at = if status == "resolved" {
+        sea_orm::ActiveValue::Set(Some(
+            current
+                .as_ref()
+                .and_then(|r| r.resolved_at)
+                .unwrap_or(attempted_at),
+        ))
+    } else {
+        sea_orm::ActiveValue::NotSet
+    };
     let model = releases::ActiveModel {
         id: Set(release_id.to_string()),
         series_id: Set(series_id),
@@ -221,6 +235,7 @@ pub async fn link_release(
         resolution_status: Set(status.to_string()),
         resolution_attempts: Set(attempts),
         last_resolve_attempt_at: Set(Some(attempted_at)),
+        resolved_at,
         ..Default::default()
     };
     releases::Entity::update(model).exec(db).await?;
@@ -494,6 +509,7 @@ mod tests {
             last_resolve_attempt_at: Set(None),
             volume_span_json: Set(None),
             chapter_span_json: Set(None),
+            resolved_at: Set(None),
         };
         releases::Entity::insert(row).exec(&db).await.unwrap();
 

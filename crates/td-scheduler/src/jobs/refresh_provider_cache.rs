@@ -12,14 +12,17 @@
 //! scheduler. Operators can retry manually via `tsundoku refresh-metadata`.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use sea_orm::DatabaseConnection;
 use td_db::repos::provider_cache_state_repo;
+use td_db::repos::run_metrics_repo::{self, ProviderRefreshCounts};
 use td_metadata::{MetadataProvider, RefreshStatus};
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
 use crate::JobLocks;
+use crate::error_kind;
 
 pub fn build(
     cron: &str,
@@ -32,7 +35,7 @@ pub fn build(
         let db = db.clone();
         let locks = locks.clone();
         Box::pin(async move {
-            run_tick(provider, db, locks).await;
+            run_tick(provider, db, locks, run_metrics_repo::trigger::CRON).await;
         })
     })
     .map_err(|e: JobSchedulerError| anyhow!("building refresh-provider-cache job: {e}"))?;
@@ -45,22 +48,60 @@ pub async fn run_tick(
     provider: Arc<dyn MetadataProvider>,
     db: DatabaseConnection,
     locks: Arc<JobLocks>,
+    trigger: &str,
 ) {
     let id = provider.id().to_string();
+    let started_at_ts = chrono::Utc::now().timestamp();
 
     let lock = locks.provider_lock(&id);
     let Ok(_guard) = lock.try_lock() else {
         tracing::debug!(provider = %id, "previous refresh still running; skipping");
+        record_skipped(&db, &id, started_at_ts, trigger).await;
         return;
     };
 
+    let metrics_id = match run_metrics_repo::start_provider_refresh(
+        &db,
+        &id,
+        started_at_ts,
+        trigger,
+    )
+    .await
+    {
+        Ok(rid) => Some(rid),
+        Err(e) => {
+            tracing::warn!(error = ?e, provider = %id, "failed to record provider_refresh start");
+            None
+        }
+    };
+
+    // Stopwatch the refresh call so the admin metrics view can plot dump
+    // download latency over time.
+    let fetch_started = Instant::now();
     let summary = match provider.refresh_cache().await {
         Ok(s) => s,
         Err(e) => {
-            tracing::warn!(error = ?e, provider = %id, "cache refresh failed");
+            let ms = fetch_started.elapsed().as_millis() as i64;
+            let err: anyhow::Error = anyhow::Error::new(e).context(format!("refresh {id} failed"));
+            tracing::warn!(error = ?err, provider = %id, "cache refresh failed");
+            let msg = format!("error: {err}");
+            let kind_class = error_kind::classify_anyhow(&err);
+            finalize_metrics(
+                &db,
+                metrics_id,
+                run_metrics_repo::status::FAILURE,
+                ProviderRefreshCounts {
+                    fetch_duration_ms: Some(ms),
+                    ..Default::default()
+                },
+                Some(&msg),
+                Some(kind_class),
+            )
+            .await;
             return;
         }
     };
+    let fetch_duration_ms = fetch_started.elapsed().as_millis() as i64;
 
     match &summary.status {
         RefreshStatus::Refreshed { records, version } => {
@@ -89,18 +130,114 @@ pub async fn run_tick(
                     "failed to append provider_cache_state row"
                 );
             }
+            finalize_metrics(
+                &db,
+                metrics_id,
+                run_metrics_repo::status::SUCCESS,
+                ProviderRefreshCounts {
+                    bytes_downloaded: summary.bytes_downloaded.map(|b| b as i64),
+                    record_count: Some(*records as i64),
+                    fetch_duration_ms: Some(fetch_duration_ms),
+                },
+                None,
+                None,
+            )
+            .await;
         }
         RefreshStatus::UpToDate => {
             tracing::info!(provider = %id, "cache up to date; no refresh needed");
+            // Treat "up to date" as success: the tick reached a clean
+            // terminal state and the cache is usable.
+            finalize_metrics(
+                &db,
+                metrics_id,
+                run_metrics_repo::status::SUCCESS,
+                ProviderRefreshCounts {
+                    fetch_duration_ms: Some(fetch_duration_ms),
+                    ..Default::default()
+                },
+                Some("up to date"),
+                None,
+            )
+            .await;
         }
         RefreshStatus::NotSupported => {
             tracing::debug!(
                 provider = %id,
                 "provider has no offline cache; refresh tick is a no-op"
             );
+            // Finalise with "skipped" rather than dropping the row entirely
+            // so the admin metrics view shows a consistent number of ticks;
+            // a "not supported" provider still consumes a scheduler slot.
+            finalize_metrics(
+                &db,
+                metrics_id,
+                run_metrics_repo::status::SKIPPED,
+                ProviderRefreshCounts::default(),
+                Some("provider has no offline cache"),
+                None,
+            )
+            .await;
         }
         RefreshStatus::Skipped { message } => {
             tracing::warn!(provider = %id, %message, "cache refresh skipped");
+            finalize_metrics(
+                &db,
+                metrics_id,
+                run_metrics_repo::status::SKIPPED,
+                ProviderRefreshCounts::default(),
+                Some(message),
+                None,
+            )
+            .await;
         }
+    }
+}
+
+async fn record_skipped(db: &DatabaseConnection, id: &str, started_at: i64, trigger: &str) {
+    match run_metrics_repo::start_provider_refresh(db, id, started_at, trigger).await {
+        Ok(rid) => {
+            if let Err(e) = run_metrics_repo::finalize_provider_refresh(
+                db,
+                rid,
+                started_at,
+                run_metrics_repo::status::SKIPPED,
+                ProviderRefreshCounts::default(),
+                Some("previous refresh still running"),
+                None,
+            )
+            .await
+            {
+                tracing::warn!(error = ?e, provider = %id, "failed to record skipped provider_refresh");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, provider = %id, "failed to insert skipped provider_refresh row");
+        }
+    }
+}
+
+async fn finalize_metrics(
+    db: &DatabaseConnection,
+    id: Option<i64>,
+    status: &str,
+    counts: ProviderRefreshCounts,
+    error_message: Option<&str>,
+    error_kind: Option<&str>,
+) {
+    let Some(id) = id else { return };
+    let finished_at = chrono::Utc::now().timestamp();
+    if let Err(e) = run_metrics_repo::finalize_provider_refresh(
+        db,
+        id,
+        finished_at,
+        status,
+        counts,
+        error_message,
+        error_kind,
+    )
+    .await
+    {
+        tracing::warn!(error = ?e, run_id = id, "failed to finalize provider_refresh row");
     }
 }

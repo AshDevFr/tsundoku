@@ -171,7 +171,7 @@ pub async fn poll(
     let ingestion = state.ingestion.clone();
     let locks = state.locks.clone();
     tokio::spawn(async move {
-        poll_source::run_tick(source, db, metadata, ingestion, locks).await;
+        poll_source::run_tick(source, db, metadata, ingestion, locks, "manual").await;
     });
 
     Ok(Json(ManualPollResponse {
@@ -217,7 +217,7 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
         let locks = state.locks.clone();
         let spawned: Arc<dyn td_source::DiscoverySource> = source;
         tokio::spawn(async move {
-            poll_source::run_tick(spawned, db, metadata, ingestion, locks).await;
+            poll_source::run_tick(spawned, db, metadata, ingestion, locks, "manual").await;
         });
         results.push(ManualPollResponse {
             source: name,

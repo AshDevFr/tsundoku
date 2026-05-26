@@ -29,6 +29,9 @@ pub struct Model {
     pub last_resolve_attempt_at: Option<i64>,
     pub volume_span_json: Option<String>,
     pub chapter_span_json: Option<String>,
+    /// Set when `resolution_status` transitions to `resolved`. Anchors the
+    /// time-to-resolution histogram surfaced on the admin metrics view.
+    pub resolved_at: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

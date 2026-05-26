@@ -28,4 +28,4 @@ pub mod pipeline;
 pub mod scoring;
 pub mod validation;
 
-pub use pipeline::{ResolutionOutcome, ResolutionPath, Resolver};
+pub use pipeline::{ResolutionOutcome, ResolutionPath, ResolutionStatus, Resolver};

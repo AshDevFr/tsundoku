@@ -14,7 +14,7 @@ use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use serde_json::Value;
 use td_config::AuthConfig;
 use td_db::entities::{releases, series};
-use td_db::repos::{releases_repo, series_external_ids_repo, tagging_repo};
+use td_db::repos::{releases_repo, run_metrics_repo, series_external_ids_repo, tagging_repo};
 use td_source::PollOutcome;
 use tower::ServiceExt;
 
@@ -1003,4 +1003,145 @@ async fn series_detail_surfaces_join_table_tags() {
     assert!(genres.contains(&"Drama"));
     assert!(tags.contains(&"isekai"));
     assert!(tags.contains(&"Gore"));
+}
+
+#[tokio::test]
+async fn metrics_sources_summary_returns_per_source_aggregates() {
+    let db = fresh_db().await;
+    let now = Utc::now().timestamp();
+    // Two successful runs + one failure for feed-a inside the 24h window.
+    for (status, started, fetched) in [
+        ("success", now - 300, Some(5_i32)),
+        ("success", now - 200, Some(3)),
+        ("failure", now - 100, None),
+    ] {
+        let id = run_metrics_repo::start_poll_run(&db, "feed-a", "nyaa", started, "cron")
+            .await
+            .unwrap();
+        run_metrics_repo::finalize_poll_run(
+            &db,
+            id,
+            started + 1,
+            status,
+            run_metrics_repo::PollRunCounts {
+                fetched,
+                new: fetched,
+                resolved: fetched,
+                ..Default::default()
+            },
+            if status == "failure" {
+                Some("oops")
+            } else {
+                None
+            },
+            if status == "failure" {
+                Some("network")
+            } else {
+                None
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/metrics/sources?range=24h")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    let item = &items[0];
+    assert_eq!(item["sourceName"], "feed-a");
+    assert_eq!(item["totalRuns"], 3);
+    assert_eq!(item["successCount"], 2);
+    assert_eq!(item["failureCount"], 1);
+    assert_eq!(item["fetchedSum"], 8);
+    // 2 successes / (2 + 1 failures) = 0.666...
+    let rate = item["successRate"].as_f64().unwrap();
+    assert!((rate - 2.0 / 3.0).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn metrics_sources_detail_emits_buckets_for_named_source() {
+    let db = fresh_db().await;
+    let now = Utc::now().timestamp();
+    for (status, started) in [
+        ("success", now - 100),
+        ("failure", now - 50),
+        ("success", now - 10),
+    ] {
+        let id = run_metrics_repo::start_poll_run(&db, "feed-a", "nyaa", started, "cron")
+            .await
+            .unwrap();
+        run_metrics_repo::finalize_poll_run(
+            &db,
+            id,
+            started + 1,
+            status,
+            run_metrics_repo::PollRunCounts {
+                fetched: Some(1),
+                new: Some(1),
+                resolved: Some(1),
+                ..Default::default()
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/metrics/sources/feed-a?range=24h&buckets=24")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["sourceName"], "feed-a");
+    assert_eq!(body["summary"]["totalRuns"], 3);
+    let buckets = body["buckets"].as_array().unwrap();
+    // Three runs within a few seconds of each other fall into one or two
+    // buckets (depending on alignment); both shapes are fine as long as
+    // counts sum to 3.
+    let total_success: i64 = buckets
+        .iter()
+        .map(|b| b["successCount"].as_i64().unwrap())
+        .sum();
+    let total_failure: i64 = buckets
+        .iter()
+        .map(|b| b["failureCount"].as_i64().unwrap())
+        .sum();
+    assert_eq!(total_success + total_failure, 3);
 }

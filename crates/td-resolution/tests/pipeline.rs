@@ -159,6 +159,7 @@ async fn insert_release(
         last_resolve_attempt_at: Set(None),
         volume_span_json: Set(None),
         chapter_span_json: Set(None),
+        resolved_at: Set(None),
     };
     releases::Entity::insert(row).exec(db).await.unwrap();
     for f in formats {

@@ -2,6 +2,8 @@ pub use sea_orm_migration::prelude::*;
 
 mod m20260524_000001_init;
 mod m20260525_000001_genres_tags;
+mod m20260525_000002_run_metrics;
+mod m20260525_000003_observability;
 
 pub struct Migrator;
 
@@ -13,6 +15,8 @@ impl MigratorTrait for Migrator {
         let mut m: Vec<Box<dyn MigrationTrait>> = vec![
             Box::new(m20260524_000001_init::Migration),
             Box::new(m20260525_000001_genres_tags::Migration),
+            Box::new(m20260525_000002_run_metrics::Migration),
+            Box::new(m20260525_000003_observability::Migration),
         ];
         m.extend(td_metadata_mangabaka::migration::migrations());
         m

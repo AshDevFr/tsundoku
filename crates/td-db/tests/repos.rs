@@ -67,6 +67,7 @@ fn sample_release(id: &str, series_id: Option<i32>) -> releases::ActiveModel {
         last_resolve_attempt_at: Set(None),
         volume_span_json: Set(None),
         chapter_span_json: Set(None),
+        resolved_at: Set(None),
     }
 }
 

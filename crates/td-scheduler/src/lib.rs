@@ -19,6 +19,7 @@
 //! mandatory at the DB layer anyway; this just makes the intent explicit at
 //! the scheduler boundary.
 
+pub mod error_kind;
 pub mod jobs;
 
 use std::sync::Arc;
@@ -131,6 +132,20 @@ impl Scheduler {
         {
             register_provider_job(&inner, &ctx, "mangabaka", cron, &mut registered).await?;
         }
+
+        // Hourly review-queue snapshot. Fires at minute 5 to stagger off
+        // both the typical "0 * * * *" provider crons and the more
+        // frequent source ticks. Operators don't get a config knob for
+        // this today — the schedule is fixed.
+        let snapshot_cron =
+            normalize_cron("5 * * * *").context("normalising review-queue snapshot cron")?;
+        let snapshot_job = jobs::snapshot_review_queue::build(&snapshot_cron, ctx.db.clone())?;
+        inner
+            .add(snapshot_job)
+            .await
+            .map_err(|e| anyhow!("registering review-queue snapshot job: {e}"))?;
+        tracing::info!(cron = %snapshot_cron, "registered review-queue snapshot job");
+        registered += 1;
 
         Ok(Self {
             inner,

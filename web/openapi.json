@@ -59,6 +59,239 @@
         }
       }
     },
+    "/api/v1/metrics/providers": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "summary": "Across-all-providers refresh summary.",
+        "operationId": "metrics_providers_summary",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "description": "Sliding window for the aggregate, e.g. `24h`, `7d`. Defaults to 24h.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "buckets",
+            "in": "query",
+            "description": "Number of equal-width buckets. Clamped to [4, 168]. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderMetricsSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/metrics/providers/{id}": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "summary": "Detailed refresh metrics for a single provider.",
+        "operationId": "providers_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Provider id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "description": "Sliding window for the aggregate, e.g. `24h`, `7d`. Defaults to 24h.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "buckets",
+            "in": "query",
+            "description": "Number of equal-width buckets. Clamped to [4, 168]. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderMetricsDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/metrics/review-queue": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "summary": "Review-queue depth-over-time + median time-to-decision for the window.",
+        "operationId": "review_queue",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "description": "Sliding window for the aggregate, e.g. `24h`, `7d`. Defaults to 24h.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "buckets",
+            "in": "query",
+            "description": "Number of equal-width buckets. Clamped to [4, 168]. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewQueueMetrics"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/metrics/sources": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "summary": "Across-all-sources summary over the requested window.",
+        "operationId": "metrics_sources_summary",
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "description": "Sliding window for the aggregate, e.g. `24h`, `7d`. Defaults to 24h.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "buckets",
+            "in": "query",
+            "description": "Number of equal-width buckets. Clamped to [4, 168]. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceMetricsSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/metrics/sources/{name}": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "summary": "Detailed metrics for a single source: summary + per-bucket counts.",
+        "operationId": "sources_detail",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Source instance name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "description": "Sliding window for the aggregate, e.g. `24h`, `7d`. Defaults to 24h.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "buckets",
+            "in": "query",
+            "description": "Number of equal-width buckets. Clamped to [4, 168]. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceMetricsDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/providers": {
       "get": {
         "tags": [
@@ -736,6 +969,23 @@
           }
         }
       },
+      "ErrorKindBucket": {
+        "type": "object",
+        "required": [
+          "kind",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`None` is stored when a failure row pre-dates the error_kind helper\nor comes from an unwrapped legacy path; surface it as `unknown`."
+          }
+        }
+      },
       "ExternalIdDto": {
         "type": "object",
         "required": [
@@ -759,6 +1009,32 @@
           },
           "provider": {
             "type": "string"
+          }
+        }
+      },
+      "FetchLatencyDto": {
+        "type": "object",
+        "properties": {
+          "maxMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "p50Ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "p95Ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
           }
         }
       },
@@ -975,6 +1251,172 @@
             "items": {
               "$ref": "#/components/schemas/ProviderDto"
             }
+          }
+        }
+      },
+      "ProviderMetricsBucket": {
+        "type": "object",
+        "required": [
+          "bucketStart",
+          "successCount",
+          "failureCount",
+          "skippedCount"
+        ],
+        "properties": {
+          "bucketStart": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failureCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "skippedCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "successCount": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ProviderMetricsDetail": {
+        "type": "object",
+        "required": [
+          "providerId",
+          "buckets",
+          "fetchLatency",
+          "bucketSeconds",
+          "rangeSeconds",
+          "since",
+          "until"
+        ],
+        "properties": {
+          "bucketSeconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderMetricsBucket"
+            }
+          },
+          "fetchLatency": {
+            "$ref": "#/components/schemas/FetchLatencyDto"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "rangeSeconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "since": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "summary": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProviderMetricsSummaryItem"
+              }
+            ]
+          },
+          "until": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ProviderMetricsSummary": {
+        "type": "object",
+        "required": [
+          "items",
+          "rangeSeconds",
+          "since",
+          "until"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderMetricsSummaryItem"
+            }
+          },
+          "rangeSeconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "since": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "until": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ProviderMetricsSummaryItem": {
+        "type": "object",
+        "required": [
+          "providerId",
+          "totalRuns",
+          "successCount",
+          "failureCount",
+          "skippedCount"
+        ],
+        "properties": {
+          "bytesSum": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "failureCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "lastStartedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "lastStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "skippedCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "successCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "successRate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "totalRuns": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -1203,6 +1645,38 @@
           }
         }
       },
+      "ResolutionOutcomeBreakdown": {
+        "type": "object",
+        "required": [
+          "knownId",
+          "foreignId",
+          "fuzzy",
+          "review",
+          "failed"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "foreignId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "fuzzy": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "knownId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "review": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ReviewCandidateDto": {
         "type": "object",
         "required": [
@@ -1233,6 +1707,87 @@
           },
           "seriesTitle": {
             "type": "string"
+          }
+        }
+      },
+      "ReviewQueueMetrics": {
+        "type": "object",
+        "required": [
+          "snapshots",
+          "closedCount",
+          "rangeSeconds",
+          "since",
+          "until"
+        ],
+        "properties": {
+          "closedCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rangeSeconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "since": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "snapshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewQueueSnapshotDto"
+            }
+          },
+          "timeToDecisionP50Seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Median time (seconds) from observed to resolved, over closures in\n`[since, until)`. `null` when nothing closed."
+          },
+          "until": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ReviewQueueSnapshotDto": {
+        "type": "object",
+        "required": [
+          "capturedAt",
+          "pendingCount",
+          "unresolvedCount",
+          "ambiguousCount",
+          "reviewPendingCount"
+        ],
+        "properties": {
+          "ambiguousCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "capturedAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "oldestPendingSeconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "pendingCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reviewPendingCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unresolvedCount": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -1535,6 +2090,216 @@
           }
         }
       },
+      "SourceMetricsBucket": {
+        "type": "object",
+        "required": [
+          "bucketStart",
+          "successCount",
+          "failureCount",
+          "skippedCount"
+        ],
+        "properties": {
+          "bucketStart": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failureCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "fetchedSum": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "newSum": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "skippedCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "successCount": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SourceMetricsDetail": {
+        "type": "object",
+        "required": [
+          "sourceName",
+          "buckets",
+          "errorKinds",
+          "fetchLatency",
+          "timeToResolution",
+          "bucketSeconds",
+          "rangeSeconds",
+          "since",
+          "until"
+        ],
+        "properties": {
+          "bucketSeconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceMetricsBucket"
+            }
+          },
+          "errorKinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErrorKindBucket"
+            }
+          },
+          "fetchLatency": {
+            "$ref": "#/components/schemas/FetchLatencyDto"
+          },
+          "rangeSeconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "since": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "summary": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SourceMetricsSummaryItem"
+              }
+            ]
+          },
+          "timeToResolution": {
+            "$ref": "#/components/schemas/TimeToResolutionDto"
+          },
+          "until": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SourceMetricsSummary": {
+        "type": "object",
+        "required": [
+          "items",
+          "rangeSeconds",
+          "since",
+          "until"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceMetricsSummaryItem"
+            }
+          },
+          "rangeSeconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "since": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "until": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SourceMetricsSummaryItem": {
+        "type": "object",
+        "required": [
+          "sourceName",
+          "totalRuns",
+          "successCount",
+          "failureCount",
+          "skippedCount",
+          "outcomes"
+        ],
+        "properties": {
+          "failureCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "fetchedSum": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "lastStartedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "lastStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "newSum": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "outcomes": {
+            "$ref": "#/components/schemas/ResolutionOutcomeBreakdown"
+          },
+          "resolvedSum": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "skippedCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "successCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "successRate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Convenience derivation: `successCount / (successCount + failureCount)`,\n`null` when the denominator is zero. Saves the client from a no-op\ndivision when nothing has run yet."
+          },
+          "totalRuns": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "StatsResponse": {
         "type": "object",
         "required": [
@@ -1589,6 +2354,32 @@
           "seriesCount": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "TimeToResolutionDto": {
+        "type": "object",
+        "required": [
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "p50Seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "p95Seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
           }
         }
       },
@@ -1679,6 +2470,10 @@
     {
       "name": "tagging",
       "description": "Canonical genre and tag lists for filter UI"
+    },
+    {
+      "name": "metrics",
+      "description": "Per-source / per-provider historical run metrics"
     }
   ]
 }

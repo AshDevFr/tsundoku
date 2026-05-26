@@ -16,18 +16,23 @@
 
 use std::sync::Arc;
 
+use std::time::Instant;
+
 use anyhow::{Result, anyhow};
 use chrono::{TimeZone, Utc};
 use sea_orm::{DatabaseConnection, Set};
 use td_config::IngestionConfig;
 use td_db::entities::source_state;
+use td_db::repos::run_metrics_repo::{self, PollRunCounts};
 use td_db::repos::{releases_repo, sources_repo};
 use td_metadata::MetadataRegistry;
 use td_resolution::Resolver;
+use td_resolution::pipeline::{ResolutionOutcome, ResolutionPath, ResolutionStatus};
 use td_source::{DiscoverySource, PollContext, PollOutcome};
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
 use crate::JobLocks;
+use crate::error_kind;
 
 /// Build a scheduled poll job for `source`. The cron must already be in
 /// the 6- or 7-field form expected by tokio-cron-scheduler (the bootstrap
@@ -48,7 +53,15 @@ pub fn build(
         let ingestion = ingestion.clone();
         let locks = locks.clone();
         Box::pin(async move {
-            run_tick(source, db, metadata, ingestion, locks).await;
+            run_tick(
+                source,
+                db,
+                metadata,
+                ingestion,
+                locks,
+                run_metrics_repo::trigger::CRON,
+            )
+            .await;
         })
     })
     .map_err(|e: JobSchedulerError| anyhow!("building poll-source job: {e}"))?;
@@ -65,17 +78,33 @@ pub async fn run_tick(
     metadata: Arc<MetadataRegistry>,
     ingestion: IngestionConfig,
     locks: Arc<JobLocks>,
+    trigger: &str,
 ) {
     let kind = source.kind().to_string();
     let name = source.name().to_string();
+    let started_at = Utc::now();
+    let started_at_ts = started_at.timestamp();
 
     let lock = locks.source_lock(&name);
     let Ok(_guard) = lock.try_lock() else {
         tracing::debug!(source = %name, "previous tick still running; skipping");
+        // Record the skip so the admin metrics view can still surface
+        // contention (e.g. cron ticks piling up behind a slow source).
+        record_skipped(&db, &name, &kind, started_at_ts, trigger).await;
         return;
     };
 
-    let started_at = Utc::now();
+    // Insert a "running" row up front so an aborted process (oom, SIGKILL)
+    // leaves a stale row the admin UI can call out, rather than no record.
+    let metrics_id =
+        match run_metrics_repo::start_poll_run(&db, &name, &kind, started_at_ts, trigger).await {
+            Ok(id) => Some(id),
+            Err(e) => {
+                tracing::warn!(error = ?e, source = %name, "failed to record poll_run start");
+                None
+            }
+        };
+
     let prev_state = match sources_repo::get(&db, &kind, &name).await {
         Ok(s) => s,
         Err(e) => {
@@ -85,11 +114,17 @@ pub async fn run_tick(
     };
     let ctx = state_to_context(prev_state.as_ref());
 
-    let outcome = match source.poll(&ctx).await {
+    // Time only the outbound HTTP call, not the surrounding persist/resolve
+    // loop — the admin metrics card uses this as the "feed health" signal.
+    let fetch_started = Instant::now();
+    let poll_result = source.poll(&ctx).await;
+    let fetch_duration_ms = fetch_started.elapsed().as_millis() as i64;
+    let outcome = match poll_result {
         Ok(o) => o,
         Err(e) => {
-            tracing::warn!(error = ?e, source = %name, "poll failed");
-            let summary = format!("error: {e}");
+            let err: anyhow::Error = anyhow::Error::new(e).context(format!("poll {name} failed"));
+            tracing::warn!(error = ?err, source = %name, "poll failed");
+            let summary = format!("error: {err}");
             persist_failure(
                 &db,
                 &kind,
@@ -98,6 +133,19 @@ pub async fn run_tick(
                 &ctx,
                 &summary,
                 started_at,
+            )
+            .await;
+            let kind_class = error_kind::classify_anyhow(&err);
+            finalize_metrics(
+                &db,
+                metrics_id,
+                run_metrics_repo::status::FAILURE,
+                PollRunCounts {
+                    fetch_duration_ms: Some(fetch_duration_ms),
+                    ..Default::default()
+                },
+                Some(&summary),
+                Some(kind_class),
             )
             .await;
             return;
@@ -122,12 +170,20 @@ pub async fn run_tick(
         }
     }
 
+    // Walk the resolver per release and accumulate one counter per
+    // ResolutionOutcome variant. A resolver Err counts as `Failed` so the
+    // breakdown ties out against the persisted release count.
     let resolver = Resolver::new(db.clone(), metadata, ingestion);
     let mut resolve_errors = 0usize;
+    let mut breakdown = OutcomeBreakdown::default();
     for id in &persisted_ids {
-        if let Err(e) = resolver.resolve_one(id).await {
-            tracing::warn!(error = ?e, release_id = %id, "resolver failed; leaving release unresolved");
-            resolve_errors += 1;
+        match resolver.resolve_one(id).await {
+            Ok(o) => breakdown.record(&o),
+            Err(e) => {
+                tracing::warn!(error = ?e, release_id = %id, "resolver failed; leaving release unresolved");
+                resolve_errors += 1;
+                breakdown.failed += 1;
+            }
         }
     }
 
@@ -140,6 +196,108 @@ pub async fn run_tick(
     );
     tracing::info!(source = %name, %summary, "poll tick complete");
     persist_success(&db, &kind, &name, &outcome, &summary, started_at).await;
+
+    let counts = PollRunCounts {
+        fetched: Some(fetched as i32),
+        new: Some(persisted_ids.len() as i32),
+        resolved: Some(persisted_ids.len().saturating_sub(resolve_errors) as i32),
+        fetch_duration_ms: Some(fetch_duration_ms),
+        outcome_known_id: Some(breakdown.known_id),
+        outcome_foreign_id: Some(breakdown.foreign_id),
+        outcome_fuzzy: Some(breakdown.fuzzy),
+        outcome_review: Some(breakdown.review),
+        outcome_failed: Some(breakdown.failed),
+    };
+    finalize_metrics(
+        &db,
+        metrics_id,
+        run_metrics_repo::status::SUCCESS,
+        counts,
+        None,
+        None,
+    )
+    .await;
+}
+
+#[derive(Default)]
+struct OutcomeBreakdown {
+    known_id: i32,
+    foreign_id: i32,
+    fuzzy: i32,
+    review: i32,
+    failed: i32,
+}
+
+impl OutcomeBreakdown {
+    fn record(&mut self, outcome: &ResolutionOutcome) {
+        match (outcome.path, outcome.status) {
+            (Some(ResolutionPath::KnownExternalId), ResolutionStatus::Resolved) => {
+                self.known_id += 1
+            }
+            (Some(ResolutionPath::ForeignIdLookup), ResolutionStatus::Resolved) => {
+                self.foreign_id += 1
+            }
+            (Some(ResolutionPath::FuzzyTitle), ResolutionStatus::Resolved) => self.fuzzy += 1,
+            (_, ResolutionStatus::ReviewPending) | (_, ResolutionStatus::Ambiguous) => {
+                self.review += 1
+            }
+            _ => self.failed += 1,
+        }
+    }
+}
+
+async fn record_skipped(
+    db: &DatabaseConnection,
+    name: &str,
+    kind: &str,
+    started_at: i64,
+    trigger: &str,
+) {
+    match run_metrics_repo::start_poll_run(db, name, kind, started_at, trigger).await {
+        Ok(id) => {
+            if let Err(e) = run_metrics_repo::finalize_poll_run(
+                db,
+                id,
+                started_at,
+                run_metrics_repo::status::SKIPPED,
+                PollRunCounts::default(),
+                Some("previous tick still running"),
+                None,
+            )
+            .await
+            {
+                tracing::warn!(error = ?e, source = %name, "failed to record skipped poll_run");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, source = %name, "failed to insert skipped poll_run row");
+        }
+    }
+}
+
+async fn finalize_metrics(
+    db: &DatabaseConnection,
+    id: Option<i64>,
+    status: &str,
+    counts: PollRunCounts,
+    error_message: Option<&str>,
+    error_kind: Option<&str>,
+) {
+    let Some(id) = id else { return };
+    let finished_at = Utc::now().timestamp();
+    if let Err(e) = run_metrics_repo::finalize_poll_run(
+        db,
+        id,
+        finished_at,
+        status,
+        counts,
+        error_message,
+        error_kind,
+    )
+    .await
+    {
+        tracing::warn!(error = ?e, run_id = id, "failed to finalize poll_run row");
+    }
 }
 
 fn state_to_context(state: Option<&source_state::Model>) -> PollContext {

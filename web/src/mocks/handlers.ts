@@ -278,6 +278,136 @@ export const handlers = [
     });
   }),
 
+  http.get("/api/v1/metrics/sources", () =>
+    HttpResponse.json({
+      items: [
+        {
+          sourceName: "english-manga-trusted",
+          totalRuns: 12,
+          successCount: 11,
+          failureCount: 1,
+          skippedCount: 0,
+          fetchedSum: 250,
+          newSum: 75,
+          resolvedSum: 60,
+          lastStartedAt: NOW - 600,
+          lastStatus: "success",
+          successRate: 11 / 12,
+          outcomes: {
+            knownId: 30,
+            foreignId: 12,
+            fuzzy: 18,
+            review: 5,
+            failed: 1,
+          },
+        },
+      ],
+      rangeSeconds: 24 * 3600,
+      since: NOW - 24 * 3600,
+      until: NOW,
+    }),
+  ),
+
+  http.get("/api/v1/metrics/sources/:name", ({ params }) =>
+    HttpResponse.json({
+      sourceName: String(params.name),
+      summary: {
+        sourceName: String(params.name),
+        totalRuns: 12,
+        successCount: 11,
+        failureCount: 1,
+        skippedCount: 0,
+        fetchedSum: 250,
+        newSum: 75,
+        resolvedSum: 60,
+        lastStartedAt: NOW - 600,
+        lastStatus: "success",
+        successRate: 11 / 12,
+        outcomes: {
+          knownId: 30,
+          foreignId: 12,
+          fuzzy: 18,
+          review: 5,
+          failed: 1,
+        },
+      },
+      buckets: [
+        {
+          bucketStart: NOW - 3600,
+          successCount: 2,
+          failureCount: 0,
+          skippedCount: 0,
+          fetchedSum: 24,
+          newSum: 8,
+        },
+        {
+          bucketStart: NOW - 1800,
+          successCount: 1,
+          failureCount: 1,
+          skippedCount: 0,
+          fetchedSum: 5,
+          newSum: 1,
+        },
+      ],
+      errorKinds: [{ kind: "network", count: 1 }],
+      fetchLatency: { p50Ms: 1200, p95Ms: 4500, maxMs: 6000 },
+      timeToResolution: { p50Seconds: 90, p95Seconds: 600, count: 60 },
+      bucketSeconds: 3600,
+      rangeSeconds: 24 * 3600,
+      since: NOW - 24 * 3600,
+      until: NOW,
+    }),
+  ),
+
+  http.get("/api/v1/metrics/providers", () =>
+    HttpResponse.json({
+      items: [
+        {
+          providerId: "mangabaka",
+          totalRuns: 4,
+          successCount: 4,
+          failureCount: 0,
+          skippedCount: 0,
+          bytesSum: 476_000_000,
+          lastStartedAt: NOW - 3600,
+          lastStatus: "success",
+          successRate: 1.0,
+        },
+      ],
+      rangeSeconds: 24 * 3600,
+      since: NOW - 24 * 3600,
+      until: NOW,
+    }),
+  ),
+
+  http.get("/api/v1/metrics/review-queue", () =>
+    HttpResponse.json({
+      snapshots: [
+        {
+          capturedAt: NOW - 7200,
+          pendingCount: 7,
+          unresolvedCount: 3,
+          ambiguousCount: 2,
+          reviewPendingCount: 2,
+          oldestPendingSeconds: 10_800,
+        },
+        {
+          capturedAt: NOW - 3600,
+          pendingCount: 5,
+          unresolvedCount: 2,
+          ambiguousCount: 1,
+          reviewPendingCount: 2,
+          oldestPendingSeconds: 9_000,
+        },
+      ],
+      timeToDecisionP50Seconds: 240,
+      closedCount: 18,
+      rangeSeconds: 24 * 3600,
+      since: NOW - 24 * 3600,
+      until: NOW,
+    }),
+  ),
+
   http.get("/api/v1/series", ({ request }) => {
     const url = new URL(request.url);
     const kind = url.searchParams.get("kind");

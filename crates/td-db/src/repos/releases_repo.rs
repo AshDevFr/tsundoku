@@ -95,6 +95,7 @@ fn to_active_model(
         last_resolve_attempt_at: Set(None),
         volume_span_json: Set(None),
         chapter_span_json: Set(None),
+        resolved_at: Set(None),
     })
 }
 

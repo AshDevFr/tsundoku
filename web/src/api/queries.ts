@@ -19,6 +19,26 @@ export type UnresolvedRelease = components["schemas"]["UnresolvedRelease"];
 export type ReviewCandidateDto = components["schemas"]["ReviewCandidateDto"];
 export type TagList = components["schemas"]["TagList"];
 export type TagUsageDto = components["schemas"]["TagUsageDto"];
+export type SourceMetricsSummary =
+  components["schemas"]["SourceMetricsSummary"];
+export type SourceMetricsSummaryItem =
+  components["schemas"]["SourceMetricsSummaryItem"];
+export type SourceMetricsDetail = components["schemas"]["SourceMetricsDetail"];
+export type SourceMetricsBucket = components["schemas"]["SourceMetricsBucket"];
+export type ProviderMetricsSummary =
+  components["schemas"]["ProviderMetricsSummary"];
+export type ProviderMetricsSummaryItem =
+  components["schemas"]["ProviderMetricsSummaryItem"];
+export type ProviderMetricsDetail =
+  components["schemas"]["ProviderMetricsDetail"];
+export type ResolutionOutcomeBreakdown =
+  components["schemas"]["ResolutionOutcomeBreakdown"];
+export type ErrorKindBucket = components["schemas"]["ErrorKindBucket"];
+export type FetchLatencyDto = components["schemas"]["FetchLatencyDto"];
+export type TimeToResolutionDto = components["schemas"]["TimeToResolutionDto"];
+export type ReviewQueueMetrics = components["schemas"]["ReviewQueueMetrics"];
+export type ReviewQueueSnapshotDto =
+  components["schemas"]["ReviewQueueSnapshotDto"];
 
 export interface SeriesFilters {
   kind?: string;
@@ -157,6 +177,108 @@ export function useTags() {
       return data;
     },
     staleTime: 60_000,
+  });
+}
+
+export interface MetricsRange {
+  range?: string;
+  buckets?: number;
+}
+
+export function useSourceMetricsSummary(opts: MetricsRange = {}) {
+  const query = {
+    range: opts.range || undefined,
+    buckets: typeof opts.buckets === "number" ? opts.buckets : undefined,
+  };
+  return useQuery({
+    queryKey: ["metrics-sources", query],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/metrics/sources", {
+        params: { query },
+      });
+      if (error) throw new Error("failed to load source metrics");
+      return data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useSourceMetricsDetail(
+  name: string | undefined,
+  opts: MetricsRange = {},
+) {
+  const query = {
+    range: opts.range || undefined,
+    buckets: typeof opts.buckets === "number" ? opts.buckets : undefined,
+  };
+  return useQuery({
+    queryKey: ["metrics-source", name, query],
+    enabled: typeof name === "string" && name.length > 0,
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/metrics/sources/{name}", {
+        params: { path: { name: name as string }, query },
+      });
+      if (error) throw new Error("failed to load source metrics detail");
+      return data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useProviderMetricsDetail(
+  id: string | undefined,
+  opts: MetricsRange = {},
+) {
+  const query = {
+    range: opts.range || undefined,
+    buckets: typeof opts.buckets === "number" ? opts.buckets : undefined,
+  };
+  return useQuery({
+    queryKey: ["metrics-provider", id, query],
+    enabled: typeof id === "string" && id.length > 0,
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/metrics/providers/{id}", {
+        params: { path: { id: id as string }, query },
+      });
+      if (error) throw new Error("failed to load provider metrics detail");
+      return data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useReviewQueueMetrics(opts: MetricsRange = {}) {
+  const query = {
+    range: opts.range || undefined,
+  };
+  return useQuery({
+    queryKey: ["metrics-review-queue", query],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/metrics/review-queue", {
+        params: { query },
+      });
+      if (error) throw new Error("failed to load review-queue metrics");
+      return data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useProviderMetricsSummary(opts: MetricsRange = {}) {
+  const query = {
+    range: opts.range || undefined,
+    buckets: typeof opts.buckets === "number" ? opts.buckets : undefined,
+  };
+  return useQuery({
+    queryKey: ["metrics-providers", query],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/metrics/providers", {
+        params: { query },
+      });
+      if (error) throw new Error("failed to load provider metrics");
+      return data;
+    },
+    staleTime: 30_000,
   });
 }
 

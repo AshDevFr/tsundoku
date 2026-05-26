@@ -195,6 +195,7 @@ async fn poll_tick_persists_releases_and_updates_source_state() {
         metadata,
         IngestionConfig::default(),
         locks,
+        "cron",
     )
     .await;
 
@@ -216,6 +217,21 @@ async fn poll_tick_persists_releases_and_updates_source_state() {
     let summary = state.last_summary.unwrap_or_default();
     assert!(summary.contains("2 fetched"), "got {summary:?}");
     assert!(summary.contains("2 persisted"), "got {summary:?}");
+
+    // The tick also records exactly one poll_runs row with status=success.
+    let runs = td_db::entities::poll_runs::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(runs.len(), 1);
+    let run = &runs[0];
+    assert_eq!(run.source_name, "trusted");
+    assert_eq!(run.source_kind, "fake");
+    assert_eq!(run.status, "success");
+    assert_eq!(run.fetched_count, Some(2));
+    assert_eq!(run.new_count, Some(2));
+    assert!(run.finished_at.is_some());
+    assert_eq!(run.trigger, "cron");
 }
 
 #[tokio::test]
@@ -241,6 +257,7 @@ async fn poll_tick_with_held_lock_is_a_noop() {
         metadata,
         IngestionConfig::default(),
         locks.clone(),
+        "cron",
     )
     .await;
 
@@ -287,6 +304,7 @@ async fn poll_tick_handles_source_failure_without_panicking() {
         metadata,
         IngestionConfig::default(),
         locks,
+        "cron",
     )
     .await;
 
@@ -320,6 +338,7 @@ async fn refresh_tick_appends_provider_cache_state_on_refreshed_status() {
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
         locks,
+        "cron",
     )
     .await;
 
@@ -331,6 +350,16 @@ async fn refresh_tick_appends_provider_cache_state_on_refreshed_status() {
     assert_eq!(latest.record_count, Some(12345));
     assert_eq!(latest.cache_version.as_deref(), Some("v1"));
     assert_eq!(latest.bytes_downloaded, Some(42));
+
+    // Refresh metrics row is also written.
+    let refreshes = td_db::entities::provider_refreshes::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(refreshes.len(), 1);
+    assert_eq!(refreshes[0].status, "success");
+    assert_eq!(refreshes[0].record_count, Some(12345));
+    assert_eq!(refreshes[0].trigger, "cron");
 }
 
 #[tokio::test]
@@ -343,6 +372,7 @@ async fn refresh_tick_skips_persistence_for_not_supported() {
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
         locks,
+        "cron",
     )
     .await;
 
@@ -373,6 +403,7 @@ async fn refresh_tick_with_held_lock_is_a_noop() {
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
         locks.clone(),
+        "cron",
     )
     .await;
 
@@ -440,7 +471,8 @@ async fn scheduler_fires_source_and_provider_jobs_on_schedule() {
     };
 
     let mut scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
-    assert_eq!(scheduler.job_count(), 2);
+    // 1 source job + 1 provider refresh job + 1 review-queue snapshot job.
+    assert_eq!(scheduler.job_count(), 3);
     scheduler.start().await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(2500)).await;
@@ -510,7 +542,91 @@ async fn scheduler_skips_sources_without_cron_or_unknown_registry_entry() {
         locks: Arc::new(JobLocks::default()),
     };
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
-    assert_eq!(scheduler.job_count(), 0);
+    // Only the unconditional review-queue snapshot job lands; source +
+    // provider jobs are skipped.
+    assert_eq!(scheduler.job_count(), 1);
+}
+
+#[tokio::test]
+async fn snapshot_review_queue_writes_row_with_pending_breakdown() {
+    use sea_orm::{ActiveModelTrait, Set};
+    use td_db::entities::releases as releases_entity;
+
+    let db = fresh_db().await;
+    // Seed two pending releases: one unresolved (older), one ambiguous.
+    let now = chrono::Utc::now().timestamp();
+    let pending = releases_entity::ActiveModel {
+        id: Set("nyaa:p:1".into()),
+        source_kind: Set("nyaa".into()),
+        source_name: Set("trusted".into()),
+        external_id: Set("1".into()),
+        title: Set("Pending".into()),
+        link: Set("https://example.com/1".into()),
+        magnet: Set(None),
+        torrent_url: Set(None),
+        ddl_url: Set(None),
+        info_hash: Set(None),
+        size_bytes: Set(None),
+        files_json: Set(None),
+        description_html: Set(None),
+        extracted_links_json: Set(None),
+        posted_at: Set(now - 7_200),
+        observed_at: Set(now - 7_200),
+        series_id: Set(None),
+        resolution_path: Set(None),
+        resolution_confidence: Set(None),
+        resolution_status: Set("unresolved".into()),
+        resolution_attempts: Set(1),
+        last_resolve_attempt_at: Set(None),
+        volume_span_json: Set(None),
+        chapter_span_json: Set(None),
+        resolved_at: Set(None),
+    };
+    pending.insert(&db).await.unwrap();
+    let ambiguous = releases_entity::ActiveModel {
+        id: Set("nyaa:p:2".into()),
+        source_kind: Set("nyaa".into()),
+        source_name: Set("trusted".into()),
+        external_id: Set("2".into()),
+        title: Set("Ambig".into()),
+        link: Set("https://example.com/2".into()),
+        magnet: Set(None),
+        torrent_url: Set(None),
+        ddl_url: Set(None),
+        info_hash: Set(None),
+        size_bytes: Set(None),
+        files_json: Set(None),
+        description_html: Set(None),
+        extracted_links_json: Set(None),
+        posted_at: Set(now - 300),
+        observed_at: Set(now - 300),
+        series_id: Set(None),
+        resolution_path: Set(None),
+        resolution_confidence: Set(None),
+        resolution_status: Set("ambiguous".into()),
+        resolution_attempts: Set(1),
+        last_resolve_attempt_at: Set(None),
+        volume_span_json: Set(None),
+        chapter_span_json: Set(None),
+        resolved_at: Set(None),
+    };
+    ambiguous.insert(&db).await.unwrap();
+
+    jobs::snapshot_review_queue::run_tick(db.clone()).await;
+
+    let rows = td_db::entities::review_queue_snapshots::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.unresolved_count, 1);
+    assert_eq!(row.ambiguous_count, 1);
+    assert_eq!(row.review_pending_count, 0);
+    assert_eq!(row.pending_count, 2);
+    // Oldest pending is ~2 hours old.
+    let age = row.oldest_pending_seconds.unwrap();
+    assert!((7_000..=7_500).contains(&age), "got age {age}");
 }
 
 #[test]
