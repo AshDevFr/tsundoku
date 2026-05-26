@@ -10,8 +10,17 @@ services:
     volumes:
       - ./config:/app/config:ro
       - ./docker/data:/app/data:rw
+    env_file:
+      - path: .env
+        required: false
     environment:
       RUST_LOG: info
+      # MangaBaka provider: offline dump + live API fallback. Set
+      # TSUNDOKU_PROVIDERS__MANGABAKA__API_KEY in .env to enable the
+      # fallback path; without a key cache misses surface as Ok(None).
+      TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_DUMP_URL: https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz
+      TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_REFRESH_CRON: "0 4 * * 0"
+      TSUNDOKU_PROVIDERS__MANGABAKA__API_FALLBACK: "true"
     restart: unless-stopped
     profiles:
       - prod
@@ -32,9 +41,15 @@ services:
       - target_cache:/app/target
       - ./config:/app/config:ro
       - ./docker/data:/app/data:rw
+    env_file:
+      - path: .env
+        required: false
     environment:
       RUST_BACKTRACE: "1"
       RUST_LOG: debug
+      TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_DUMP_URL: https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz
+      TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_REFRESH_CRON: "0 4 * * 0"
+      TSUNDOKU_PROVIDERS__MANGABAKA__API_FALLBACK: "true"
     profiles:
       - dev
     networks:

@@ -41,6 +41,8 @@ Makefile
 config/tsundoku.toml
 config/tsundoku.yaml
 config/tsundoku.local.*
+.env
+.env.example
 
 # IDE / OS / agent state
 .vscode/
