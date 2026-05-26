@@ -1,5 +1,6 @@
 mod api;
 mod commands;
+mod metadata;
 
 use std::path::PathBuf;
 
@@ -30,6 +31,16 @@ enum Commands {
         #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
         config: PathBuf,
     },
+    /// Refresh the offline cache for every registered metadata provider
+    /// (or one named provider). Providers without an offline cache are
+    /// skipped silently.
+    RefreshMetadata {
+        #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
+        config: PathBuf,
+        /// Provider id to refresh; omit to iterate every registered provider.
+        #[arg(short, long)]
+        provider: Option<String>,
+    },
     /// Write the OpenAPI specification to a file
     Openapi {
         #[arg(short, long, default_value = "web/openapi.json")]
@@ -43,6 +54,9 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Serve { config } => commands::serve::run(config).await,
         Commands::Migrate { config } => commands::migrate::run(config).await,
+        Commands::RefreshMetadata { config, provider } => {
+            commands::refresh_metadata::run(config, provider).await
+        }
         Commands::Openapi { output } => commands::openapi::run(&output),
     }
 }

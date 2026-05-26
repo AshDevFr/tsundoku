@@ -6,18 +6,22 @@
 # Every value can be overridden by an environment variable using the
 # TSUNDOKU_ prefix and __ for nesting, e.g.:
 #   TSUNDOKU_SERVER__PORT=9000
-#   TSUNDOKU_DATABASE__URL=postgres://...
+#   TSUNDOKU_STORAGE__DATA_DIR=/var/lib/tsundoku
 
 [server]
 host = "127.0.0.1"
 port = 8080
 
-[database]
-# SQLite (default). For Postgres use:
-#   url = "postgres://user:pass@localhost:5432/tsundoku"
-# and swap the sea-orm feature to sqlx-postgres in the workspace Cargo.toml.
-url = "sqlite://data/tsundoku.db?mode=rwc"
-max_connections = 16
+# Single on-disk root. The database, every provider's offline cache, the
+# cover cache, and scratch space all live under this directory. Each
+# subpath may be explicitly overridden below; otherwise they default to
+# subdirectories of data_dir. Docker mounts a single volume here.
+[storage]
+data_dir = "./data"
+# database_path        = "./data/db/tsundoku.db"
+# provider_cache_dir   = "./data/cache/providers"
+# cover_cache_dir      = "./data/cache/covers"
+# tmp_dir              = "./data/tmp"
 
 [logging]
 level = "info"
@@ -26,3 +30,24 @@ json = false
 [api]
 # Mount the Scalar API docs UI at /docs
 docs = true
+
+# Metadata-layer settings. Exactly one provider runs the auto-detect
+# resolution path; others may still be registered for review UI search
+# and foreign-ID lookups.
+[metadata]
+active_provider = "mangabaka"
+
+# Per-provider config. Adding a new provider = adding a [providers.<id>]
+# block + a line in the registry builder.
+[providers.mangabaka]
+enabled = true
+api_base_url           = "https://api.mangabaka.dev"
+# Set api_key + api_fallback = true to enable live API calls. Without an
+# api_key the provider runs in offline-only mode; cache misses surface as
+# `Ok(None)` to the resolver.
+# api_key              = "mb-..."
+# api_fallback         = true
+# offline_dump_url     = "https://..."        # leave unset to disable offline cache
+# offline_refresh_cron = "0 4 * * 0"          # weekly Sunday 04:00 UTC
+negative_cache_ttl_days = 7
+timeout_seconds        = 60

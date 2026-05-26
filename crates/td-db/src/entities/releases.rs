@@ -36,7 +36,7 @@ pub enum Relation {
     #[sea_orm(
         belongs_to = "super::series::Entity",
         from = "Column::SeriesId",
-        to = "super::series::Column::MangabakaId"
+        to = "super::series::Column::Id"
     )]
     Series,
     #[sea_orm(has_many = "super::release_formats::Entity")]

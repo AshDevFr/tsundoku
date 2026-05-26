@@ -3,6 +3,8 @@ members = [
     "crates/tsundoku",
     "crates/td-config",
     "crates/td-db",
+    "crates/td-metadata",
+    "crates/td-metadata-mangabaka",
     "migration",
 ]
 resolver = "2"
@@ -54,7 +56,13 @@ utoipa-axum = "0.2"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
 
 # HTTP client
-reqwest = { version = "0.13", features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.13", features = ["json", "rustls", "stream"] }
+
+# Offline-dump ingestion
+flate2 = "1"
+tar = "0.4"
+sha1 = "0.11"
+futures = "0.3"
 
 # Common types
 chrono = { version = "0.4", features = ["serde"] }

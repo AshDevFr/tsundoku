@@ -1,13 +1,12 @@
 # Config used by the dev container (Dockerfile.dev / docker compose dev profile).
-# Binds all interfaces and writes the SQLite DB to the mounted /app/data volume.
+# Binds all interfaces and roots all on-disk state at the mounted /app/data volume.
 
 [server]
 host = "0.0.0.0"
 port = 8080
 
-[database]
-url = "sqlite:///app/data/tsundoku.db?mode=rwc"
-max_connections = 16
+[storage]
+data_dir = "/app/data"
 
 [logging]
 level = "debug"
@@ -15,3 +14,13 @@ json = false
 
 [api]
 docs = true
+
+[metadata]
+active_provider = "mangabaka"
+
+[providers.mangabaka]
+enabled = true
+api_base_url = "https://api.mangabaka.dev"
+# Set api_key + api_fallback = true in your production config to use the live API.
+negative_cache_ttl_days = 7
+timeout_seconds = 60

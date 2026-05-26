@@ -2,25 +2,19 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
-#[sea_orm(table_name = "review_candidates")]
+#[sea_orm(table_name = "series_external_ids")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
-    pub release_id: String,
+    pub provider: String,
     #[sea_orm(primary_key, auto_increment = false)]
+    pub external_id: String,
     pub series_id: i32,
-    pub score: f64,
-    pub reason: Option<String>,
+    pub external_url: Option<String>,
+    pub fetched_at: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(
-        belongs_to = "super::releases::Entity",
-        from = "Column::ReleaseId",
-        to = "super::releases::Column::Id",
-        on_delete = "Cascade"
-    )]
-    Release,
     #[sea_orm(
         belongs_to = "super::series::Entity",
         from = "Column::SeriesId",
@@ -28,12 +22,6 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Series,
-}
-
-impl Related<super::releases::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Release.def()
-    }
 }
 
 impl Related<super::series::Entity> for Entity {

@@ -12,3 +12,4 @@ path = "src/lib.rs"
 [dependencies]
 async-trait.workspace = true
 sea-orm-migration.workspace = true
+td-metadata-mangabaka = { path = "../crates/td-metadata-mangabaka" }

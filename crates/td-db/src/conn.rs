@@ -17,22 +17,19 @@ use td_config::AppConfig;
 pub const DEFAULT_BUSY_TIMEOUT_MS: u32 = 5_000;
 
 pub async fn connect(cfg: &AppConfig) -> anyhow::Result<DatabaseConnection> {
-    let mut opts = ConnectOptions::new(&cfg.database.url);
+    let paths = cfg.storage.paths();
+    paths.ensure()?;
+    let url = paths.database_url();
+
+    let mut opts = ConnectOptions::new(&url);
     // SQLite serializes writers; multi-connection pools just multiply the
     // chance of `SQLITE_BUSY` without buying throughput at this scale.
-    let max_conn = if cfg.database.url.starts_with("sqlite") {
-        1
-    } else {
-        cfg.database.max_connections
-    };
-    opts.max_connections(max_conn).sqlx_logging(false);
+    opts.max_connections(1).sqlx_logging(false);
     let db = Database::connect(opts)
         .await
-        .with_context(|| format!("connecting to database {}", cfg.database.url))?;
+        .with_context(|| format!("connecting to database {url}"))?;
 
-    if cfg.database.url.starts_with("sqlite") {
-        apply_sqlite_pragmas(&db).await?;
-    }
+    apply_sqlite_pragmas(&db).await?;
     Ok(db)
 }
 

@@ -21,13 +21,24 @@ RUN cargo install cargo-watch cargo-nextest --locked
 
 WORKDIR /app
 
-# Copy workspace manifests for dependency caching
+# Copy only workspace manifests so the dep-cache layer survives source edits.
+# Add one COPY line per workspace crate when the project grows.
 COPY Cargo.toml Cargo.lock ./
 COPY migration/Cargo.toml ./migration/
-COPY crates/ ./crates/
-RUN find ./crates -mindepth 2 -maxdepth 2 -name "src" -prune -o -type d -print
+COPY crates/tsundoku/Cargo.toml ./crates/tsundoku/
+COPY crates/td-config/Cargo.toml ./crates/td-config/
+COPY crates/td-db/Cargo.toml ./crates/td-db/
+COPY crates/td-metadata/Cargo.toml ./crates/td-metadata/
+COPY crates/td-metadata-mangabaka/Cargo.toml ./crates/td-metadata-mangabaka/
 
-# Stub source files so the dependency layer can build
+# Stub source files so the dependency layer can build, then drop every
+# workspace-member fingerprint so the real bind-mounted source rebuilds.
+# The fingerprint globs must use cargo's *package* names (hyphens), not the
+# Rust crate names (underscores). cargo writes
+# `target/debug/.fingerprint/<package>-<hash>/`, e.g. `td-metadata-*`, NOT
+# `td_metadata_*`. A wrong glob matches nothing, leaves a stub-compiled
+# rlib in target/debug/deps/ that cargo links, and surfaces at container
+# start as "could not find <Symbol> in <crate>".
 RUN find ./crates -mindepth 1 -maxdepth 1 -type d | while read -r dir; do \
         mkdir -p "$dir/src" && \
         if [ -f "$dir/Cargo.toml" ] && grep -q "\[\[bin\]\]" "$dir/Cargo.toml"; then \
@@ -41,7 +52,9 @@ RUN find ./crates -mindepth 1 -maxdepth 1 -type d | while read -r dir; do \
     cargo build && \
     find ./crates -mindepth 2 -maxdepth 2 -name src -type d -exec rm -rf {} + && \
     rm -rf migration/src && \
-    find target/debug/.fingerprint -name "tsundoku-*" -prune -exec rm -rf {} + 2>/dev/null || true
+    find target/debug/.fingerprint \
+        \( -name 'tsundoku-*' -o -name 'td-*' -o -name 'migration-*' \) \
+        -prune -exec rm -rf {} + 2>/dev/null || true
 
 # The real source is bind-mounted via docker compose; cargo watch picks up changes.
 EXPOSE 8080

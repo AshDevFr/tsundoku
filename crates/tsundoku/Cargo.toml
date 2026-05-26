@@ -19,6 +19,8 @@ embed-frontend = ["dep:rust-embed", "dep:mime_guess"]
 [dependencies]
 td-config = { path = "../td-config" }
 td-db = { path = "../td-db" }
+td-metadata = { path = "../td-metadata" }
+td-metadata-mangabaka = { path = "../td-metadata-mangabaka" }
 
 tokio.workspace = true
 axum.workspace = true

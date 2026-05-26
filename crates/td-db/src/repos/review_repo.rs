@@ -26,7 +26,7 @@ pub async fn replace_for_release(
             .on_conflict(
                 OnConflict::columns([
                     review_candidates::Column::ReleaseId,
-                    review_candidates::Column::MangabakaId,
+                    review_candidates::Column::SeriesId,
                 ])
                 .update_columns([
                     review_candidates::Column::Score,
