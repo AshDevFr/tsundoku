@@ -37,11 +37,21 @@ export function AppShell({ children }: { children: ReactNode }) {
                   {stats.data.series} series
                 </Text>
               )}
-              {reviewCount > 0 && (
-                <Badge color="orange" variant="light" radius="sm">
-                  {reviewCount} to review
+              <Anchor
+                component={Link}
+                to="/review"
+                underline="never"
+                aria-label={`Review queue (${reviewCount} pending)`}
+              >
+                <Badge
+                  color={reviewCount > 0 ? "orange" : "gray"}
+                  variant={reviewCount > 0 ? "light" : "default"}
+                  radius="sm"
+                  style={{ cursor: "pointer" }}
+                >
+                  {reviewCount > 0 ? `${reviewCount} to review` : "review"}
                 </Badge>
-              )}
+              </Anchor>
               {stats.data?.activeProvider && (
                 <Badge variant="default" radius="sm">
                   {stats.data.activeProvider}

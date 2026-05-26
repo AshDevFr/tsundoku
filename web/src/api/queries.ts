@@ -10,6 +10,9 @@ export type ReleasePage = components["schemas"]["ReleasePage"];
 export type SourceDto = components["schemas"]["SourceDto"];
 export type ProviderDto = components["schemas"]["ProviderDto"];
 export type StatsResponse = components["schemas"]["StatsResponse"];
+export type UnresolvedPage = components["schemas"]["UnresolvedPage"];
+export type UnresolvedRelease = components["schemas"]["UnresolvedRelease"];
+export type ReviewCandidateDto = components["schemas"]["ReviewCandidateDto"];
 
 export interface SeriesFilters {
   kind?: string;
@@ -106,5 +109,36 @@ export function useStats() {
       return data;
     },
     staleTime: 30_000,
+  });
+}
+
+export function useProviders() {
+  return useQuery({
+    queryKey: ["providers"],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/providers");
+      if (error) throw new Error("failed to load providers");
+      return data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+const DEFAULT_REVIEW_PAGE_SIZE = 20;
+
+export function useUnresolvedReleases(
+  page = 1,
+  pageSize = DEFAULT_REVIEW_PAGE_SIZE,
+) {
+  return useQuery({
+    queryKey: ["releases-unresolved", page, pageSize],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/releases/unresolved", {
+        params: { query: { page, pageSize } },
+      });
+      if (error) throw new Error("failed to load review queue");
+      return data;
+    },
+    placeholderData: (prev) => prev,
   });
 }

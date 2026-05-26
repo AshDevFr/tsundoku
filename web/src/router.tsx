@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { FeedPage } from "@/pages/FeedPage";
+import { ReviewPage } from "@/pages/ReviewPage";
 import { SeriesDetailPage } from "@/pages/SeriesDetailPage";
 import type { FilterSearch } from "@/stores/filters";
 
@@ -44,7 +45,17 @@ export const seriesDetailRoute = createRoute({
   component: SeriesDetailPage,
 });
 
-const routeTree = rootRoute.addChildren([feedRoute, seriesDetailRoute]);
+export const reviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/review",
+  component: ReviewPage,
+});
+
+const routeTree = rootRoute.addChildren([
+  feedRoute,
+  seriesDetailRoute,
+  reviewRoute,
+]);
 
 export const router = createRouter({ routeTree });
 

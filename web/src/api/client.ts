@@ -1,4 +1,5 @@
 import createClient from "openapi-fetch";
+import { currentAdminToken } from "@/stores/auth";
 import type { paths } from "@/types/api.generated";
 
 // Typed against the generated OpenAPI paths. Regenerate after backend changes:
@@ -17,4 +18,18 @@ const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
 export const api = createClient<paths>({
   baseUrl,
   fetch: (...args) => fetch(...args),
+});
+
+// Attach the admin bearer to every write. Reads stay unauthenticated unless
+// the server is configured with read_requires_auth, which we do not surface
+// in the UI today.
+const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+api.use({
+  onRequest({ request }) {
+    if (WRITE_METHODS.has(request.method)) {
+      const token = currentAdminToken();
+      if (token) request.headers.set("Authorization", `Bearer ${token}`);
+    }
+    return request;
+  },
 });

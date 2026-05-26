@@ -7,8 +7,12 @@ type SeriesDetail = components["schemas"]["SeriesDetail"];
 type ReleasePage = components["schemas"]["ReleasePage"];
 type ReleaseDto = components["schemas"]["ReleaseDto"];
 type StatsResponse = components["schemas"]["StatsResponse"];
+type UnresolvedRelease = components["schemas"]["UnresolvedRelease"];
+type UnresolvedPage = components["schemas"]["UnresolvedPage"];
+type LinkRequest = components["schemas"]["LinkRequest"];
 
 const NOW = Math.floor(Date.now() / 1000);
+const ADMIN_TOKEN = "test-admin-token";
 
 const SERIES: (SeriesListItem & {
   genres: string[];
@@ -55,6 +59,100 @@ const SERIES: (SeriesListItem & {
   },
 ];
 
+// Mutable review queue so tests can assert that a release leaves the queue
+// after a link / reject. Reset via `resetReviewQueue()`.
+const INITIAL_QUEUE: UnresolvedRelease[] = [
+  {
+    id: "nyaa:9001",
+    sourceKind: "nyaa",
+    sourceName: "english-manga-trusted",
+    externalId: "9001",
+    title: "[Group] Mystery Series v01 (2024) (Digital) (CBZ)",
+    link: "https://nyaa.si/view/9001",
+    magnet: "magnet:?xt=urn:btih:dummy9001",
+    torrentUrl: null,
+    ddlUrl: null,
+    infoHash: null,
+    sizeBytes: 22_345_678,
+    files: ["mystery_series_v01.cbz"],
+    formats: ["cbz"],
+    postedAt: NOW - 1_800,
+    observedAt: NOW - 1_200,
+    seriesId: null,
+    resolutionPath: null,
+    resolutionConfidence: 0.6,
+    resolutionStatus: "ambiguous",
+    resolutionAttempts: 2,
+    lastResolveAttemptAt: NOW - 1_200,
+    candidates: [
+      {
+        seriesId: 1,
+        seriesTitle: "Chainsaw Man",
+        seriesCoverUrl: null,
+        score: 0.72,
+        reason: "fuzzy title (0.72)",
+      },
+      {
+        seriesId: 3,
+        seriesTitle: "Solo Leveling",
+        seriesCoverUrl: null,
+        score: 0.61,
+        reason: "fuzzy title (0.61)",
+      },
+    ],
+  },
+  {
+    id: "nyaa:9002",
+    sourceKind: "nyaa",
+    sourceName: "tsuna69",
+    externalId: "9002",
+    title: "[Uploader] Unknown Title v05",
+    link: "https://nyaa.si/view/9002",
+    magnet: null,
+    torrentUrl: "https://nyaa.si/download/9002.torrent",
+    ddlUrl: null,
+    infoHash: null,
+    sizeBytes: 100_000_000,
+    files: ["unknown.cbz"],
+    formats: ["cbz"],
+    postedAt: NOW - 7_200,
+    observedAt: NOW - 6_000,
+    seriesId: null,
+    resolutionPath: null,
+    resolutionConfidence: null,
+    resolutionStatus: "unresolved",
+    resolutionAttempts: 1,
+    lastResolveAttemptAt: NOW - 6_000,
+    candidates: [],
+  },
+];
+
+let queue: UnresolvedRelease[] = INITIAL_QUEUE.map((r) => ({
+  ...r,
+  candidates: r.candidates.map((c) => ({ ...c })),
+}));
+
+export function resetReviewQueue() {
+  queue = INITIAL_QUEUE.map((r) => ({
+    ...r,
+    candidates: r.candidates.map((c) => ({ ...c })),
+  }));
+}
+
+function requireAdmin(request: Request): Response | null {
+  const auth = request.headers.get("authorization");
+  if (auth === `Bearer ${ADMIN_TOKEN}`) return null;
+  return new HttpResponse(
+    JSON.stringify({ error: "unauthorized", message: "missing admin token" }),
+    {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    },
+  );
+}
+
+export const ADMIN_TEST_TOKEN = ADMIN_TOKEN;
+
 export const handlers = [
   http.get("/api/v1/health", () => HttpResponse.json({ status: "ok" })),
 
@@ -65,9 +163,13 @@ export const handlers = [
       totalReleases: 12,
       releases: {
         resolved: 8,
-        unresolved: 2,
-        ambiguous: 1,
-        reviewPending: 1,
+        unresolved: queue.filter((r) => r.resolutionStatus === "unresolved")
+          .length,
+        ambiguous: queue.filter((r) => r.resolutionStatus === "ambiguous")
+          .length,
+        reviewPending: queue.filter(
+          (r) => r.resolutionStatus === "review_pending",
+        ).length,
         rejected: 0,
       },
     };
@@ -208,5 +310,101 @@ export const handlers = [
       total: items.length,
     };
     return HttpResponse.json(body);
+  }),
+
+  http.get("/api/v1/releases/unresolved", ({ request }) => {
+    const url = new URL(request.url);
+    const page = Number(url.searchParams.get("page") ?? "1");
+    const pageSize = Number(url.searchParams.get("pageSize") ?? "20");
+    const start = (page - 1) * pageSize;
+    const items = queue.slice(start, start + pageSize);
+    const body: UnresolvedPage = {
+      items,
+      page,
+      pageSize,
+      total: queue.length,
+    };
+    return HttpResponse.json(body);
+  }),
+
+  http.post("/api/v1/releases/:id/link", async ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const id = String(params.id);
+    const idx = queue.findIndex((r) => r.id === id);
+    const release = idx >= 0 ? queue[idx] : null;
+    if (!release)
+      return new HttpResponse(
+        JSON.stringify({ error: "not_found", message: `release ${id}` }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      );
+    const body = (await request.json()) as LinkRequest;
+    let seriesId = body.seriesId ?? null;
+    if (!seriesId && body.provider && body.externalId) {
+      // Pretend the provider resolved to series #1 for the test fixture.
+      seriesId = 1;
+    }
+    if (!seriesId)
+      return new HttpResponse(
+        JSON.stringify({
+          error: "bad_request",
+          message: "missing seriesId or provider+externalId",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    queue.splice(idx, 1);
+    const updated: ReleaseDto = {
+      ...release,
+      seriesId,
+      resolutionStatus: "resolved",
+      resolutionPath: "manual",
+      resolutionConfidence: 1,
+      resolutionAttempts: release.resolutionAttempts + 1,
+      lastResolveAttemptAt: NOW,
+    };
+    return HttpResponse.json(updated);
+  }),
+
+  http.post("/api/v1/releases/:id/reject", ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const id = String(params.id);
+    const idx = queue.findIndex((r) => r.id === id);
+    const release = idx >= 0 ? queue[idx] : undefined;
+    if (!release)
+      return new HttpResponse(
+        JSON.stringify({ error: "not_found", message: `release ${id}` }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      );
+    queue.splice(idx, 1);
+    const updated: ReleaseDto = {
+      ...release,
+      resolutionStatus: "rejected",
+      resolutionPath: "rejected",
+      resolutionConfidence: null,
+      resolutionAttempts: release.resolutionAttempts + 1,
+      lastResolveAttemptAt: NOW,
+    };
+    return HttpResponse.json(updated);
+  }),
+
+  http.post("/api/v1/releases/:id/retry", ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const id = String(params.id);
+    const idx = queue.findIndex((r) => r.id === id);
+    const release = idx >= 0 ? queue[idx] : undefined;
+    if (!release)
+      return new HttpResponse(
+        JSON.stringify({ error: "not_found", message: `release ${id}` }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      );
+    const updated: ReleaseDto = {
+      ...release,
+      resolutionAttempts: release.resolutionAttempts + 1,
+      lastResolveAttemptAt: NOW,
+    };
+    queue[idx] = { ...release, ...updated };
+    return HttpResponse.json(updated);
   }),
 ];
