@@ -89,6 +89,21 @@ queue_low_confidence  = true
 # formats        = ["epub", "azw3"]
 # required_kinds = ["novel"]
 
+# Title cleanup. The resolver strips structural noise (parens, brackets,
+# volume/chapter markers, file extensions, format keywords, year tokens)
+# from each release title before searching MangaBaka. Rules and their
+# ordering live in code; the only operator surface is the keyword list
+# below.
+#
+# `extra_format_keywords` are appended to the built-in list (Digital,
+# Raw, Color, Colored, Omnibus, Premium, Complete, Decensored,
+# Uncensored, Webtoon, WN, LN). Each entry is matched as a whole-word
+# token, case-insensitively. Regex metacharacters are rejected at
+# config load — entries must be plain words or phrases.
+#
+# [ingestion.cleanup]
+# extra_format_keywords = ["Remastered", "DigitalUncen"]
+
 # Discovery sources. Each entry is one polled instance. The `kind` field
 # picks the implementation; per-kind options live in the matching nested
 # block (e.g. [sources.nyaa]). v1 only ships kind = "nyaa".
