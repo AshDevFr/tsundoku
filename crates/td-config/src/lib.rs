@@ -25,6 +25,7 @@ pub struct AppConfig {
     /// scheduler keys on `name`.
     #[serde(default)]
     pub sources: Vec<SourceConfig>,
+    pub ingestion: IngestionConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,6 +279,59 @@ pub struct NyaaSourceOptions {
     pub site_base_url: String,
 }
 
+/// Settings for the resolution pipeline. Controls how raw `releases` rows
+/// get resolved to `series` rows: fuzzy-match threshold, review-queue
+/// behavior, and format/type validation rules.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IngestionConfig {
+    /// Dice-coefficient threshold above which a fuzzy-title match counts
+    /// as a definitive resolution. Below this but plausible, the candidate
+    /// lands in `review_candidates`. Range: 0.0..=1.0.
+    pub resolution_threshold: f32,
+    /// Minimum score required for a candidate to make it into the review
+    /// queue. Below this we treat the release as truly unresolved.
+    pub review_threshold: f32,
+    /// Maximum number of `search()` hits to consider per release in the
+    /// fuzzy-title step. Provider may cap further server-side.
+    pub fuzzy_search_limit: u32,
+    /// When true, releases that fail the fuzzy threshold but produce
+    /// plausible candidates land in the review queue. When false, they
+    /// stay `unresolved` with no `review_candidates` rows.
+    pub queue_low_confidence: bool,
+    /// Format-to-series-kind validation rules. Each rule says: "if the
+    /// release contains any of these formats, the matched series must
+    /// have one of these kinds, otherwise demote to ambiguous". Empty
+    /// vector disables format-type validation entirely.
+    #[serde(default)]
+    pub format_type_rules: Vec<FormatTypeRule>,
+}
+
+/// One format-to-kind rule. If the release has at least one of `formats`,
+/// the matched series's kind must be in `required_kinds`. Comparison is
+/// case-insensitive on both sides.
+///
+/// Kept as a free-form `String` list of kinds rather than the `SeriesKind`
+/// enum so that operators can keep config working when MangaBaka (or a
+/// future provider) emits a kind we don't have an enum variant for yet.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FormatTypeRule {
+    pub formats: Vec<String>,
+    pub required_kinds: Vec<String>,
+}
+
+impl Default for IngestionConfig {
+    fn default() -> Self {
+        Self {
+            resolution_threshold: 0.85,
+            review_threshold: 0.55,
+            fuzzy_search_limit: 10,
+            queue_low_confidence: true,
+            format_type_rules: Vec::new(),
+        }
+    }
+}
+
 impl Default for NyaaSourceOptions {
     fn default() -> Self {
         Self {
@@ -404,6 +458,59 @@ cron = "0 */2 * * *"
         assert!(!opts.fetch_details);
         // `enabled` defaults to true when omitted.
         assert!(cfg.sources[1].enabled);
+    }
+
+    #[test]
+    fn ingestion_block_parses_with_format_type_rules() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[storage]
+data_dir = "./data"
+
+[ingestion]
+resolution_threshold = 0.9
+review_threshold = 0.6
+fuzzy_search_limit = 20
+queue_low_confidence = false
+
+[[ingestion.format_type_rules]]
+formats = ["cbz", "cbr", "zip"]
+required_kinds = ["manga", "manhwa", "manhua"]
+
+[[ingestion.format_type_rules]]
+formats = ["epub", "azw3"]
+required_kinds = ["novel"]
+            "#
+        )
+        .unwrap();
+
+        let cfg = load(&path).unwrap();
+        assert!((cfg.ingestion.resolution_threshold - 0.9).abs() < 1e-6);
+        assert!((cfg.ingestion.review_threshold - 0.6).abs() < 1e-6);
+        assert_eq!(cfg.ingestion.fuzzy_search_limit, 20);
+        assert!(!cfg.ingestion.queue_low_confidence);
+        assert_eq!(cfg.ingestion.format_type_rules.len(), 2);
+        assert_eq!(
+            cfg.ingestion.format_type_rules[0].formats,
+            vec!["cbz".to_string(), "cbr".into(), "zip".into()]
+        );
+        assert_eq!(
+            cfg.ingestion.format_type_rules[1].required_kinds,
+            vec!["novel".to_string()]
+        );
+    }
+
+    #[test]
+    fn ingestion_defaults_are_conservative() {
+        let cfg = load(&PathBuf::from("does-not-exist.toml")).unwrap();
+        assert!((cfg.ingestion.resolution_threshold - 0.85).abs() < 1e-6);
+        assert!(cfg.ingestion.queue_low_confidence);
+        assert!(cfg.ingestion.format_type_rules.is_empty());
     }
 
     #[test]

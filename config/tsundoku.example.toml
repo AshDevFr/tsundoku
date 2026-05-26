@@ -52,6 +52,34 @@ api_base_url           = "https://api.mangabaka.dev"
 negative_cache_ttl_days = 7
 timeout_seconds        = 60
 
+# Resolution pipeline settings. Controls how releases get matched to
+# series rows. Thresholds use Dice-coefficient scoring on character
+# bigrams (case- and punctuation-insensitive).
+[ingestion]
+# Above this Dice score, a fuzzy-title hit counts as a definitive match
+# and gets persisted with resolution_path='fuzzy_title'.
+resolution_threshold  = 0.85
+# Minimum score to surface a candidate in the review queue. Below this
+# the release stays `unresolved` with no candidates persisted.
+review_threshold      = 0.55
+# Cap on `MetadataProvider::search` candidates inspected per release.
+fuzzy_search_limit    = 10
+# When false, low-confidence hits leave the release as `unresolved`
+# without populating `review_candidates`.
+queue_low_confidence  = true
+# Format-to-series-kind validation. A rule fires if any of its `formats`
+# is detected on the release; the matched series's kind must then be one
+# of `required_kinds` (case-insensitive). Otherwise the release is
+# demoted to `ambiguous` for human review. Empty list disables validation.
+#
+# [[ingestion.format_type_rules]]
+# formats        = ["cbz", "cbr", "zip", "rar"]
+# required_kinds = ["manga", "manhwa", "manhua"]
+#
+# [[ingestion.format_type_rules]]
+# formats        = ["epub", "azw3"]
+# required_kinds = ["novel"]
+
 # Discovery sources. Each entry is one polled instance. The `kind` field
 # picks the implementation; per-kind options live in the matching nested
 # block (e.g. [sources.nyaa]). v1 only ships kind = "nyaa".

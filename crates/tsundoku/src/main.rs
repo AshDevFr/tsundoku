@@ -52,6 +52,17 @@ enum Commands {
         #[arg(short, long)]
         source: Option<String>,
     },
+    /// Walk releases that have not been resolved yet and run them through
+    /// the resolution pipeline. With `--retry-unresolved`, also re-run
+    /// rows currently marked `ambiguous`.
+    Resolve {
+        #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
+        config: PathBuf,
+        /// Also re-run rows currently marked `ambiguous` (e.g. after a
+        /// provider refresh or a rules change).
+        #[arg(long)]
+        retry_unresolved: bool,
+    },
     /// Write the OpenAPI specification to a file
     Openapi {
         #[arg(short, long, default_value = "web/openapi.json")]
@@ -69,6 +80,10 @@ async fn main() -> anyhow::Result<()> {
             commands::refresh_metadata::run(config, provider).await
         }
         Commands::Poll { config, source } => commands::poll::run(config, source).await,
+        Commands::Resolve {
+            config,
+            retry_unresolved,
+        } => commands::resolve::run(config, retry_unresolved).await,
         Commands::Openapi { output } => commands::openapi::run(&output),
     }
 }

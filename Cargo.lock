@@ -3613,6 +3613,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "td-resolution"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "migration",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "td-config",
+ "td-db",
+ "td-metadata",
+ "td-source",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "td-source"
 version = "0.1.0"
 dependencies = [
@@ -4036,6 +4057,7 @@ dependencies = [
  "td-db",
  "td-metadata",
  "td-metadata-mangabaka",
+ "td-resolution",
  "td-source",
  "td-source-nyaa",
  "tokio",
