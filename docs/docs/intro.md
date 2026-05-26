@@ -1,7 +1,7 @@
 ---
 slug: /
 title: Introduction
-sidebar_position: 1
+sidebar_position: 0
 ---
 
 # tsundoku
@@ -26,7 +26,7 @@ have — Codex's `release-nyaa` plugin does that. tsundoku is the
 │  Resolution pipeline                                       │
 │   1. Known external ID (already in the catalog)            │
 │   2. Foreign-ID lookup via MangaBaka                       │
-│   3. Fuzzy title search                                    │
+│   3. Fuzzy title search (cleaned query, Dice rescore)      │
 │   4. Format-to-kind validation                             │
 │       │                                                    │
 │       ▼                                                    │
@@ -38,19 +38,17 @@ Confident matches land in your catalog. Ambiguous ones queue for
 human review with cleaned search queries, candidate covers, and a
 one-click provider-search modal.
 
-## What's next
+## Where to next
 
-The rest of the documentation is being migrated from the project's
-[README](https://github.com/skewb1k/tsundoku#readme). For now, the
-README is the operator's reference; this site will catch up over the
-next iteration.
+- New here? Start with [Getting Started](./getting-started.mdx).
+- Setting up a fresh deploy? [Configuration](./configuration.md) is the
+  field-by-field reference.
+- Running it? [Sources](./sources.md), [Providers](./providers.md), and
+  [Review queue](./review-queue.md) cover day-to-day operations.
+- Going to prod? [Deployment](./deployment.md) and
+  [Troubleshooting](./troubleshooting.md).
+- Curious about the design? [Architecture](./architecture.md) is the
+  short tour.
 
-Until then:
-
-- **Quick start, configuration, deployment** — see the
-  [README on GitHub](https://github.com/skewb1k/tsundoku#readme).
-- **Live API reference** — run the binary locally and visit
-  `/docs` for the Scalar UI generated from the OpenAPI spec. A
-  static copy will land here as part of the next iteration.
-- **Source code, issues, contributions** —
-  [github.com/skewb1k/tsundoku](https://github.com/skewb1k/tsundoku).
+The source lives at
+[github.com/skewb1k/tsundoku](https://github.com/skewb1k/tsundoku).

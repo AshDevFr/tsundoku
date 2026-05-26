@@ -1,0 +1,116 @@
+---
+title: Getting Started
+sidebar_position: 1
+---
+
+# Getting Started
+
+tsundoku ships as a single Rust binary with the React SPA embedded, or
+as a multi-arch Docker image. Pick whichever fits how you already run
+sidecar services.
+
+## Prerequisites
+
+- A writable directory for `storage.data_dir` (SQLite database, the
+  MangaBaka offline cache, tmp scratch).
+- ~600 MB free on that volume for the MangaBaka dump (476 MB compressed
+  download + extracted SQLite + FTS5 indexes).
+- For source builds: Rust toolchain (see `rust-toolchain.toml`) and
+  Node.js ≥ 20 (only if you want to rebuild the embedded SPA).
+
+## Run with Docker (recommended)
+
+The compose file's `prod` profile is what `docker compose up` runs on a
+clean checkout once a config file is in `./config/`.
+
+```bash
+# 1. Copy the example config and edit it.
+cp config/tsundoku.example.toml config/tsundoku.toml
+$EDITOR config/tsundoku.toml
+
+# 2. Start the stack.
+make prod-up                       # or: docker compose --profile prod up -d
+make prod-logs                     # tail logs
+make prod-down                     # stop
+```
+
+The container bind-mounts `./config` (read-only) and `./docker/data`
+(read-write).
+
+### Pre-built image
+
+A multi-arch image is published to GHCR on every push to `main` and on
+every version tag:
+
+```bash
+docker pull ghcr.io/skewb1k/tsundoku:latest      # main
+docker pull ghcr.io/skewb1k/tsundoku:v0.1.0      # tagged release
+```
+
+## Run from source
+
+```bash
+# 1. Copy the example config and edit it (data_dir, at least one source).
+cp config/tsundoku.example.toml config/tsundoku.toml
+$EDITOR config/tsundoku.toml
+
+# 2. Apply migrations.
+cargo run -- migrate
+
+# 3. (Optional but recommended) refresh the MangaBaka offline cache.
+cargo run -- refresh-metadata
+
+# 4. Serve the API + scheduler.
+cargo run -- serve
+```
+
+The server binds to `127.0.0.1:8080` by default. The
+[Scalar API docs UI](http://127.0.0.1:8080/docs) is at `/docs`; the
+embedded SPA is at [`/`](http://127.0.0.1:8080/).
+
+### Run with the embedded frontend
+
+The SPA is embedded into the binary behind a Cargo feature so
+`cargo check` and `cargo test` work without `web/dist` existing:
+
+```bash
+make build                         # builds web/dist, then cargo build --release --features embed-frontend
+./target/release/tsundoku serve
+```
+
+## First-time configuration
+
+A minimum viable config:
+
+```toml
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[storage]
+data_dir = "./data"           # everything on-disk lives under here
+
+[metadata]
+active_provider = "mangabaka"
+
+[providers.mangabaka]
+enabled = true
+api_base_url = "https://api.mangabaka.dev"
+
+[[sources]]
+kind = "nyaa"
+name = "english-manga"
+cron = "0 */2 * * *"          # every 2 hours; 5-field crons get padded to seconds-0
+  [sources.nyaa]
+  feed_url = "https://nyaa.si/?page=rss&c=3_1&f=2"
+```
+
+See the [configuration reference](./configuration.md) for every key
+with inline documentation.
+
+## Next steps
+
+- Tune the resolver — [Configuration → Ingestion](./configuration.md#ingestion).
+- Add more discovery sources — [Sources](./sources.md).
+- Wire the admin auth token and start kicking sources — [Review queue](./review-queue.md).
+- Deploy alongside Codex — [Deployment](./deployment.md).
