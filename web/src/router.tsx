@@ -4,19 +4,47 @@ import {
   createRouter,
   Outlet,
 } from "@tanstack/react-router";
-import { HomePage } from "@/pages/HomePage";
+import { AppShell } from "@/components/AppShell";
+import { FeedPage } from "@/pages/FeedPage";
+import { SeriesDetailPage } from "@/pages/SeriesDetailPage";
+import type { FilterSearch } from "@/stores/filters";
 
 // Code-based routing keeps the scaffold self-contained (no router codegen
 // plugin). Switch to file-based routing later if the route tree grows.
-const rootRoute = createRootRoute({ component: () => <Outlet /> });
-
-const indexRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/",
-  component: HomePage,
+const rootRoute = createRootRoute({
+  component: () => (
+    <AppShell>
+      <Outlet />
+    </AppShell>
+  ),
 });
 
-const routeTree = rootRoute.addChildren([indexRoute]);
+export const feedRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/",
+  component: FeedPage,
+  validateSearch: (raw: Record<string, unknown>): FilterSearch => {
+    const search: FilterSearch = {};
+    if (typeof raw.kind === "string" && raw.kind) search.kind = raw.kind;
+    if (typeof raw.status === "string" && raw.status)
+      search.status = raw.status;
+    if (typeof raw.sort === "string" && raw.sort) search.sort = raw.sort;
+    if (typeof raw.order === "string" && raw.order) search.order = raw.order;
+    if (raw.owned === true || raw.owned === "true") search.owned = true;
+    else if (raw.owned === false || raw.owned === "false") search.owned = false;
+    const page = Number(raw.page);
+    if (Number.isFinite(page) && page > 0) search.page = Math.floor(page);
+    return search;
+  },
+});
+
+export const seriesDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/series/$id",
+  component: SeriesDetailPage,
+});
+
+const routeTree = rootRoute.addChildren([feedRoute, seriesDetailRoute]);
 
 export const router = createRouter({ routeTree });
 

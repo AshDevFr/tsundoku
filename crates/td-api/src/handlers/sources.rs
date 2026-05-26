@@ -41,6 +41,7 @@ pub struct ManualPollResponse {
     get,
     path = "/api/v1/sources",
     tag = "sources",
+    operation_id = "list_sources",
     responses((status = 200, body = SourceList))
 )]
 pub async fn list(State(state): State<AppState>) -> ApiResult<Json<SourceList>> {

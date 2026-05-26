@@ -50,6 +50,7 @@ pub struct RefreshResponse {
     get,
     path = "/api/v1/providers",
     tag = "providers",
+    operation_id = "list_providers",
     responses((status = 200, body = ProviderList))
 )]
 pub async fn list(State(state): State<AppState>) -> ApiResult<Json<ProviderList>> {

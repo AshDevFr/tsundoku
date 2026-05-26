@@ -44,7 +44,7 @@
           "providers"
         ],
         "summary": "List every registered metadata provider with its latest cache-refresh\nmarkers and the active-provider flag.",
-        "operationId": "list",
+        "operationId": "list_providers",
         "responses": {
           "200": {
             "description": "",
@@ -105,7 +105,7 @@
           "releases"
         ],
         "summary": "List releases ordered by `observed_at` descending. Filters compose.",
-        "operationId": "list",
+        "operationId": "list_releases",
         "parameters": [
           {
             "name": "page",
@@ -362,7 +362,7 @@
           "series"
         ],
         "summary": "List series ordered by last release timestamp (most recent first by default).",
-        "operationId": "list",
+        "operationId": "list_series",
         "parameters": [
           {
             "name": "page",
@@ -530,7 +530,7 @@
           "sources"
         ],
         "summary": "List every registered discovery source with its last-poll markers.",
-        "operationId": "list",
+        "operationId": "list_sources",
         "responses": {
           "200": {
             "description": "",

@@ -32,7 +32,7 @@ export interface paths {
          * List every registered metadata provider with its latest cache-refresh
          *     markers and the active-provider flag.
          */
-        get: operations["list"];
+        get: operations["list_providers"];
         put?: never;
         post?: never;
         delete?: never;
@@ -70,7 +70,7 @@ export interface paths {
             cookie?: never;
         };
         /** List releases ordered by `observed_at` descending. Filters compose. */
-        get: operations["list"];
+        get: operations["list_releases"];
         put?: never;
         post?: never;
         delete?: never;
@@ -174,7 +174,7 @@ export interface paths {
             cookie?: never;
         };
         /** List series ordered by last release timestamp (most recent first by default). */
-        get: operations["list"];
+        get: operations["list_series"];
         put?: never;
         post?: never;
         delete?: never;
@@ -225,7 +225,7 @@ export interface paths {
             cookie?: never;
         };
         /** List every registered discovery source with its last-poll markers. */
-        get: operations["list"];
+        get: operations["list_sources"];
         put?: never;
         post?: never;
         delete?: never;
@@ -510,7 +510,7 @@ export interface operations {
             };
         };
     };
-    list: {
+    list_providers: {
         parameters: {
             query?: never;
             header?: never;
@@ -558,7 +558,7 @@ export interface operations {
             };
         };
     };
-    list: {
+    list_releases: {
         parameters: {
             query?: {
                 page?: number;
@@ -707,7 +707,7 @@ export interface operations {
             };
         };
     };
-    list: {
+    list_series: {
         parameters: {
             query?: {
                 page?: number;
@@ -804,7 +804,7 @@ export interface operations {
             };
         };
     };
-    list: {
+    list_sources: {
         parameters: {
             query?: never;
             header?: never;

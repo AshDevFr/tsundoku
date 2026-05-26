@@ -117,6 +117,7 @@ impl ReleaseListQuery {
     get,
     path = "/api/v1/releases",
     tag = "releases",
+    operation_id = "list_releases",
     params(ReleaseListQuery),
     responses((status = 200, body = ReleasePage))
 )]

@@ -114,6 +114,7 @@ impl SeriesListQuery {
     get,
     path = "/api/v1/series",
     tag = "series",
+    operation_id = "list_series",
     params(SeriesListQuery),
     responses((status = 200, body = SeriesListPage))
 )]
