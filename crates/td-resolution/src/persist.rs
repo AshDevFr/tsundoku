@@ -64,12 +64,25 @@ pub async fn upsert_series_from_metadata(
     // (provider, external_id). If miss, also try every foreign id —
     // a previous release for the same series may have come in via a
     // different provider's link.
+    //
+    // When following a foreign id, reject candidates that already have a
+    // *different* active-provider mapping. Upstream dumps occasionally
+    // list the same foreign id (e.g. AniList 105778) under two distinct
+    // provider series; collapsing those into one local series would
+    // silently merge two real series. Falling through creates a fresh
+    // series row instead.
     let mut series_id = find_series_by_id(&txn, provider_id, &metadata.external_id).await?;
     if series_id.is_none() {
         for fid in &metadata.foreign_ids {
             if let Some(id) = find_series_by_id(&txn, &fid.provider, &fid.id).await? {
-                series_id = Some(id);
-                break;
+                let existing_active = find_external_id_for_series(&txn, id, provider_id).await?;
+                match existing_active {
+                    Some(ref existing) if existing != &metadata.external_id => continue,
+                    _ => {
+                        series_id = Some(id);
+                        break;
+                    }
+                }
             }
         }
     }
@@ -151,6 +164,10 @@ pub async fn upsert_series_from_metadata(
     };
 
     // Always upsert the active provider's own ID first, then fan out.
+    // `upsert_external_id` itself warn-skips ambiguous mappings (existing
+    // row points at a different series, or this series already has a
+    // different external_id for the provider), so the only errors that
+    // can bubble out here are real DB faults.
     upsert_external_id(
         &txn,
         series_id,
@@ -161,19 +178,7 @@ pub async fn upsert_series_from_metadata(
     )
     .await?;
     for fid in &metadata.foreign_ids {
-        if let Err(e) = upsert_foreign_id(&txn, series_id, fid, fetched_at).await {
-            // A UNIQUE conflict on (series_id, provider) means another
-            // row already claims that provider for this series under a
-            // different external_id; that's a data anomaly the review UI
-            // should surface, not a fatal error here.
-            tracing::warn!(
-                error = ?e,
-                series_id,
-                provider = %fid.provider,
-                external_id = %fid.id,
-                "skipping foreign-id upsert; existing row conflicts"
-            );
-        }
+        upsert_foreign_id(&txn, series_id, fid, fetched_at).await?;
     }
 
     txn.commit().await?;
@@ -278,6 +283,26 @@ async fn find_series_by_id<C: sea_orm::ConnectionTrait>(
     Ok(row.map(|r| r.series_id))
 }
 
+async fn find_external_id_for_series<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    series_id: i32,
+    provider: &str,
+) -> Result<Option<String>> {
+    let row = series_external_ids::Entity::find()
+        .filter(series_external_ids::Column::SeriesId.eq(series_id))
+        .filter(series_external_ids::Column::Provider.eq(provider))
+        .one(db)
+        .await?;
+    Ok(row.map(|r| r.external_id))
+}
+
+/// Write a `(provider, external_id) → series_id` mapping, refusing to
+/// overwrite or duplicate an existing one. The table has two UNIQUE
+/// constraints — `(provider, external_id)` and `(series_id, provider)` —
+/// so a naive INSERT … ON CONFLICT covers only one of them, and using
+/// ON CONFLICT … DO UPDATE on `(provider, external_id)` would silently
+/// steal a foreign-id mapping from another series. Instead, branch on
+/// the current state and warn-skip the ambiguous cases.
 async fn upsert_external_id<C: sea_orm::ConnectionTrait>(
     db: &C,
     series_id: i32,
@@ -286,7 +311,52 @@ async fn upsert_external_id<C: sea_orm::ConnectionTrait>(
     external_url: Option<&str>,
     fetched_at: i64,
 ) -> Result<()> {
-    use sea_orm::sea_query::OnConflict;
+    // Case 1: (provider, external_id) already exists.
+    let by_external = series_external_ids::Entity::find()
+        .filter(series_external_ids::Column::Provider.eq(provider))
+        .filter(series_external_ids::Column::ExternalId.eq(external_id))
+        .one(db)
+        .await?;
+    if let Some(existing) = by_external {
+        if existing.series_id != series_id {
+            // Pointing this external_id at a new series would orphan the
+            // old series's mapping. Treat as ambiguous, surface a warning.
+            tracing::warn!(
+                provider,
+                external_id,
+                existing_series_id = existing.series_id,
+                attempted_series_id = series_id,
+                "external id already maps to a different series; leaving existing mapping intact"
+            );
+            return Ok(());
+        }
+        // Same series: refresh url/fetched_at.
+        let model = series_external_ids::ActiveModel {
+            provider: Set(provider.to_string()),
+            external_id: Set(external_id.to_string()),
+            series_id: Set(series_id),
+            external_url: Set(external_url.map(str::to_string)),
+            fetched_at: Set(fetched_at),
+        };
+        series_external_ids::Entity::update(model).exec(db).await?;
+        return Ok(());
+    }
+
+    // Case 2: (series_id, provider) already exists with a different
+    // external_id. Adding another would violate UNIQUE(series_id,
+    // provider). Same provenance question as case 1 — refuse silently
+    // with a warning rather than crashing the whole persist.
+    if let Some(other) = find_external_id_for_series(db, series_id, provider).await? {
+        tracing::warn!(
+            series_id,
+            provider,
+            existing_external_id = %other,
+            attempted_external_id = external_id,
+            "series already has a different external id for this provider; not adding duplicate"
+        );
+        return Ok(());
+    }
+
     let model = series_external_ids::ActiveModel {
         provider: Set(provider.to_string()),
         external_id: Set(external_id.to_string()),
@@ -294,21 +364,7 @@ async fn upsert_external_id<C: sea_orm::ConnectionTrait>(
         external_url: Set(external_url.map(str::to_string)),
         fetched_at: Set(fetched_at),
     };
-    series_external_ids::Entity::insert(model)
-        .on_conflict(
-            OnConflict::columns([
-                series_external_ids::Column::Provider,
-                series_external_ids::Column::ExternalId,
-            ])
-            .update_columns([
-                series_external_ids::Column::SeriesId,
-                series_external_ids::Column::ExternalUrl,
-                series_external_ids::Column::FetchedAt,
-            ])
-            .to_owned(),
-        )
-        .exec(db)
-        .await?;
+    series_external_ids::Entity::insert(model).exec(db).await?;
     Ok(())
 }
 
@@ -491,6 +547,84 @@ mod tests {
         // Total rows in `series`: still 1.
         let all = series::Entity::find().all(&db).await.unwrap();
         assert_eq!(all.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn upsert_does_not_merge_when_foreign_id_chain_crosses_series() {
+        // Upstream dump has two MangaBaka rows (AAA, BBB) that both list
+        // the same AniList foreign id. They are different series and must
+        // not be collapsed into one local row. The second upsert should
+        // create a fresh series for BBB, and the existing series's
+        // (mangabaka=AAA) and (anilist=200) mappings must stay intact.
+        let db = fresh_db().await;
+        let now = Utc::now();
+
+        let aaa = SeriesMetadata {
+            external_id: "AAA".into(),
+            canonical_title: "Series One".into(),
+            content_hash: "hash-aaa".into(),
+            foreign_ids: vec![ForeignId {
+                provider: "anilist".into(),
+                id: "200".into(),
+                url: None,
+            }],
+            ..sample_metadata()
+        };
+        let first = upsert_series_from_metadata(&db, "mangabaka", &aaa, 1_700_000_000, now)
+            .await
+            .unwrap();
+
+        let bbb = SeriesMetadata {
+            external_id: "BBB".into(),
+            canonical_title: "Series Two".into(),
+            content_hash: "hash-bbb".into(),
+            foreign_ids: vec![ForeignId {
+                provider: "anilist".into(),
+                id: "200".into(),
+                url: None,
+            }],
+            ..sample_metadata()
+        };
+        let second = upsert_series_from_metadata(&db, "mangabaka", &bbb, 1_700_000_000, now)
+            .await
+            .unwrap();
+
+        assert_ne!(first.series_id, second.series_id);
+
+        let series_rows = series::Entity::find().all(&db).await.unwrap();
+        assert_eq!(series_rows.len(), 2);
+
+        // First series keeps its mangabaka + anilist mappings intact.
+        let first_mappings = series_external_ids::Entity::find()
+            .filter(series_external_ids::Column::SeriesId.eq(first.series_id))
+            .all(&db)
+            .await
+            .unwrap();
+        let mut first_pairs: Vec<(String, String)> = first_mappings
+            .into_iter()
+            .map(|r| (r.provider, r.external_id))
+            .collect();
+        first_pairs.sort();
+        assert_eq!(
+            first_pairs,
+            vec![
+                ("anilist".into(), "200".into()),
+                ("mangabaka".into(), "AAA".into()),
+            ]
+        );
+
+        // Second series has only its own mangabaka mapping; the anilist
+        // foreign-id fan-out must not steal series 1's anilist mapping.
+        let second_mappings = series_external_ids::Entity::find()
+            .filter(series_external_ids::Column::SeriesId.eq(second.series_id))
+            .all(&db)
+            .await
+            .unwrap();
+        let second_pairs: Vec<(String, String)> = second_mappings
+            .into_iter()
+            .map(|r| (r.provider, r.external_id))
+            .collect();
+        assert_eq!(second_pairs, vec![("mangabaka".into(), "BBB".into())]);
     }
 
     #[tokio::test]

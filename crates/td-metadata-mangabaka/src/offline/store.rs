@@ -17,7 +17,18 @@ use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, FromQueryResult, Statement,
 };
 use serde_json::Value as Json;
+use td_metadata::scoring::best_dice;
 use td_metadata::{ForeignId, SearchHit, SeriesKind, SeriesMetadata, SeriesStatus};
+
+/// Maximum number of rows pulled from FTS before Dice re-ranking.
+///
+/// Has to be wide enough to survive BM25's length-normalization quirks:
+/// MangaBaka's canonical "ONE PIECE" row ships ~14k chars of alternate
+/// titles, which tanks its FTS rank down to ~position 500 of 600+ matches
+/// for the query "one piece". The Dice rerank fixes the order, but only if
+/// the row is in the pool. 2000 candidates cover the worst-case popular
+/// queries we've seen and still re-rank in under 10 ms on local SQLite.
+const FUZZY_CANDIDATE_POOL: u32 = 2000;
 
 /// Read-only view over an extracted dump.
 pub struct OfflineStore {
@@ -102,29 +113,72 @@ impl OfflineStore {
         Ok(row.and_then(active_row_to_canonical))
     }
 
-    /// FTS5 full-text search against `series_title_fts` (built by
-    /// [`super::setup::prepare`]). Returns rows ordered by FTS rank,
-    /// best first, capped at `limit`.
+    /// FTS5 full-text search over the title columns, then re-rank with the
+    /// Sørensen–Dice coefficient.
+    ///
+    /// FTS5 retrieves the candidate pool (its BM25 rank is fine at picking
+    /// "rows that contain these tokens"), but its ordering is unstable for
+    /// the short-title, high-overlap domain we live in. So we over-fetch up
+    /// to [`FUZZY_CANDIDATE_POOL`] rows and re-rank each by the maximum
+    /// Dice score across canonical, native, romanized, and JSON
+    /// alternate-title fields, returning the top `limit` with their score.
+    ///
+    /// Empty query short-circuits to an empty result; we never let the
+    /// caller's blank input become a wildcard FTS match.
     pub async fn search_fts(&self, query: &str, limit: u32) -> anyhow::Result<Vec<SearchHit>> {
-        if query.trim().is_empty() {
+        let query = query.trim();
+        if query.is_empty() {
             return Ok(Vec::new());
         }
+        let limit = limit.max(1);
+        let candidate_pool = FUZZY_CANDIDATE_POOL.max(limit);
+
         let sanitized = sanitize_match(query);
         let stmt = Statement::from_sql_and_values(
             self.db.get_database_backend(),
             SELECT_FTS,
-            [sanitized.into(), (limit.max(1) as i64).into()],
+            [sanitized.into(), (candidate_pool as i64).into()],
         );
         let rows = RawRow::find_by_statement(stmt).all(&self.db).await?;
-        Ok(rows
+
+        let mut scored: Vec<(SearchHit, f32)> = rows
             .into_iter()
-            .map(|r| SearchHit {
-                external_id: r.id.to_string(),
-                title: r.title.clone(),
-                year: r.year,
-                cover_url: pick_cover_from_row(&r),
-                score: None,
+            .map(|r| {
+                // Score against canonical + native + romanized only. The
+                // JSON `titles` blob is intentionally skipped: scoring it
+                // would require parsing serde_json::from_str across every
+                // candidate (2000 rows × ~400 chars average), and the
+                // canonical/native/romanized triple already handles every
+                // case the resolver cares about (English ↔ romaji ↔
+                // native script). Dice over alternates would only help
+                // for third-language queries — a future enhancement worth
+                // its own pool/scoring pass, not the hot path.
+                let mut titles: Vec<&str> = Vec::with_capacity(3);
+                titles.push(r.title.as_str());
+                if let Some(s) = r.native_title.as_deref() {
+                    titles.push(s);
+                }
+                if let Some(s) = r.romanized_title.as_deref() {
+                    titles.push(s);
+                }
+                let score = best_dice(query, titles);
+                let hit = SearchHit {
+                    external_id: r.id.to_string(),
+                    title: r.title.clone(),
+                    year: r.year,
+                    cover_url: pick_cover_from_row(&r),
+                    score: Some(score),
+                };
+                (hit, score)
             })
+            .collect();
+
+        // Best score first; stable so equal-scoring rows preserve FTS rank.
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(scored
+            .into_iter()
+            .take(limit as usize)
+            .map(|(hit, _)| hit)
             .collect())
     }
 }
@@ -555,6 +609,10 @@ mod tests {
         let hits = store.search_fts("Chainsaw", 10).await.unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].external_id, "1677");
+        assert!(
+            hits[0].score.is_some(),
+            "Dice rescoring should populate score on every hit"
+        );
 
         let hits = store.search_fts("CSM", 10).await.unwrap();
         assert_eq!(hits.len(), 1);
@@ -565,6 +623,45 @@ mod tests {
 
         let hits = store.search_fts("   ", 10).await.unwrap();
         assert!(hits.is_empty(), "blank query should short-circuit");
+    }
+
+    /// Two rows that both pass the FTS predicate but differ in how close
+    /// their canonical title is to the query: the Dice rerank must place
+    /// the closer match first regardless of insertion / FTS rank order.
+    #[tokio::test]
+    async fn search_fts_reranks_candidates_by_dice() {
+        let db = fixture_db().await;
+        let backend = db.get_database_backend();
+        db.execute(Statement::from_string(
+            backend,
+            "INSERT INTO series (
+                id, title, type, state, source_anilist_id
+            ) VALUES (
+                42, 'Chainsaw Man: Buddy Stories', 'manga', 'active', 999
+            )"
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+        db.execute(Statement::from_string(
+            backend,
+            "INSERT INTO series_title_fts(rowid, title, native_title, romanized_title, alternate_titles)
+                VALUES (42, 'Chainsaw Man: Buddy Stories', '', '', '')"
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+        let store = store_from(db);
+
+        let hits = store.search_fts("Chainsaw Man", 10).await.unwrap();
+        assert_eq!(hits.len(), 2, "both candidates should appear");
+        assert_eq!(
+            hits[0].external_id, "1677",
+            "the closer canonical-title match should rank first by Dice"
+        );
+        let s0 = hits[0].score.unwrap();
+        let s1 = hits[1].score.unwrap();
+        assert!(s0 >= s1, "scores must be descending, got {s0} then {s1}");
     }
 
     #[test]

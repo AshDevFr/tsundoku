@@ -60,6 +60,27 @@ pub struct ReviewCandidateDto {
     pub reason: Option<String>,
 }
 
+/// External provider links scraped from a release's description. Mirrors
+/// `td_source::ExternalLinks`; redefined here so we don't pull utoipa into
+/// the domain crate.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractedLinksDto {
+    pub mangaupdates: Option<String>,
+    pub anilist: Option<String>,
+    pub mal: Option<String>,
+    pub mangadex: Option<String>,
+}
+
+impl ExtractedLinksDto {
+    fn is_empty(&self) -> bool {
+        self.mangaupdates.is_none()
+            && self.anilist.is_none()
+            && self.mal.is_none()
+            && self.mangadex.is_none()
+    }
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UnresolvedRelease {
@@ -76,6 +97,15 @@ pub struct UnresolvedRelease {
     /// Convenience pointer to `candidates[0]`, when present. Lets the
     /// card render without defensive-checking the array on every render.
     pub top_candidate: Option<ReviewCandidateDto>,
+    /// Raw description blob (markdown for Nyaa posts that ran detail
+    /// fetch; the RSS anchor stub otherwise). The review UI renders this
+    /// inline so the operator can decide without opening the post page.
+    pub description_html: Option<String>,
+    /// External-provider links the source scraped from the description.
+    /// `None` when nothing was found; the field is omitted from the
+    /// payload via `skip_serializing_if`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extracted_links: Option<ExtractedLinksDto>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -252,12 +282,16 @@ pub async fn list_unresolved(
             .and_then(|j| serde_json::from_str(j).ok())
             .unwrap_or_default();
         let top_candidate = candidates.first().cloned();
+        let description_html = row.description_html.clone();
+        let extracted_links = parse_extracted_links(row.extracted_links_json.as_deref());
         items.push(UnresolvedRelease {
             release: model_to_release(row, formats),
             candidates,
             search_queries,
             cleanup_rules_applied,
             top_candidate,
+            description_html,
+            extracted_links,
         });
     }
 
@@ -572,6 +606,16 @@ fn model_to_release(m: releases::Model, formats: Vec<String>) -> ReleaseDto {
         resolution_attempts: m.resolution_attempts,
         last_resolve_attempt_at: m.last_resolve_attempt_at,
     }
+}
+
+/// Decode `releases.extracted_links_json` into the API DTO. Returns `None`
+/// when the column is null, the JSON is malformed, or every field inside
+/// is empty — so the consumer can render "no links found" without
+/// defensively checking each provider.
+fn parse_extracted_links(raw: Option<&str>) -> Option<ExtractedLinksDto> {
+    let raw = raw?;
+    let dto: ExtractedLinksDto = serde_json::from_str(raw).ok()?;
+    if dto.is_empty() { None } else { Some(dto) }
 }
 
 fn anyhow_err<E: Into<anyhow::Error>>(e: E) -> ApiError {

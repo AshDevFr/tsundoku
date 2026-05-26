@@ -356,7 +356,7 @@ pub async fn search(
     // Title path: search → enrich top N → Dice-rescore.
     let q =
         q.ok_or_else(|| ApiError::BadRequest("either q or externalId is required".to_string()))?;
-    let limit = params.limit.unwrap_or(10).clamp(1, 50);
+    let limit = params.limit.unwrap_or(25).clamp(1, 100);
     let hits = provider
         .search(q, limit)
         .await

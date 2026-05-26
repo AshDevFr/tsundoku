@@ -48,7 +48,7 @@ fn iter_urls(html: &str) -> impl Iterator<Item = &str> {
 }
 
 fn absorb_url(out: &mut ExternalLinks, raw: &str) {
-    let url = raw.trim();
+    let url = strip_trailing_noise(raw.trim());
     if url.is_empty() {
         return;
     }
@@ -71,6 +71,16 @@ fn absorb_url(out: &mut ExternalLinks, raw: &str) {
     if out.mangadex.is_none() && lower.contains("mangadex.org/title/") {
         out.mangadex = Some(url.to_string());
     }
+}
+
+/// Trim trailing punctuation that nyaa descriptions tend to glue onto bare
+/// URLs: markdown bold/italic markers (`*`), closing brackets from markdown
+/// link syntax, and sentence-final punctuation. The bare-URL regex stops
+/// at whitespace and quote-like characters but otherwise greedily eats
+/// everything else, so a URL inside `**...**` comes back with the trailing
+/// asterisks attached.
+fn strip_trailing_noise(url: &str) -> &str {
+    url.trim_end_matches(['*', ')', ']', ',', ';', '.', '!', '?'])
 }
 
 #[cfg(test)]
@@ -148,5 +158,32 @@ mod tests {
         let html = r#"<a href="https://anilist.co/anime/123">AL anime</a>"#;
         let links = extract_external_links(html);
         assert!(links.anilist.is_none());
+    }
+
+    #[test]
+    fn strips_markdown_bold_wrappers_from_bare_urls() {
+        // Nyaa post bodies use markdown; a common pattern is
+        // **https://www.mangaupdates.com/series.html?id=12345** which used
+        // to land in the DB with the trailing `**` attached.
+        let html = "***MU:***\n**https://www.mangaupdates.com/series.html?id=161654**\n\n**Hi**";
+        let links = extract_external_links(html);
+        assert_eq!(
+            links.mangaupdates.as_deref(),
+            Some("https://www.mangaupdates.com/series.html?id=161654"),
+        );
+    }
+
+    #[test]
+    fn strips_trailing_sentence_punctuation() {
+        let html = "see https://anilist.co/manga/123, then visit https://mangadex.org/title/abc.";
+        let links = extract_external_links(html);
+        assert_eq!(
+            links.anilist.as_deref(),
+            Some("https://anilist.co/manga/123")
+        );
+        assert_eq!(
+            links.mangadex.as_deref(),
+            Some("https://mangadex.org/title/abc")
+        );
     }
 }

@@ -125,8 +125,12 @@ impl DiscoverySource for NyaaSource {
                         if release.magnet.is_none() {
                             release.magnet = detail.magnet;
                         }
-                        if release.description_html.is_none() {
-                            release.description_html = detail.description_html;
+                        // RSS gives us a short anchor + size + category +
+                        // hash; the detail page has the uploader's actual
+                        // body (markdown). Prefer the latter when present —
+                        // it's what the review UI surfaces to the operator.
+                        if let Some(desc) = detail.description_html {
+                            release.description_html = Some(desc);
                         }
                     }
                     Ok(Err(e)) => {

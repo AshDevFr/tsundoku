@@ -39,6 +39,9 @@ pub mod status {
 pub mod trigger {
     pub const CRON: &str = "cron";
     pub const MANUAL: &str = "manual";
+    /// One-shot refresh kicked off at server startup when an offline cache
+    /// is configured but no dump exists on disk yet.
+    pub const STARTUP: &str = "startup";
 }
 
 #[derive(Debug, Clone, Copy, Default)]

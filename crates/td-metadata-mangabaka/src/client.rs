@@ -24,16 +24,28 @@ pub struct MbEnvelope<T> {
     pub pagination: Option<MbPagination>,
 }
 
+/// MangaBaka's pagination envelope is informational only; every field is
+/// tolerant of being missing so a schema change on their side does not break
+/// deserialization. Field names track the current API shape (`limit` /
+/// `count`); the old `per_page` / `total` / `total_pages` were retired
+/// upstream in 2026.
 #[derive(Debug, Deserialize)]
 pub struct MbPagination {
+    #[serde(default)]
     #[allow(dead_code)]
-    pub page: i32,
+    pub page: Option<i32>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub per_page: i32,
+    pub limit: Option<i32>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub total: i32,
+    pub count: Option<i32>,
+    #[serde(default)]
     #[allow(dead_code)]
-    pub total_pages: i32,
+    pub next: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub previous: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -277,7 +289,7 @@ mod tests {
                 {"id": 1, "title": "Chainsaw Man"},
                 {"id": 2, "title": "Berserk"}
             ],
-            "pagination": { "page": 1, "per_page": 20, "total": 2, "total_pages": 1 }
+            "pagination": { "count": 2, "next": null, "previous": null, "page": 1, "limit": 20 }
         }"#;
         let env: MbEnvelope<Vec<MbSeries>> = serde_json::from_str(raw).unwrap();
         assert_eq!(env.data.len(), 2);

@@ -20,8 +20,8 @@ use crate::handlers::providers::{
     ProviderSearchResponse, RefreshAllResponse, RefreshResponse,
 };
 use crate::handlers::releases::{
-    LinkRequest, ReleaseDto, ReleasePage, RetryAllResponse, ReviewCandidateDto, UnresolvedPage,
-    UnresolvedRelease,
+    ExtractedLinksDto, LinkRequest, ReleaseDto, ReleasePage, RetryAllResponse, ReviewCandidateDto,
+    UnresolvedPage, UnresolvedRelease,
 };
 use crate::handlers::series::{ExternalIdDto, SeriesDetail, SeriesListItem, SeriesListPage};
 use crate::handlers::sources::{
@@ -79,6 +79,7 @@ use crate::handlers::{health, metrics, providers, releases, series, sources, sta
         UnresolvedRelease,
         UnresolvedPage,
         ReviewCandidateDto,
+        ExtractedLinksDto,
         RetryAllResponse,
         LinkRequest,
         SourceDto,

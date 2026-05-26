@@ -508,6 +508,17 @@ export interface components {
             fetchedAt: number;
             provider: string;
         };
+        /**
+         * @description External provider links scraped from a release's description. Mirrors
+         *     `td_source::ExternalLinks`; redefined here so we don't pull utoipa into
+         *     the domain crate.
+         */
+        ExtractedLinksDto: {
+            anilist?: string | null;
+            mal?: string | null;
+            mangadex?: string | null;
+            mangaupdates?: string | null;
+        };
         FetchLatencyDto: {
             /** Format: int64 */
             maxMs?: number | null;
@@ -969,6 +980,13 @@ export interface components {
              *     `split_alternates`). Rendered as badge chips on the review card.
              */
             cleanupRulesApplied: string[];
+            /**
+             * @description Raw description blob (markdown for Nyaa posts that ran detail
+             *     fetch; the RSS anchor stub otherwise). The review UI renders this
+             *     inline so the operator can decide without opening the post page.
+             */
+            descriptionHtml?: string | null;
+            extractedLinks?: null | components["schemas"]["ExtractedLinksDto"];
             /**
              * @description Search queries the title cleaner produced for this release
              *     (longest-first). Empty when the release predates the cleaner or

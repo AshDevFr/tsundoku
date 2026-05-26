@@ -15,11 +15,13 @@
 pub mod error;
 pub mod provider;
 pub mod registry;
+pub mod scoring;
 pub mod types;
 
 pub use error::{MetadataError, MetadataResult};
 pub use provider::MetadataProvider;
 pub use registry::{MetadataRegistry, MetadataRegistryBuilder, RegistryError};
+pub use scoring::{best_dice, dice};
 pub use types::{
     ForeignId, RefreshStatus, RefreshSummary, SearchHit, SeriesKind, SeriesMetadata, SeriesStatus,
 };

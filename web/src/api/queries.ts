@@ -166,17 +166,22 @@ export function useProviderSearch(opts: {
   q: string;
   externalId: string;
   enabled?: boolean;
+  /** Server-side cap. Default 50; the backend currently allows up to 100. */
+  limit?: number;
 }) {
   const trimmedQ = opts.q.trim();
   const trimmedExt = opts.externalId.trim();
   const hasInput = Boolean(trimmedQ || trimmedExt);
   const enabled =
     Boolean(opts.providerId) && hasInput && (opts.enabled ?? true);
+  const limit = opts.limit ?? 50;
   return useQuery({
-    queryKey: ["provider-search", opts.providerId, trimmedQ, trimmedExt],
+    queryKey: ["provider-search", opts.providerId, trimmedQ, trimmedExt, limit],
     enabled,
     queryFn: async () => {
-      const params: { q?: string; externalId?: string } = {};
+      const params: { q?: string; externalId?: string; limit?: number } = {
+        limit,
+      };
       if (trimmedExt) params.externalId = trimmedExt;
       else if (trimmedQ) params.q = trimmedQ;
       const { data, error } = await api.GET("/api/v1/providers/{id}/search", {
