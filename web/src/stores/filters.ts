@@ -13,6 +13,10 @@ export interface FilterSearch {
   kind?: string;
   status?: string;
   owned?: boolean;
+  /// Single genre name (case-insensitive against the backend).
+  genre?: string;
+  /// Single tag name (case-insensitive against the backend).
+  tag?: string;
   sort?: string;
   order?: string;
   page?: number;

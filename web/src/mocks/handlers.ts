@@ -10,12 +10,14 @@ type StatsResponse = components["schemas"]["StatsResponse"];
 type UnresolvedRelease = components["schemas"]["UnresolvedRelease"];
 type UnresolvedPage = components["schemas"]["UnresolvedPage"];
 type LinkRequest = components["schemas"]["LinkRequest"];
+type TagList = components["schemas"]["TagList"];
 
 const NOW = Math.floor(Date.now() / 1000);
 const ADMIN_TOKEN = "test-admin-token";
 
 const SERIES: (SeriesListItem & {
   genres: string[];
+  tags: string[];
   alternateTitles: string[];
 })[] = [
   {
@@ -29,6 +31,7 @@ const SERIES: (SeriesListItem & {
     year: 2018,
     owned: false,
     genres: ["action", "horror"],
+    tags: ["devil hunter", "gore"],
     alternateTitles: ["チェンソーマン"],
   },
   {
@@ -42,6 +45,7 @@ const SERIES: (SeriesListItem & {
     year: 2014,
     owned: true,
     genres: ["isekai", "drama"],
+    tags: ["time loop"],
     alternateTitles: ["リゼロ"],
   },
   {
@@ -55,6 +59,7 @@ const SERIES: (SeriesListItem & {
     year: 2018,
     owned: false,
     genres: ["action", "fantasy"],
+    tags: ["hunters", "leveling"],
     alternateTitles: [],
   },
 ];
@@ -278,6 +283,8 @@ export const handlers = [
     const kind = url.searchParams.get("kind");
     const status = url.searchParams.get("status");
     const owned = url.searchParams.get("owned");
+    const genre = url.searchParams.get("genre");
+    const tag = url.searchParams.get("tag");
     const page = Number(url.searchParams.get("page") ?? "1");
     const pageSize = Number(url.searchParams.get("pageSize") ?? "24");
 
@@ -286,18 +293,67 @@ export const handlers = [
     if (status) filtered = filtered.filter((s) => s.status === status);
     if (owned === "true") filtered = filtered.filter((s) => s.owned === true);
     if (owned === "false") filtered = filtered.filter((s) => s.owned === false);
+    if (genre) {
+      const needle = genre.toLowerCase();
+      filtered = filtered.filter((s) =>
+        s.genres.some((g) => g.toLowerCase() === needle),
+      );
+    }
+    if (tag) {
+      const needle = tag.toLowerCase();
+      filtered = filtered.filter((s) =>
+        s.tags.some((t) => t.toLowerCase() === needle),
+      );
+    }
 
     const start = (page - 1) * pageSize;
     const items = filtered
       .slice(start, start + pageSize)
       .map(
-        ({ genres: _g, alternateTitles: _a, ...rest }): SeriesListItem => rest,
+        ({
+          genres: _g,
+          tags: _t,
+          alternateTitles: _a,
+          ...rest
+        }): SeriesListItem => rest,
       );
     const body: SeriesListPage = {
       items,
       page,
       pageSize,
       total: filtered.length,
+    };
+    return HttpResponse.json(body);
+  }),
+
+  http.get("/api/v1/genres", () => {
+    const counts = new Map<string, number>();
+    for (const s of SERIES) {
+      for (const g of s.genres) counts.set(g, (counts.get(g) ?? 0) + 1);
+    }
+    const body: TagList = {
+      items: Array.from(counts.entries())
+        .map(([name, seriesCount]) => ({ name, seriesCount }))
+        .sort(
+          (a, b) =>
+            b.seriesCount - a.seriesCount || a.name.localeCompare(b.name),
+        ),
+    };
+    return HttpResponse.json(body);
+  }),
+
+  http.get("/api/v1/tags", () => {
+    const counts = new Map<string, number>();
+    for (const s of SERIES) {
+      for (const t of s.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    const body: TagList = {
+      items: Array.from(counts.entries())
+        .map(([name, seriesCount]) => ({ name, seriesCount }))
+        .sort(
+          (a, b) =>
+            b.seriesCount - a.seriesCount || a.name.localeCompare(b.name),
+        ),
     };
     return HttpResponse.json(body);
   }),
@@ -316,6 +372,7 @@ export const handlers = [
       year: found.year,
       owned: found.owned,
       genres: found.genres,
+      tags: found.tags,
       externalIds: [
         {
           provider: "mangabaka",

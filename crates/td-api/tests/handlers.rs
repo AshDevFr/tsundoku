@@ -14,7 +14,7 @@ use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use serde_json::Value;
 use td_config::AuthConfig;
 use td_db::entities::{releases, series};
-use td_db::repos::{releases_repo, series_external_ids_repo};
+use td_db::repos::{releases_repo, series_external_ids_repo, tagging_repo};
 use td_source::PollOutcome;
 use tower::ServiceExt;
 
@@ -818,4 +818,189 @@ async fn unresolved_endpoint_returns_review_pending_releases() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     assert_eq!(body["total"], 1);
+}
+
+#[tokio::test]
+async fn series_list_filters_by_genre_and_tag_and_combines() {
+    let db = fresh_db().await;
+    let a = seed_series(&db, "Action+Isekai", "manga").await;
+    let b = seed_series(&db, "Action-only", "manga").await;
+    let c = seed_series(&db, "Drama-only", "manga").await;
+    tagging_repo::set_series_genres(&db, a, &["Action".into(), "Adventure".into()])
+        .await
+        .unwrap();
+    tagging_repo::set_series_genres(&db, b, &["Action".into()])
+        .await
+        .unwrap();
+    tagging_repo::set_series_genres(&db, c, &["Drama".into()])
+        .await
+        .unwrap();
+    tagging_repo::set_series_tags(&db, a, &["isekai".into()])
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    // genre filter alone returns both Action rows.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?genre=Action")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 2);
+
+    // genre + tag AND-combined narrows to the one row tagged isekai.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?genre=Action&tag=isekai")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["id"], a);
+
+    // genre with no matching rows returns total: 0.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?genre=nope")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 0);
+}
+
+#[tokio::test]
+async fn genres_endpoint_lists_canonical_names_with_counts() {
+    let db = fresh_db().await;
+    let a = seed_series(&db, "A", "manga").await;
+    let b = seed_series(&db, "B", "manga").await;
+    tagging_repo::set_series_genres(&db, a, &["Action".into(), "Drama".into()])
+        .await
+        .unwrap();
+    tagging_repo::set_series_genres(&db, b, &["Action".into()])
+        .await
+        .unwrap();
+    tagging_repo::set_series_tags(&db, a, &["isekai".into(), "magic".into()])
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/genres")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["name"], "Action");
+    assert_eq!(items[0]["seriesCount"], 2);
+    assert_eq!(items[1]["name"], "Drama");
+    assert_eq!(items[1]["seriesCount"], 1);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/tags")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    let names: Vec<&str> = items.iter().map(|i| i["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"isekai"));
+    assert!(names.contains(&"magic"));
+}
+
+#[tokio::test]
+async fn series_detail_surfaces_join_table_tags() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "Tagged", "manga").await;
+    tagging_repo::set_series_genres(&db, sid, &["Action".into(), "Drama".into()])
+        .await
+        .unwrap();
+    tagging_repo::set_series_tags(&db, sid, &["isekai".into(), "Gore".into()])
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/series/{sid}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let genres: Vec<&str> = body["genres"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_str().unwrap())
+        .collect();
+    let tags: Vec<&str> = body["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_str().unwrap())
+        .collect();
+    assert!(genres.contains(&"Action"));
+    assert!(genres.contains(&"Drama"));
+    assert!(tags.contains(&"isekai"));
+    assert!(tags.contains(&"Gore"));
 }

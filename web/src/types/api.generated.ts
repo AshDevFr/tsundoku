@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/genres": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every genre that's been observed at least once, sorted by descending
+         *     series count, then name. Powers the feed-filter autocomplete.
+         */
+        get: operations["list_genres"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health": {
         parameters: {
             query?: never;
@@ -313,6 +333,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Tag analog of [`list_genres`]. Same shape, different table. */
+        get: operations["list_tags"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -486,6 +523,7 @@ export interface components {
             metadataSource: string;
             owned: boolean;
             status?: string | null;
+            tags: string[];
             /** Format: int32 */
             year?: number | null;
         };
@@ -554,6 +592,14 @@ export interface components {
             /** Format: int64 */
             totalReleases: number;
         };
+        TagList: {
+            items: components["schemas"]["TagUsageDto"][];
+        };
+        TagUsageDto: {
+            name: string;
+            /** Format: int64 */
+            seriesCount: number;
+        };
         UnresolvedPage: {
             items: components["schemas"]["UnresolvedRelease"][];
             /** Format: int32 */
@@ -575,6 +621,25 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_genres: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TagList"];
+                };
+            };
+        };
+    };
     health: {
         parameters: {
             query?: never;
@@ -828,6 +893,10 @@ export interface operations {
                 status?: string;
                 /** @description Filter by ownership flag (true = owned by Codex, false = discoverable). */
                 owned?: boolean;
+                /** @description Filter by a single genre name. AND-combined with the other filters. */
+                genre?: string;
+                /** @description Filter by a single tag name. AND-combined with the other filters. */
+                tag?: string;
                 /** @description Sort field. Supports `last_release_at` (default) and `first_seen_at`. */
                 sort?: string;
                 /** @description `asc` or `desc` (default). */
@@ -996,6 +1065,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatsResponse"];
+                };
+            };
+        };
+    };
+    list_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TagList"];
                 };
             };
         };

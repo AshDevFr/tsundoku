@@ -21,7 +21,8 @@ use crate::handlers::sources::{
     ManualPollResponse, PollAllResponse, SourceConfigDto, SourceDto, SourceList,
 };
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
-use crate::handlers::{health, providers, releases, series, sources, stats};
+use crate::handlers::tagging::{TagList, TagUsageDto};
+use crate::handlers::{health, providers, releases, series, sources, stats, tagging};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -47,6 +48,8 @@ use crate::handlers::{health, providers, releases, series, sources, stats};
         providers::list,
         providers::refresh_cache,
         providers::refresh_all,
+        tagging::list_genres,
+        tagging::list_tags,
     ),
     components(schemas(
         ApiErrorBody,
@@ -74,13 +77,16 @@ use crate::handlers::{health, providers, releases, series, sources, stats};
         ProviderCacheState,
         RefreshResponse,
         RefreshAllResponse,
+        TagUsageDto,
+        TagList,
     )),
     tags(
         (name = "system", description = "Health and aggregate counters"),
         (name = "series", description = "Resolved series catalog"),
         (name = "releases", description = "Raw release feed and review queue"),
         (name = "sources", description = "Discovery-source state and triggers"),
-        (name = "providers", description = "Metadata-provider state and triggers")
+        (name = "providers", description = "Metadata-provider state and triggers"),
+        (name = "tagging", description = "Canonical genre and tag lists for filter UI")
     ),
     modifiers(&BearerSecurity)
 )]

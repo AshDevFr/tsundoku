@@ -30,6 +30,8 @@ export const feedRoute = createRoute({
     if (typeof raw.kind === "string" && raw.kind) search.kind = raw.kind;
     if (typeof raw.status === "string" && raw.status)
       search.status = raw.status;
+    if (typeof raw.genre === "string" && raw.genre) search.genre = raw.genre;
+    if (typeof raw.tag === "string" && raw.tag) search.tag = raw.tag;
     if (typeof raw.sort === "string" && raw.sort) search.sort = raw.sort;
     if (typeof raw.order === "string" && raw.order) search.order = raw.order;
     if (raw.owned === true || raw.owned === "true") search.owned = true;

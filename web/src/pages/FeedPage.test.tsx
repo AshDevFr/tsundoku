@@ -32,6 +32,8 @@ function makeTestRouter(initialPath: string) {
       const out: Record<string, unknown> = {};
       if (typeof raw.kind === "string") out.kind = raw.kind;
       if (typeof raw.status === "string") out.status = raw.status;
+      if (typeof raw.genre === "string") out.genre = raw.genre;
+      if (typeof raw.tag === "string") out.tag = raw.tag;
       if (typeof raw.owned === "string")
         out.owned =
           raw.owned === "true"
@@ -92,6 +94,29 @@ describe("FeedPage", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Chainsaw Man")).not.toBeInTheDocument();
+    expect(screen.getByText("1 match")).toBeInTheDocument();
+  });
+
+  it("filters by genre via URL search param", async () => {
+    renderWithProviders("/?genre=isekai");
+    expect(
+      await screen.findByText(
+        "Re:Zero - Starting Life in Another World",
+        undefined,
+        { timeout: 3000 },
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Chainsaw Man")).not.toBeInTheDocument();
+    expect(screen.getByText("1 match")).toBeInTheDocument();
+  });
+
+  it("AND-combines genre and tag filters", async () => {
+    // Chainsaw Man is the only series tagged "gore" inside the "action" genre.
+    renderWithProviders("/?genre=action&tag=gore");
+    expect(
+      await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Solo Leveling")).not.toBeInTheDocument();
     expect(screen.getByText("1 match")).toBeInTheDocument();
   });
 

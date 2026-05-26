@@ -16,7 +16,7 @@ use utoipa_scalar::{Scalar, Servable};
 use crate::auth;
 use crate::docs::ApiDoc;
 use crate::embed::serve_static;
-use crate::handlers::{health, providers, releases, series, sources, stats};
+use crate::handlers::{health, providers, releases, series, sources, stats, tagging};
 use crate::state::AppState;
 
 pub fn router(state: AppState, cfg: &AppConfig) -> Router {
@@ -51,6 +51,8 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/releases/unresolved", get(releases::list_unresolved))
         .route("/sources", get(sources::list))
         .route("/providers", get(providers::list))
+        .route("/genres", get(tagging::list_genres))
+        .route("/tags", get(tagging::list_tags))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             auth::require_read,

@@ -6,3 +6,4 @@ pub mod review_repo;
 pub mod series_external_ids_repo;
 pub mod series_repo;
 pub mod sources_repo;
+pub mod tagging_repo;

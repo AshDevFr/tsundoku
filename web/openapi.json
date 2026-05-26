@@ -14,6 +14,27 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/genres": {
+      "get": {
+        "tags": [
+          "tagging"
+        ],
+        "summary": "Every genre that's been observed at least once, sorted by descending\nseries count, then name. Powers the feed-filter autocomplete.",
+        "operationId": "list_genres",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/health": {
       "get": {
         "tags": [
@@ -438,6 +459,24 @@
             }
           },
           {
+            "name": "genre",
+            "in": "query",
+            "description": "Filter by a single genre name. AND-combined with the other filters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "description": "Filter by a single tag name. AND-combined with the other filters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "sort",
             "in": "query",
             "description": "Sort field. Supports `last_release_at` (default) and `first_seen_at`.",
@@ -651,6 +690,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tags": {
+      "get": {
+        "tags": [
+          "tagging"
+        ],
+        "summary": "Tag analog of [`list_genres`]. Same shape, different table.",
+        "operationId": "list_tags",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagList"
                 }
               }
             }
@@ -1183,6 +1243,7 @@
           "canonicalTitle",
           "alternateTitles",
           "genres",
+          "tags",
           "metadataSource",
           "metadataFetchedAt",
           "firstSeenAt",
@@ -1265,6 +1326,12 @@
               "string",
               "null"
             ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "year": {
             "type": [
@@ -1495,6 +1562,36 @@
           }
         }
       },
+      "TagList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagUsageDto"
+            }
+          }
+        }
+      },
+      "TagUsageDto": {
+        "type": "object",
+        "required": [
+          "name",
+          "seriesCount"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "seriesCount": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "UnresolvedPage": {
         "type": "object",
         "required": [
@@ -1578,6 +1675,10 @@
     {
       "name": "providers",
       "description": "Metadata-provider state and triggers"
+    },
+    {
+      "name": "tagging",
+      "description": "Canonical genre and tag lists for filter UI"
     }
   ]
 }

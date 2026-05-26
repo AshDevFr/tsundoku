@@ -17,6 +17,7 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useState } from "react";
+import { useGenres, useTags } from "@/api/queries";
 import { type FilterSearch, useFilterPresets } from "@/stores/filters";
 
 interface FilterPanelProps {
@@ -53,6 +54,8 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
   const deletePreset = useFilterPresets((s) => s.deletePreset);
   const [saveOpen, { open: openSave, close: closeSave }] = useDisclosure(false);
   const [presetName, setPresetName] = useState("");
+  const genres = useGenres();
+  const tags = useTags();
 
   const merge = (patch: Partial<FilterSearch>) =>
     onChange({ ...search, ...patch, page: 1 });
@@ -63,7 +66,18 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
   const hasActiveFilters =
     Boolean(search.kind) ||
     Boolean(search.status) ||
+    Boolean(search.genre) ||
+    Boolean(search.tag) ||
     typeof search.owned === "boolean";
+
+  const genreOptions = (genres.data?.items ?? []).map((i) => ({
+    value: i.name,
+    label: i.seriesCount > 0 ? `${i.name} (${i.seriesCount})` : `${i.name} (—)`,
+  }));
+  const tagOptions = (tags.data?.items ?? []).map((i) => ({
+    value: i.name,
+    label: i.seriesCount > 0 ? `${i.name} (${i.seriesCount})` : `${i.name} (—)`,
+  }));
 
   const handleSave = () => {
     const trimmed = presetName.trim();
@@ -147,6 +161,30 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
           onChange={(v) => merge({ status: v ?? undefined })}
           clearable
           searchable
+        />
+
+        <Select
+          label="Genre"
+          placeholder={genres.isLoading ? "loading…" : "Any"}
+          data={genreOptions}
+          value={search.genre ?? null}
+          onChange={(v) => merge({ genre: v ?? undefined })}
+          clearable
+          searchable
+          nothingFoundMessage="No matches"
+          data-testid="filter-genre-select"
+        />
+
+        <Select
+          label="Tag"
+          placeholder={tags.isLoading ? "loading…" : "Any"}
+          data={tagOptions}
+          value={search.tag ?? null}
+          onChange={(v) => merge({ tag: v ?? undefined })}
+          clearable
+          searchable
+          nothingFoundMessage="No matches"
+          data-testid="filter-tag-select"
         />
 
         <Box>

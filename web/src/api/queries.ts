@@ -17,11 +17,15 @@ export type StatsResponse = components["schemas"]["StatsResponse"];
 export type UnresolvedPage = components["schemas"]["UnresolvedPage"];
 export type UnresolvedRelease = components["schemas"]["UnresolvedRelease"];
 export type ReviewCandidateDto = components["schemas"]["ReviewCandidateDto"];
+export type TagList = components["schemas"]["TagList"];
+export type TagUsageDto = components["schemas"]["TagUsageDto"];
 
 export interface SeriesFilters {
   kind?: string;
   status?: string;
   owned?: boolean;
+  genre?: string;
+  tag?: string;
   sort?: string;
   order?: string;
   page?: number;
@@ -37,6 +41,8 @@ export function useSeriesList(filters: SeriesFilters) {
     kind: filters.kind || undefined,
     status: filters.status || undefined,
     owned: typeof filters.owned === "boolean" ? filters.owned : undefined,
+    genre: filters.genre || undefined,
+    tag: filters.tag || undefined,
     sort: filters.sort || undefined,
     order: filters.order || undefined,
   };
@@ -129,6 +135,30 @@ export function useProviders() {
 }
 
 const DEFAULT_REVIEW_PAGE_SIZE = 20;
+
+export function useGenres() {
+  return useQuery({
+    queryKey: ["genres"],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/genres");
+      if (error) throw new Error("failed to load genres");
+      return data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useTags() {
+  return useQuery({
+    queryKey: ["tags"],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/tags");
+      if (error) throw new Error("failed to load tags");
+      return data;
+    },
+    staleTime: 60_000,
+  });
+}
 
 export function useUnresolvedReleases(
   page = 1,

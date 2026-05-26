@@ -21,6 +21,7 @@ use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, NotSet, QueryFilter, Set, TransactionTrait,
 };
 use td_db::entities::{releases, series, series_external_ids};
+use td_db::repos::tagging_repo;
 use td_metadata::{ForeignId, SeriesKind, SeriesMetadata, SeriesStatus};
 
 /// Source-of-truth provenance for the `series.metadata_source` column.
@@ -176,6 +177,19 @@ pub async fn upsert_series_from_metadata(
     }
 
     txn.commit().await?;
+
+    // Sync the normalized genre/tag join tables. We keep `series.genres_json`
+    // writes in the loop above as a fallback for one release; the canonical
+    // source the UI reads from is the join tables. Failures here don't roll
+    // back the series row: the next persist will re-sync from the full set,
+    // and the catalog stays usable in the meantime.
+    if let Err(e) = tagging_repo::set_series_genres(db, series_id, &metadata.genres).await {
+        tracing::warn!(error = ?e, series_id, "failed to sync series_genres; will retry on next persist");
+    }
+    if let Err(e) = tagging_repo::set_series_tags(db, series_id, &metadata.tags).await {
+        tracing::warn!(error = ?e, series_id, "failed to sync series_tags; will retry on next persist");
+    }
+
     Ok(UpsertResult {
         series_id,
         unchanged,
@@ -324,7 +338,7 @@ mod tests {
             cover_url: Some("https://example.com/c.jpg".into()),
             external_url: Some("https://api.mangabaka.dev/v1/series/12345".into()),
             genres: vec!["action".into(), "horror".into()],
-            tags: vec![],
+            tags: vec!["devil hunter".into(), "gore".into()],
             foreign_ids: vec![
                 ForeignId {
                     provider: "mangaupdates".into(),
@@ -378,6 +392,34 @@ mod tests {
         assert_eq!(first.series_id, second.series_id);
         assert!(!first.unchanged);
         assert!(second.unchanged);
+    }
+
+    #[tokio::test]
+    async fn upsert_writes_normalized_genre_and_tag_tables() {
+        let db = fresh_db().await;
+        let now = Utc::now();
+        let res =
+            upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), 1_700_000_000, now)
+                .await
+                .unwrap();
+
+        // Both genres_json (fallback) and the join tables get populated.
+        let row = series::Entity::find_by_id(res.series_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(row.genres_json.as_deref().unwrap().contains("action"));
+
+        let genres = td_db::repos::tagging_repo::list_genres_for_series(&db, res.series_id)
+            .await
+            .unwrap();
+        assert_eq!(genres.len(), 2);
+        let tags = td_db::repos::tagging_repo::list_tags_for_series(&db, res.series_id)
+            .await
+            .unwrap();
+        assert_eq!(tags.len(), 2);
+        assert!(tags.iter().any(|t| t.contains("devil")));
     }
 
     #[tokio::test]

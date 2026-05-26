@@ -3,10 +3,13 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use chrono::Utc;
-use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect};
+use sea_orm::{
+    ColumnTrait, EntityTrait, JoinType, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    RelationTrait,
+};
 use serde::{Deserialize, Serialize};
-use td_db::entities::{series, series_external_ids};
-use td_db::repos::series_external_ids_repo;
+use td_db::entities::{genres, series, series_external_ids, series_genres, series_tags, tags};
+use td_db::repos::{series_external_ids_repo, tagging_repo};
 use td_metadata::SeriesMetadata;
 use td_resolution::persist;
 use utoipa::{IntoParams, ToSchema};
@@ -58,6 +61,7 @@ pub struct SeriesDetail {
     pub status: Option<String>,
     pub year: Option<i32>,
     pub genres: Vec<String>,
+    pub tags: Vec<String>,
     pub metadata_source: String,
     pub metadata_fetched_at: i64,
     pub first_seen_at: i64,
@@ -80,6 +84,10 @@ pub struct SeriesListQuery {
     pub status: Option<String>,
     /// Filter by ownership flag (true = owned by Codex, false = discoverable).
     pub owned: Option<bool>,
+    /// Filter by a single genre name. AND-combined with the other filters.
+    pub genre: Option<String>,
+    /// Filter by a single tag name. AND-combined with the other filters.
+    pub tag: Option<String>,
     /// Sort field. Supports `last_release_at` (default) and `first_seen_at`.
     pub sort: Option<String>,
     /// `asc` or `desc` (default).
@@ -94,6 +102,8 @@ impl Default for SeriesListQuery {
             kind: None,
             status: None,
             owned: None,
+            genre: None,
+            tag: None,
             sort: None,
             order: None,
         }
@@ -133,6 +143,27 @@ pub async fn list(
     if let Some(owned) = q.owned {
         let flag = if owned { 1 } else { 0 };
         select = select.filter(series::Column::Owned.eq(flag));
+    }
+    // Genre/tag filters: AND-combined via two semi-join clauses. Names are
+    // matched case-insensitively because the underlying UNIQUE constraints
+    // collate NOCASE.
+    if let Some(genre_name) = q.genre.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        select = select
+            .join(
+                JoinType::InnerJoin,
+                series_genres::Relation::Series.def().rev(),
+            )
+            .join(JoinType::InnerJoin, series_genres::Relation::Genre.def())
+            .filter(genres::Column::Name.eq(genre_name));
+    }
+    if let Some(tag_name) = q.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        select = select
+            .join(
+                JoinType::InnerJoin,
+                series_tags::Relation::Series.def().rev(),
+            )
+            .join(JoinType::InnerJoin, series_tags::Relation::Tag.def())
+            .filter(tags::Column::Name.eq(tag_name));
     }
     let sort_col = match q.sort.as_deref() {
         Some("first_seen_at") => series::Column::FirstSeenAt,
@@ -185,7 +216,18 @@ pub async fn get(
     let mappings = series_external_ids_repo::list_for_series(&state.db, id)
         .await
         .map_err(anyhow_err)?;
-    Ok(Json(model_to_detail(row, mappings)))
+    let tags_for_series = tagging_repo::list_tags_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    let genres_for_series = tagging_repo::list_genres_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(model_to_detail(
+        row,
+        mappings,
+        genres_for_series,
+        tags_for_series,
+    )))
 }
 
 /// Re-fetch metadata for a series from the active provider and re-persist.
@@ -246,7 +288,18 @@ pub async fn refresh_metadata(
     let mappings = series_external_ids_repo::list_for_series(&state.db, id)
         .await
         .map_err(anyhow_err)?;
-    Ok(Json(model_to_detail(row, mappings)))
+    let tags_for_series = tagging_repo::list_tags_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    let genres_for_series = tagging_repo::list_genres_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(model_to_detail(
+        row,
+        mappings,
+        genres_for_series,
+        tags_for_series,
+    )))
 }
 
 fn model_to_list_item(m: series::Model) -> SeriesListItem {
@@ -263,17 +316,27 @@ fn model_to_list_item(m: series::Model) -> SeriesListItem {
     }
 }
 
-fn model_to_detail(m: series::Model, mappings: Vec<series_external_ids::Model>) -> SeriesDetail {
+fn model_to_detail(
+    m: series::Model,
+    mappings: Vec<series_external_ids::Model>,
+    join_genres: Vec<String>,
+    join_tags: Vec<String>,
+) -> SeriesDetail {
     let alternate_titles = m
         .alternate_titles_json
         .as_deref()
         .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
         .unwrap_or_default();
-    let genres = m
-        .genres_json
-        .as_deref()
-        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
-        .unwrap_or_default();
+    // Prefer the normalized join table. Fall back to the JSON column for
+    // legacy rows the backfill couldn't lift (malformed JSON, etc.).
+    let genres = if !join_genres.is_empty() {
+        join_genres
+    } else {
+        m.genres_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+            .unwrap_or_default()
+    };
     SeriesDetail {
         id: m.id,
         canonical_title: m.canonical_title,
@@ -283,6 +346,7 @@ fn model_to_detail(m: series::Model, mappings: Vec<series_external_ids::Model>) 
         status: m.status,
         year: m.year,
         genres,
+        tags: join_tags,
         metadata_source: m.metadata_source,
         metadata_fetched_at: m.metadata_fetched_at,
         first_seen_at: m.first_seen_at,
