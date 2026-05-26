@@ -502,6 +502,57 @@ export const handlers = [
     }),
   ),
 
+  http.get("/api/v1/metrics/providers/:id", ({ params }) =>
+    HttpResponse.json({
+      providerId: String(params.id),
+      summary: {
+        providerId: String(params.id),
+        totalRuns: 4,
+        successCount: 4,
+        failureCount: 0,
+        skippedCount: 0,
+        bytesSum: 476_000_000,
+        lastStartedAt: NOW - 3600,
+        lastStatus: "success",
+        successRate: 1.0,
+      },
+      buckets: [
+        {
+          bucketStart: NOW - 86400,
+          successCount: 1,
+          failureCount: 0,
+          skippedCount: 0,
+        },
+        {
+          bucketStart: NOW - 3600,
+          successCount: 1,
+          failureCount: 0,
+          skippedCount: 0,
+        },
+      ],
+      fetchLatency: { p50Ms: 320, p95Ms: 850, maxMs: 1100 },
+      bucketSeconds: 3600,
+      rangeSeconds: 24 * 3600,
+      since: NOW - 24 * 3600,
+      until: NOW,
+    }),
+  ),
+
+  http.get("/api/v1/metrics/id-maps", () =>
+    HttpResponse.json({
+      externalIds: [
+        { provider: "anilist", count: 12 },
+        { provider: "mal", count: 24 },
+        { provider: "mangaupdates", count: 38 },
+      ],
+      mangaupdatesRedirectCache: {
+        modernCount: 17,
+        tombstoneCount: 3,
+        lastResolvedAt: NOW - 1800,
+      },
+    }),
+  ),
+
   http.get("/api/v1/series", ({ request }) => {
     const url = new URL(request.url);
     const kind = url.searchParams.get("kind");

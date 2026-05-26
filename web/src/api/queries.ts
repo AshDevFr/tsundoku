@@ -42,6 +42,12 @@ export type TimeToResolutionDto = components["schemas"]["TimeToResolutionDto"];
 export type ReviewQueueMetrics = components["schemas"]["ReviewQueueMetrics"];
 export type ReviewQueueSnapshotDto =
   components["schemas"]["ReviewQueueSnapshotDto"];
+export type IdMapMetrics = components["schemas"]["IdMapMetrics"];
+export type ExternalIdMapCount = components["schemas"]["ExternalIdMapCount"];
+export type MangaupdatesRedirectStats =
+  components["schemas"]["MangaupdatesRedirectStats"];
+export type ProviderMetricsBucket =
+  components["schemas"]["ProviderMetricsBucket"];
 
 export interface SeriesFilters {
   kind?: string;
@@ -322,6 +328,18 @@ export function useProviderMetricsSummary(opts: MetricsRange = {}) {
       return data;
     },
     staleTime: 30_000,
+  });
+}
+
+export function useIdMapMetrics() {
+  return useQuery({
+    queryKey: ["metrics-id-maps"],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/metrics/id-maps");
+      if (error) throw new Error("failed to load id-map metrics");
+      return data;
+    },
+    staleTime: 60_000,
   });
 }
 

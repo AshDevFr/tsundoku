@@ -18,11 +18,14 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
-window.ResizeObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-})) as unknown as typeof ResizeObserver;
+// Class form (not vi.fn) so callers using `new ResizeObserver(...)` work.
+// Mantine's FloatingIndicator inside SegmentedControl exercises this path.
+class MockResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+window.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
 
 window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;
 
