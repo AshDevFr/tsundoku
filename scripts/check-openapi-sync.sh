@@ -7,6 +7,7 @@ set -e
 
 OPENAPI_JSON="web/openapi.json"
 OPENAPI_TYPES="web/src/types/api.generated.ts"
+DOCS_OPENAPI_JSON="docs/api/openapi.json"
 
 echo "Checking OpenAPI spec synchronization..."
 
@@ -18,15 +19,15 @@ if ! make openapi-all > /dev/null 2>&1; then
     exit 1
 fi
 
-if ! git diff --quiet -- "$OPENAPI_JSON" "$OPENAPI_TYPES"; then
+if ! git diff --quiet -- "$OPENAPI_JSON" "$OPENAPI_TYPES" "$DOCS_OPENAPI_JSON"; then
     echo ""
     echo "ERROR: OpenAPI files are out of sync with the backend."
     echo ""
-    git --no-pager diff --stat -- "$OPENAPI_JSON" "$OPENAPI_TYPES"
+    git --no-pager diff --stat -- "$OPENAPI_JSON" "$OPENAPI_TYPES" "$DOCS_OPENAPI_JSON"
     echo ""
     echo "Please stage the updated files:"
     echo ""
-    echo "  git add $OPENAPI_JSON $OPENAPI_TYPES"
+    echo "  git add $OPENAPI_JSON $OPENAPI_TYPES $DOCS_OPENAPI_JSON"
     echo ""
     echo "Then try committing again."
     exit 1

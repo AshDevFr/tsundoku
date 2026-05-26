@@ -1,15 +1,21 @@
 .PHONY: help \
 	build build-release run watch \
 	fmt lint check ci test test-fast \
-	frontend frontend-build frontend-install frontend-lint frontend-lint-fix test-frontend \
+	frontend frontend-build frontend-install frontend-outdated \
+	frontend-lint frontend-lint-fix frontend-mock frontend-mock-fresh test-frontend \
 	openapi openapi-types openapi-all \
-	docs docs-build docs-install \
-	dev-up dev-up-d dev-up-build dev-down dev-down-v dev-logs dev-watch dev-shell \
+	docs docs-install docs-outdated docs-start docs-start-fresh \
+	docs-build docs-build-fresh docs-serve docs-clear \
+	docs-refresh-api-docs docs-gen-api-docs docs-clean-api-docs \
+	dev-up dev-up-d dev-up-build dev-down dev-down-v dev-watch dev-check \
+	dev-logs dev-logs-backend dev-logs-frontend \
+	dev-restart dev-restart-backend dev-restart-frontend \
+	dev-shell dev-shell-frontend \
 	prod-up prod-up-d prod-down prod-logs \
-	docker-build docker-run docker-push \
+	docker-build docker-build-clean-cache docker-run docker-push \
 	changelog changelog-unreleased changelog-release release-prepare \
 	dist-install dist-plan dist-build dist-build-local \
-	clean clean-docker setup-hooks
+	clean clean-docker clean-all setup-hooks
 
 # Colors
 BLUE := \033[0;34m
@@ -68,31 +74,75 @@ frontend-build: ## Build the frontend into web/dist
 frontend-install: ## Install frontend dependencies
 	cd web && npm install
 
+frontend-outdated: ## Check for outdated frontend dependencies
+	cd web && npm outdated
+
 frontend-lint: ## Lint the frontend (biome)
 	cd web && npm run lint
 
 frontend-lint-fix: ## Lint and auto-fix the frontend
 	cd web && npm run lint:fix
 
+frontend-mock: ## Start the SPA with MSW mocks (no backend needed)
+	cd web && npm run dev:mock
+
+frontend-mock-fresh: openapi-all ## Regenerate API types, then start the SPA with mocks
+	cd web && npm run dev:mock
+
 test-frontend: ## Run frontend tests
 	cd web && npm run test:run
 
 # ── Docs site (Docusaurus) ───────────────────────────────────────────────────
+# Two layers of targets:
+#   - docs-*           : direct Docusaurus operations (assume deps installed)
+#   - docs-*-fresh     : refresh the OpenAPI reference first, then run the
+#                        Docusaurus command. Use after a backend API change.
+# The bare `docs` target is a convenience alias for `docs-start`.
 
-docs: ## Start the Docusaurus dev server at http://localhost:3000
-	cd docs && npm install && npm run start
-
-docs-build: ## Build the docs site into docs/build (Cloudflare Pages publishes this)
-	cd docs && npm ci && npm run build
+docs: docs-start ## Alias for `docs-start`
 
 docs-install: ## Install docs site dependencies
 	cd docs && npm install
+
+docs-outdated: ## Check for outdated docs site dependencies
+	cd docs && npm outdated
+
+docs-start: ## Start the docs dev server (http://localhost:3000)
+	cd docs && npm run start
+
+docs-start-fresh: docs-refresh-api-docs docs-start ## Refresh the API reference, then start the dev server
+
+docs-build: ## Build the docs site into docs/build (Cloudflare Pages publishes this)
+	cd docs && npm run build
+
+docs-build-fresh: docs-refresh-api-docs docs-build ## Refresh the API reference, then do a production build
+
+docs-serve: ## Serve the built docs site locally (after `docs-build`)
+	cd docs && npm run serve
+
+docs-clear: ## Clear the docs site cache (.docusaurus/, build/)
+	cd docs && npm run clear
+
+docs-refresh-api-docs: docs-clean-api-docs docs-gen-api-docs ## Regenerate the OpenAPI reference from the live spec
+
+docs-gen-api-docs: openapi ## Regenerate web/openapi.json, then generate the API reference pages
+	cd docs && npm run gen-api-docs
+
+docs-clean-api-docs: ## Remove the generated OpenAPI reference pages
+	cd docs && npm run clean-api-docs
 
 # ── OpenAPI ──────────────────────────────────────────────────────────────────
 
 openapi: ## Generate the OpenAPI spec from the backend
 	cargo run -- openapi --output web/openapi.json
 	@echo "$(GREEN)OpenAPI spec written to web/openapi.json$(NC)"
+	@# Copy into docs/ so Cloudflare Pages (root = docs/) can read
+	# the spec without checking out the whole monorepo. Both files
+	# are committed; the pre-commit OpenAPI sync check keeps them
+	# from drifting.
+	@mkdir -p docs/api
+	@cp web/openapi.json docs/api/openapi.json
+	@echo "$(GREEN)OpenAPI spec copied to docs/api/openapi.json$(NC)"
 
 openapi-types: ## Generate TypeScript types from the OpenAPI spec
 	cd web && npm run generate:types
@@ -116,14 +166,47 @@ dev-down: ## Stop the dev stack
 dev-down-v: ## Stop the dev stack and remove volumes
 	docker compose --profile dev down -v
 
-dev-logs: ## Tail dev stack logs
-	docker compose --profile dev logs -f
+dev-logs: ## Tail dev stack logs (backend + frontend)
+	docker compose --profile dev logs -f tsundoku-dev frontend-dev
+
+dev-logs-backend: ## Tail backend logs only
+	docker compose --profile dev logs -f tsundoku-dev
+
+dev-logs-frontend: ## Tail frontend logs only
+	docker compose --profile dev logs -f frontend-dev
+
+dev-restart: ## Restart all dev containers
+	docker compose --profile dev restart tsundoku-dev frontend-dev
+
+dev-restart-backend: ## Restart the backend container only
+	docker compose --profile dev restart tsundoku-dev
+
+dev-restart-frontend: ## Restart the frontend container only
+	docker compose --profile dev restart frontend-dev
 
 dev-watch: ## Start the dev stack with docker compose watch (auto-sync)
 	docker compose -f docker-compose.yml -f compose.watch.yml --profile dev watch
 
 dev-shell: ## Open a shell in the dev backend container
 	docker exec -it tsundoku-dev sh
+
+dev-shell-frontend: ## Open a shell in the dev frontend container
+	docker exec -it tsundoku-frontend-dev sh
+
+dev-check: ## Audit local toolchain (cargo, node, docker, optional speed-ups)
+	@echo "$(BLUE)Checking development tools...$(NC)"
+	@echo ""
+	@echo "$(BLUE)Required:$(NC)"
+	@command -v cargo >/dev/null 2>&1 && echo "  $(GREEN)✓ cargo$(NC)" || echo "  $(YELLOW)✗ cargo (install from https://rustup.rs)$(NC)"
+	@command -v node >/dev/null 2>&1 && echo "  $(GREEN)✓ node$(NC)" || echo "  $(YELLOW)✗ node (install from https://nodejs.org)$(NC)"
+	@command -v docker >/dev/null 2>&1 && echo "  $(GREEN)✓ docker$(NC)" || echo "  $(YELLOW)✗ docker (install Docker Desktop)$(NC)"
+	@echo ""
+	@echo "$(BLUE)Optional (faster builds):$(NC)"
+	@command -v mold >/dev/null 2>&1 && echo "  $(GREEN)✓ mold$(NC) (faster linker)" || echo "  $(YELLOW)✗ mold$(NC) - install: apt install mold (Linux only)"
+	@command -v sccache >/dev/null 2>&1 && echo "  $(GREEN)✓ sccache$(NC) (compilation cache)" || echo "  $(YELLOW)✗ sccache$(NC) - install: brew install sccache (or: cargo install sccache --locked)"
+	@cargo nextest --version >/dev/null 2>&1 && echo "  $(GREEN)✓ cargo-nextest$(NC) (faster tests)" || echo "  $(YELLOW)✗ cargo-nextest$(NC) - install: cargo install cargo-nextest --locked"
+	@command -v cargo-watch >/dev/null 2>&1 && echo "  $(GREEN)✓ cargo-watch$(NC)" || echo "  $(YELLOW)✗ cargo-watch$(NC) - install: cargo install cargo-watch --locked"
+	@command -v pre-commit >/dev/null 2>&1 && echo "  $(GREEN)✓ pre-commit$(NC)" || echo "  $(YELLOW)✗ pre-commit$(NC) - install: brew install pre-commit"
 
 prod-up: ## Start the production stack
 	docker compose --profile prod up
@@ -141,6 +224,9 @@ prod-logs: ## Tail production logs
 
 docker-build: ## Build the production Docker image
 	docker build -t tsundoku:latest .
+
+docker-build-clean-cache: ## Clear Docker buildx cache (use when build layers go stale)
+	docker buildx prune --filter type=exec.cachemount -f
 
 docker-run: ## Run the production image
 	docker run -p 8080:8080 tsundoku:latest
@@ -179,13 +265,32 @@ release-prepare: ## Bump versions + changelog + types (usage: make release-prepa
 	@echo "$(BLUE)Preparing release v$(VERSION)...$(NC)"
 	@sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' Cargo.toml && rm Cargo.toml.bak
 	@echo "$(GREEN)✓$(NC) Cargo.toml version set to $(VERSION)"
+	
 	@cd web && npm version $(VERSION) --no-git-tag-version --allow-same-version >/dev/null 2>&1
 	@echo "$(GREEN)✓$(NC) web/package.json version set to $(VERSION)"
+	
+	@cd docs && npm version $(VERSION) --no-git-tag-version --allow-same-version >/dev/null 2>&1
+	@echo "$(GREEN)✓$(NC) docs/package.json version set to $(VERSION)"
+	
 	@cargo build --quiet 2>/dev/null || cargo build
 	@echo "$(GREEN)✓$(NC) Cargo.lock updated"
+	
 	@$(MAKE) openapi-all
 	@echo "$(GREEN)✓$(NC) Regenerated OpenAPI spec and TS types"
-	@$(MAKE) changelog-release VERSION=$(VERSION)
+	
+	@$(MAKE) docs-refresh-api-docs
+	@echo "$(GREEN)✓$(NC) Regenerated docs API reference"
+
+	@# Skip regeneration if CHANGELOG.md has local edits — the operator
+	# may have hand-curated release notes that we shouldn't clobber.
+	@if git diff --quiet CHANGELOG.md 2>/dev/null && git diff --cached --quiet CHANGELOG.md 2>/dev/null; then \
+		$(MAKE) changelog-release VERSION=$(VERSION); \
+		echo "$(GREEN)✓$(NC) Regenerated CHANGELOG.md for v$(VERSION)"; \
+	else \
+		echo "$(YELLOW)⊘$(NC) Skipped CHANGELOG.md regeneration (already modified)"; \
+		echo "   To regenerate from scratch:"; \
+		echo "     git checkout CHANGELOG.md && make changelog-release VERSION=$(VERSION)"; \
+	fi
 	@echo ""
 	@echo "$(GREEN)Release v$(VERSION) prepared.$(NC) Next:"
 	@echo "  git add -A && git commit -m \"chore(release): v$(VERSION)\""
@@ -213,9 +318,13 @@ dist-build-local: ## Build for the current platform only
 clean: ## Remove build artifacts
 	cargo clean
 	rm -rf web/dist web/node_modules
+	rm -rf docs/build docs/.docusaurus docs/.cache-loader docs/node_modules docs/docs/api
 
 clean-docker: ## Stop all compose profiles and remove volumes
 	docker compose --profile dev --profile prod down -v
+
+clean-all: clean clean-docker ## Clean build artifacts AND tear down Docker (volumes included)
+	@echo "$(GREEN)All build and Docker state cleared.$(NC)"
 
 setup-hooks: ## Install git pre-commit hooks (if scripts/ provides them)
 	@if [ -f scripts/setup-hooks.sh ]; then bash scripts/setup-hooks.sh; else echo "No scripts/setup-hooks.sh"; fi

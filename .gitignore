@@ -45,3 +45,8 @@ web/coverage/
 docs/build/
 docs/.docusaurus/
 docs/.cache-loader/
+# OpenAPI reference pages — regenerated from web/openapi.json on every
+# build (via `gen-api-docs && docusaurus build`). The `apiSidebar.ts`
+# conditional-require gracefully degrades to an empty API sidebar on
+# fresh checkouts that haven't run gen-api-docs yet.
+docs/docs/api/

@@ -1,5 +1,6 @@
 import type * as Preset from "@docusaurus/preset-classic";
 import type { Config } from "@docusaurus/types";
+import type * as OpenApiPlugin from "docusaurus-plugin-openapi-docs";
 import { themes as prismThemes } from "prism-react-renderer";
 
 // Read version from package.json so the navbar badge tracks the site's own
@@ -45,6 +46,11 @@ const config: Config = {
       {
         docs: {
           sidebarPath: "./sidebars.ts",
+          // Required by docusaurus-theme-openapi-docs: API pages opt
+          // into the theme's ApiItem renderer (the OpenAPI-aware page
+          // shell). Non-API markdown pages use the default theme
+          // component automatically.
+          docItemComponent: "@theme/ApiItem",
         },
         // No blog. We surface release notes via the GitHub releases page.
         blog: false,
@@ -55,12 +61,34 @@ const config: Config = {
     ],
   ],
 
-  // Phase 3 adds `docusaurus-plugin-openapi-docs` here for the auto-
-  // generated API reference. The plugin is omitted in Phase 1 so the
-  // scaffold can build without any OpenAPI spec dependency.
-  plugins: [],
+  plugins: [
+    [
+      "docusaurus-plugin-openapi-docs",
+      {
+        id: "api",
+        docsPluginId: "classic",
+        config: {
+          tsundoku: {
+            // The spec lives inside `docs/` so Cloudflare Pages can be
+            // configured with "Root directory: docs/" and only check
+            // out the docs subtree (rather than the whole monorepo).
+            // `make openapi` copies `web/openapi.json` here as part of
+            // its workflow.
+            specPath: "api/openapi.json",
+            outputDir: "docs/api",
+            sidebarOptions: {
+              groupPathsBy: "tag",
+              categoryLinkSource: "tag",
+            },
+            showSchemas: true,
+          } satisfies OpenApiPlugin.Options,
+        },
+      },
+    ],
+  ],
 
   themes: [
+    "docusaurus-theme-openapi-docs",
     [
       require.resolve("@easyops-cn/docusaurus-search-local"),
       /** @type {import("@easyops-cn/docusaurus-search-local").PluginOptions} */
@@ -68,10 +96,12 @@ const config: Config = {
         // Long-term cache friendliness.
         hashed: true,
         language: ["en"],
-        // Phase 3 will add /docs/api/* and we'll want to exclude those
-        // (matches Codex's pattern). For now we only have docs/ content.
         docsDir: ["docs"],
         docsRouteBasePath: ["docs"],
+        // API reference pages are dense and not useful in free-text
+        // search. Exclude them so search results stay readable —
+        // matches Codex's pattern.
+        ignoreFiles: [/docs\/api\/.*/],
       }),
     ],
   ],
@@ -98,6 +128,12 @@ const config: Config = {
           sidebarId: "tutorialSidebar",
           position: "left",
           label: "Docs",
+        },
+        {
+          type: "docSidebar",
+          sidebarId: "apiSidebar",
+          position: "left",
+          label: "API",
         },
         {
           href: "https://github.com/skewb1k/tsundoku",
