@@ -26,6 +26,7 @@ import { useEffect, useState } from "react";
 import {
   useLinkRelease,
   useRejectRelease,
+  useRetryAllReleases,
   useRetryRelease,
 } from "@/api/mutations";
 import {
@@ -53,10 +54,35 @@ function ReviewQueue() {
   const [page, setPage] = useState(1);
   const queue = useUnresolvedReleases(page);
   const clearToken = useAdminAuth((s) => s.clear);
+  const retryAll = useRetryAllReleases();
 
   const total = queue.data?.total ?? 0;
   const pageSize = queue.data?.pageSize ?? 20;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const handleRetryAll = () => {
+    retryAll.mutate(undefined, {
+      onSuccess: (data) => {
+        if (data?.skipped) {
+          notifications.show({
+            color: "gray",
+            message: "Retry already in progress",
+          });
+        } else {
+          notifications.show({
+            color: "blue",
+            message: "Re-running resolver on the review queue",
+          });
+        }
+      },
+      onError: (e) =>
+        notifications.show({
+          color: "red",
+          title: "Retry all failed",
+          message: (e as Error).message,
+        }),
+    });
+  };
 
   return (
     <Container size="lg" py="lg">
@@ -70,16 +96,30 @@ function ReviewQueue() {
                 : `${total.toLocaleString()} release${total === 1 ? "" : "s"} awaiting a decision`}
             </Text>
           </Stack>
-          <Tooltip label="Forget the admin token in this browser">
-            <Button
-              variant="subtle"
-              size="xs"
-              color="gray"
-              onClick={() => clearToken()}
-            >
-              Sign out
-            </Button>
-          </Tooltip>
+          <Group gap="xs">
+            <Tooltip label="Re-run the resolver against every release currently in this queue">
+              <Button
+                variant="light"
+                size="xs"
+                onClick={handleRetryAll}
+                loading={retryAll.isPending}
+                disabled={total === 0}
+                data-testid="retry-all-button"
+              >
+                Retry all
+              </Button>
+            </Tooltip>
+            <Tooltip label="Forget the admin token in this browser">
+              <Button
+                variant="subtle"
+                size="xs"
+                color="gray"
+                onClick={() => clearToken()}
+              >
+                Sign out
+              </Button>
+            </Tooltip>
+          </Group>
         </Group>
 
         {queue.isError && (

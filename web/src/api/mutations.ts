@@ -68,6 +68,19 @@ export function useRetryRelease() {
   });
 }
 
+export function useRetryAllReleases() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST("/api/v1/releases/retry-all", {});
+      if (error)
+        throw new Error(describeError(error, "failed to retry releases"));
+      return data;
+    },
+    onSuccess: () => invalidateReleaseQueries(qc),
+  });
+}
+
 function invalidateSourceQueries(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["sources"] });
   qc.invalidateQueries({ queryKey: ["stats"] });

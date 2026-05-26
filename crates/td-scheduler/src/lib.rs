@@ -41,6 +41,10 @@ use tokio_cron_scheduler::JobScheduler;
 pub struct JobLocks {
     sources: DashMap<String, Arc<Mutex<()>>>,
     providers: DashMap<String, Arc<Mutex<()>>>,
+    /// Single global lock for the review-queue retry-all operation. Held
+    /// for the lifetime of one batch so a second click is reported as
+    /// skipped rather than spawning a parallel walk over the same rows.
+    retry_all_releases: Arc<Mutex<()>>,
 }
 
 impl JobLocks {
@@ -56,6 +60,10 @@ impl JobLocks {
             .entry(id.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
+    }
+
+    pub fn retry_all_releases_lock(&self) -> Arc<Mutex<()>> {
+        self.retry_all_releases.clone()
     }
 }
 

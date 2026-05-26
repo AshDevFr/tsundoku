@@ -524,6 +524,32 @@
         }
       }
     },
+    "/api/v1/releases/retry-all": {
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Re-run the resolver against every release currently visible in the\nreview queue (`unresolved`, `ambiguous`, `review_pending`). Spawns a\nbackground task and returns immediately so the request doesn't block\non what can be a multi-minute walk. A dedicated per-process lock\nprevents a second click from spawning a parallel walk; in that case\nthe response is `{ triggered: false, skipped: true }`.",
+        "operationId": "retry_all",
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryAllResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/releases/unresolved": {
       "get": {
         "tags": [
@@ -1833,6 +1859,23 @@
           "review": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "RetryAllResponse": {
+        "type": "object",
+        "required": [
+          "triggered",
+          "skipped"
+        ],
+        "properties": {
+          "skipped": {
+            "type": "boolean",
+            "description": "`true` when a prior retry-all batch is still in flight; the request is a no-op."
+          },
+          "triggered": {
+            "type": "boolean",
+            "description": "`true` when a batch was spawned by this request."
           }
         }
       },

@@ -87,6 +87,19 @@ pub struct UnresolvedPage {
     pub total: u64,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryAllResponse {
+    /// `true` when a batch was spawned by this request.
+    pub triggered: bool,
+    /// `true` when a prior retry-all batch is still in flight; the request is a no-op.
+    pub skipped: bool,
+}
+
+/// Per-batch ceiling for `POST /releases/retry-all`. Matches the CLI's
+/// default and is plenty for personal-scale review queues.
+const RETRY_ALL_BATCH_LIMIT: u64 = 1000;
+
 #[derive(Debug, Deserialize, IntoParams)]
 #[serde(default, rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
@@ -420,6 +433,60 @@ pub async fn retry(
         .await
         .map_err(anyhow_err)?;
     Ok(Json(model_to_release(row, formats)))
+}
+
+/// Re-run the resolver against every release currently visible in the
+/// review queue (`unresolved`, `ambiguous`, `review_pending`). Spawns a
+/// background task and returns immediately so the request doesn't block
+/// on what can be a multi-minute walk. A dedicated per-process lock
+/// prevents a second click from spawning a parallel walk; in that case
+/// the response is `{ triggered: false, skipped: true }`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/releases/retry-all",
+    tag = "releases",
+    responses((status = 202, body = RetryAllResponse)),
+    security(("admin" = []))
+)]
+pub async fn retry_all(State(state): State<AppState>) -> ApiResult<Json<RetryAllResponse>> {
+    let lock = state.locks.retry_all_releases_lock();
+    let Ok(guard) = lock.try_lock_owned() else {
+        return Ok(Json(RetryAllResponse {
+            triggered: false,
+            skipped: true,
+        }));
+    };
+
+    let db = state.db.clone();
+    let metadata = state.metadata.clone();
+    let ingestion = state.ingestion.clone();
+    let query_builder = state.query_builder.clone();
+    let mu_redirector = state.mangaupdates_redirector.clone();
+
+    tokio::spawn(async move {
+        let _g = guard;
+        let mut resolver = Resolver::new(db, metadata, ingestion).with_query_builder(query_builder);
+        if let Some(r) = mu_redirector {
+            resolver = resolver.with_mangaupdates_redirector(r);
+        }
+        match resolver.resolve_review_queue(RETRY_ALL_BATCH_LIMIT).await {
+            Ok(summary) => tracing::info!(
+                resolved = summary.resolved,
+                ambiguous = summary.ambiguous,
+                review_pending = summary.review_pending,
+                unresolved = summary.unresolved,
+                errors = summary.errors,
+                total = summary.total(),
+                "retry-all batch completed"
+            ),
+            Err(e) => tracing::warn!(error = ?e, "retry-all batch failed"),
+        }
+    });
+
+    Ok(Json(RetryAllResponse {
+        triggered: true,
+        skipped: false,
+    }))
 }
 
 async fn resolve_link_target(

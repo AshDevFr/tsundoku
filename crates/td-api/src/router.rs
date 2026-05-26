@@ -30,6 +30,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/releases/{id}/link", post(releases::link))
         .route("/releases/{id}/reject", post(releases::reject))
         .route("/releases/{id}/retry", post(releases::retry))
+        .route("/releases/retry-all", post(releases::retry_all))
         .route("/sources/{name}/poll", post(sources::poll))
         .route("/sources/poll-all", post(sources::poll_all))
         .route(

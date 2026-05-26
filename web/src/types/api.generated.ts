@@ -229,6 +229,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/releases/retry-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-run the resolver against every release currently visible in the
+         *     review queue (`unresolved`, `ambiguous`, `review_pending`). Spawns a
+         *     background task and returns immediately so the request doesn't block
+         *     on what can be a multi-minute walk. A dedicated per-process lock
+         *     prevents a second click from spawning a parallel walk; in that case
+         *     the response is `{ triggered: false, skipped: true }`.
+         */
+        post: operations["retry_all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/releases/unresolved": {
         parameters: {
             query?: never;
@@ -708,6 +732,12 @@ export interface components {
             knownId: number;
             /** Format: int64 */
             review: number;
+        };
+        RetryAllResponse: {
+            /** @description `true` when a prior retry-all batch is still in flight; the request is a no-op. */
+            skipped: boolean;
+            /** @description `true` when a batch was spawned by this request. */
+            triggered: boolean;
         };
         ReviewCandidateDto: {
             reason?: string | null;
@@ -1267,6 +1297,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReleasePage"];
+                };
+            };
+        };
+    };
+    retry_all: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryAllResponse"];
                 };
             };
         };

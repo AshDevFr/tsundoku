@@ -154,9 +154,30 @@ impl Resolver {
     /// summary table. Errors on individual releases are logged but don't
     /// abort the batch.
     pub async fn resolve_unresolved(&self, batch_limit: u64) -> Result<RetrySummary> {
+        self.resolve_by_statuses(&["unresolved", "ambiguous"], batch_limit)
+            .await
+    }
+
+    /// Re-run the resolver on every row currently surfaced in the review
+    /// UI: `unresolved`, `ambiguous`, and `review_pending`. Used by the
+    /// "retry all" button so the operator can re-evaluate the entire
+    /// queue after a provider refresh or a config change without picking
+    /// rows one at a time.
+    pub async fn resolve_review_queue(&self, batch_limit: u64) -> Result<RetrySummary> {
+        self.resolve_by_statuses(&["unresolved", "ambiguous", "review_pending"], batch_limit)
+            .await
+    }
+
+    async fn resolve_by_statuses(
+        &self,
+        statuses: &[&str],
+        batch_limit: u64,
+    ) -> Result<RetrySummary> {
         let mut summary = RetrySummary::default();
-        let mut rows = releases_repo::list_by_status(&self.db, "unresolved", batch_limit).await?;
-        rows.extend(releases_repo::list_by_status(&self.db, "ambiguous", batch_limit).await?);
+        let mut rows = Vec::new();
+        for status in statuses {
+            rows.extend(releases_repo::list_by_status(&self.db, status, batch_limit).await?);
+        }
         for row in rows {
             match self.resolve_release(&row).await {
                 Ok(outcome) => summary.observe(outcome.status),
