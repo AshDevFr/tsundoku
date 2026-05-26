@@ -25,6 +25,7 @@ description = "Manga discovery service that polls sources and resolves releases 
 [workspace.dependencies]
 # Runtime
 tokio = { version = "1.52", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 async-trait = "0.1"
 futures-util = "0.3"
 

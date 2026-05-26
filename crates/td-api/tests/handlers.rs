@@ -1663,6 +1663,222 @@ async fn metrics_id_maps_reports_per_provider_counts_and_mu_cache() {
 }
 
 #[tokio::test]
+async fn manual_poll_publishes_started_and_finished_job_events() {
+    let db = fresh_db().await;
+    let (app, events) = common::build_app_with_events(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![StubSource {
+            name: "feed-a".into(),
+            kind: "stub".into(),
+            outcome: PollOutcome::default(),
+        }]),
+        open_auth(),
+        Vec::new(),
+        td_config::ProvidersConfig::default(),
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let mut rx = events.subscribe();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/sources/feed-a/poll")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // The synchronous part of the handler emits `started` before
+    // returning. The spawned tick emits `finished` once it completes.
+    let started = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("started event should arrive")
+        .expect("channel still open");
+    assert!(matches!(started.kind, td_api::JobKind::Source));
+    assert_eq!(started.id, "feed-a");
+    assert!(matches!(started.phase, td_api::JobPhase::Started));
+
+    let finished = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .expect("finished event should arrive")
+        .expect("channel still open");
+    assert!(matches!(finished.phase, td_api::JobPhase::Finished));
+    let result = finished.result.expect("finished carries a result payload");
+    assert!(result.triggered);
+    assert!(!result.skipped);
+}
+
+#[tokio::test]
+async fn manual_poll_emits_only_finished_when_skipped() {
+    let db = fresh_db().await;
+    let locks = std::sync::Arc::new(td_scheduler::JobLocks::default());
+    // Hold the lock so the handler reports `skipped=true` synchronously.
+    let held = locks.source_lock("feed-a");
+    let _guard = held.try_lock().expect("test holds the lock");
+
+    let (app, events) = common::build_app_with_events(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![StubSource {
+            name: "feed-a".into(),
+            kind: "stub".into(),
+            outcome: PollOutcome::default(),
+        }]),
+        open_auth(),
+        Vec::new(),
+        td_config::ProvidersConfig::default(),
+        locks,
+    );
+    let mut rx = events.subscribe();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/sources/feed-a/poll")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+        .await
+        .expect("finished{skipped} event should arrive")
+        .expect("channel still open");
+    assert!(matches!(event.phase, td_api::JobPhase::Finished));
+    let result = event.result.expect("finished carries a result");
+    assert!(!result.triggered);
+    assert!(result.skipped);
+    // No further events should land for this trigger.
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn manual_provider_refresh_publishes_finished_job_event() {
+    let db = fresh_db().await;
+    let (app, events) = common::build_app_with_events(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+        Vec::new(),
+        td_config::ProvidersConfig::default(),
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let mut rx = events.subscribe();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/providers/mb/refresh-cache")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let started = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("started event")
+        .expect("channel open");
+    assert!(matches!(started.kind, td_api::JobKind::Provider));
+    assert_eq!(started.id, "mb");
+
+    let finished = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .expect("finished event")
+        .expect("channel open");
+    assert!(matches!(finished.phase, td_api::JobPhase::Finished));
+}
+
+#[tokio::test]
+async fn events_endpoint_streams_job_events_as_sse() {
+    use axum::body::to_bytes;
+    let db = fresh_db().await;
+    let (app, events) = common::build_app_with_events(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+        Vec::new(),
+        td_config::ProvidersConfig::default(),
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+
+    // Pre-publish a frame so the next subscriber receives it.
+    // Spawn before sending so the receiver is registered first.
+    let send_task = tokio::spawn(async move {
+        // Tiny pause to let the SSE handler subscribe before the publish.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let _ = events.send(td_api::JobEvent::finished(
+            td_api::JobKind::Source,
+            "feed-a",
+            td_api::JobResult {
+                triggered: true,
+                skipped: false,
+                ..Default::default()
+            },
+        ));
+    });
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/events/jobs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let content_type = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(content_type.starts_with("text/event-stream"));
+
+    // The body is an unbounded stream; bound the read with a 1s budget so
+    // the test cannot hang. After we see the first frame, drop the body
+    // to close the connection.
+    let body = resp.into_body();
+    let bytes = tokio::time::timeout(std::time::Duration::from_secs(2), to_bytes(body, 64 * 1024))
+        .await
+        .expect("body read should not hang");
+    let bytes = bytes.expect("body bytes");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(
+        text.contains("\"phase\":\"finished\"") && text.contains("\"id\":\"feed-a\""),
+        "expected finished frame in SSE body, got:\n{text}"
+    );
+
+    let _ = send_task.await;
+}
+
+#[tokio::test]
 async fn metrics_id_maps_returns_empty_state_cleanly() {
     let db = fresh_db().await;
     let app = build_app(

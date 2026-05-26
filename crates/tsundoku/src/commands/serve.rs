@@ -62,6 +62,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     // cron just `try_lock`s and skips. Errors are logged inside `run_tick`.
     spawn_startup_refreshes(metadata.clone(), db.clone(), locks.clone());
 
+    let (job_events, _) = tokio::sync::broadcast::channel(td_api::JOB_EVENT_BUFFER);
     let state = AppState {
         db,
         sources,
@@ -73,6 +74,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
         providers_config: Arc::new(cfg.providers.clone()),
         query_builder,
         mangaupdates_redirector: mu_redirector,
+        job_events,
     };
     let app = td_api::router(state, &cfg);
 

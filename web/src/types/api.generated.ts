@@ -4,6 +4,32 @@
  */
 
 export interface paths {
+    "/api/v1/events/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Subscribe to manual-trigger lifecycle events as an SSE stream.
+         * @description Auth: inherits the read auth gate (`auth.read_requires_auth`). The
+         *     browser `EventSource` API cannot carry a custom `Authorization`
+         *     header, so installs that flip `read_requires_auth=true` will need
+         *     the operator's `api_key` to be sent via the
+         *     `Authorization` header through a fetch-based polyfill, or the gate
+         *     disabled for this single route. Default installs (`false`) work out
+         *     of the box.
+         */
+        get: operations["events_jobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/genres": {
         parameters: {
             query?: never;
@@ -571,6 +597,49 @@ export interface components {
             mangaupdatesRedirectCache: components["schemas"]["MangaupdatesRedirectStats"];
         };
         /**
+         * @description Single broadcast frame for the SSE channel. Always has `kind`, `id`,
+         *     `phase`, and `at` (epoch millis); `result` is only populated on
+         *     `Finished` events.
+         */
+        JobEvent: {
+            /** Format: int64 */
+            at: number;
+            id: string;
+            kind: components["schemas"]["JobKind"];
+            phase: components["schemas"]["JobPhase"];
+            result?: null | components["schemas"]["JobResult"];
+        };
+        /**
+         * @description Kind of work an event refers to. Stays a plain string in the
+         *     serialized form so the frontend can pattern-match without importing
+         *     the enum.
+         * @enum {string}
+         */
+        JobKind: "source" | "provider";
+        /**
+         * @description Lifecycle phase. `Started` fires after the per-key mutex was
+         *     acquired (so a `skipped` job emits only `Finished`).
+         * @enum {string}
+         */
+        JobPhase: "started" | "finished";
+        /**
+         * @description Compact result payload attached to a `finished` event. Optional
+         *     per-trigger fields (fetched / new / resolved / bytes) are `None`
+         *     when the trigger doesn't produce them.
+         */
+        JobResult: {
+            /** Format: int64 */
+            bytes?: number | null;
+            /** Format: int64 */
+            fetched?: number | null;
+            /** Format: int64 */
+            new?: number | null;
+            /** Format: int64 */
+            resolved?: number | null;
+            skipped: boolean;
+            triggered: boolean;
+        };
+        /**
          * @description Body for the manual-link endpoint. Exactly one of:
          *     - `seriesId`: link to an existing series row by internal id.
          *     - `provider` + `externalId`: link via the named provider's external id;
@@ -1064,6 +1133,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    events_jobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/event-stream of JobEvent frames */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+        };
+    };
     list_genres: {
         parameters: {
             query?: never;

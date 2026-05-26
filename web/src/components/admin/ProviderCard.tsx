@@ -14,6 +14,7 @@ import type { ProviderConfigDto, ProviderDto } from "@/api/queries";
 import { formatAbsolute, formatRelative } from "@/api/utils";
 import { ConfigRow, ExternalLink } from "./atoms";
 import { formatBytes } from "./format";
+import { JobStatusPill } from "./JobStatusPill";
 
 const LINK_STYLE = { textDecoration: "none", color: "inherit" } as const;
 
@@ -79,20 +80,23 @@ export function ProviderCard({ provider }: { provider: ProviderDto }) {
             </Group>
             <ProviderStatusLine provider={provider} />
           </Stack>
-          <Tooltip
-            label="Re-download the offline metadata dump and rebuild the indexes"
-            withArrow
-          >
-            <Button
-              size="xs"
-              variant="light"
-              onClick={handleRefresh}
-              loading={refresh.isPending}
-              data-testid={`refresh-${provider.id}`}
+          <Group gap="xs" wrap="nowrap" align="center">
+            <JobStatusPill kind="provider" id={provider.id} />
+            <Tooltip
+              label="Re-download the offline metadata dump and rebuild the indexes"
+              withArrow
             >
-              Refresh cache
-            </Button>
-          </Tooltip>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={handleRefresh}
+                loading={refresh.isPending}
+                data-testid={`refresh-${provider.id}`}
+              >
+                Refresh cache
+              </Button>
+            </Tooltip>
+          </Group>
         </Group>
         <ProviderConfigBlock config={provider.config} />
       </Stack>

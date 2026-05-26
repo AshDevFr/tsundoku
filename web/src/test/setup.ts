@@ -29,6 +29,39 @@ window.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
 
 window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;
 
+// Minimal EventSource stand-in for jsdom. Tracks instances so tests can
+// dispatch synthetic frames; auto-reconnect / readyState transitions
+// are not modelled (tests that need them should drive .listeners
+// directly).
+class MockEventSource extends EventTarget {
+  static instances: MockEventSource[] = [];
+  url: string;
+  readyState = 1;
+  onmessage: ((evt: MessageEvent) => void) | null = null;
+  onerror: ((evt: Event) => void) | null = null;
+  constructor(url: string) {
+    super();
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+  close() {
+    this.readyState = 2;
+  }
+  /// Test helper: dispatch a `message` event carrying the given JSON
+  /// payload, matching what the real backend would push.
+  emit(data: unknown) {
+    const evt = new MessageEvent("message", { data: JSON.stringify(data) });
+    this.dispatchEvent(evt);
+    this.onmessage?.(evt);
+  }
+}
+(globalThis as unknown as { EventSource: typeof MockEventSource }).EventSource =
+  MockEventSource;
+// Re-exported for tests that want to assert / drive instances.
+(
+  globalThis as unknown as { __mockEventSources: typeof MockEventSource }
+).__mockEventSources = MockEventSource;
+
 // Mantine's internal state updates (Tooltip mount, PasswordInput focus, etc.)
 // settle after fireEvent returns. The tests still await the visible outcome
 // via findBy*/waitFor, so the act() warnings are noise rather than real bugs.

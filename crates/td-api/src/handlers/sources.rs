@@ -11,7 +11,7 @@ use td_scheduler::jobs::poll_source;
 use utoipa::ToSchema;
 
 use crate::errors::{ApiError, ApiResult};
-use crate::state::AppState;
+use crate::state::{AppState, JobEvent, JobKind, JobResult};
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -155,6 +155,17 @@ pub async fn poll(
     let lock = state.locks.source_lock(&name);
     let skipped = lock.try_lock().is_err();
     if skipped {
+        // Single `finished{skipped:true}` so observers see the no-op
+        // without a phantom `started` first.
+        state.send_job_event(JobEvent::finished(
+            JobKind::Source,
+            &name,
+            JobResult {
+                triggered: false,
+                skipped: true,
+                ..Default::default()
+            },
+        ));
         return Ok(Json(ManualPollResponse {
             source: name,
             triggered: false,
@@ -166,12 +177,16 @@ pub async fn poll(
     // spawn), but at worst the spawned tick will skip itself — which is
     // exactly the desired behaviour anyway.
 
+    state.send_job_event(JobEvent::started(JobKind::Source, &name));
+
     let db = state.db.clone();
     let metadata = state.metadata.clone();
     let ingestion = state.ingestion.clone();
     let locks = state.locks.clone();
     let query_builder = state.query_builder.clone();
     let mu_redirector = state.mangaupdates_redirector.clone();
+    let events = state.job_events.clone();
+    let event_name = name.clone();
     tokio::spawn(async move {
         poll_source::run_tick(
             source,
@@ -184,6 +199,15 @@ pub async fn poll(
             "manual",
         )
         .await;
+        let _ = events.send(JobEvent::finished(
+            JobKind::Source,
+            event_name,
+            JobResult {
+                triggered: true,
+                skipped: false,
+                ..Default::default()
+            },
+        ));
     });
 
     Ok(Json(ManualPollResponse {
@@ -216,6 +240,15 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
         };
         let lock = state.locks.source_lock(&name);
         if lock.try_lock().is_err() {
+            state.send_job_event(JobEvent::finished(
+                JobKind::Source,
+                &name,
+                JobResult {
+                    triggered: false,
+                    skipped: true,
+                    ..Default::default()
+                },
+            ));
             results.push(ManualPollResponse {
                 source: name,
                 triggered: false,
@@ -223,6 +256,7 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
             });
             continue;
         }
+        state.send_job_event(JobEvent::started(JobKind::Source, &name));
         let db = state.db.clone();
         let metadata = state.metadata.clone();
         let ingestion = state.ingestion.clone();
@@ -230,6 +264,8 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
         let query_builder = state.query_builder.clone();
         let mu_redirector = state.mangaupdates_redirector.clone();
         let spawned: Arc<dyn td_source::DiscoverySource> = source;
+        let events = state.job_events.clone();
+        let event_name = name.clone();
         tokio::spawn(async move {
             poll_source::run_tick(
                 spawned,
@@ -242,6 +278,15 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
                 "manual",
             )
             .await;
+            let _ = events.send(JobEvent::finished(
+                JobKind::Source,
+                event_name,
+                JobResult {
+                    triggered: true,
+                    skipped: false,
+                    ..Default::default()
+                },
+            ));
         });
         results.push(ManualPollResponse {
             source: name,

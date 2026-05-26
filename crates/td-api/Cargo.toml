@@ -21,6 +21,8 @@ td-scheduler = { path = "../td-scheduler" }
 td-source = { path = "../td-source" }
 
 tokio.workspace = true
+tokio-stream.workspace = true
+futures-util.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 tower.workspace = true

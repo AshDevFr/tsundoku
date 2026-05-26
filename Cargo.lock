@@ -3758,6 +3758,7 @@ dependencies = [
  "axum-extra",
  "bytes",
  "chrono",
+ "futures-util",
  "http-body-util",
  "migration",
  "mime_guess",
@@ -3773,6 +3774,7 @@ dependencies = [
  "td-source",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tower",
  "tower-http",
  "tracing",
@@ -4099,6 +4101,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

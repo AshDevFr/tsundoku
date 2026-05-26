@@ -14,6 +14,24 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/v1/events/jobs": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Subscribe to manual-trigger lifecycle events as an SSE stream.",
+        "description": "Auth: inherits the read auth gate (`auth.read_requires_auth`). The\nbrowser `EventSource` API cannot carry a custom `Authorization`\nheader, so installs that flip `read_requires_auth=true` will need\nthe operator's `api_key` to be sent via the\n`Authorization` header through a fetch-based polyfill, or the gate\ndisabled for this single route. Default installs (`false`) work out\nof the box.",
+        "operationId": "events_jobs",
+        "responses": {
+          "200": {
+            "description": "text/event-stream of JobEvent frames",
+            "content": {
+              "text/event-stream": {}
+            }
+          }
+        }
+      }
+    },
     "/api/v1/genres": {
       "get": {
         "tags": [
@@ -1238,6 +1256,101 @@
           "mangaupdatesRedirectCache": {
             "$ref": "#/components/schemas/MangaupdatesRedirectStats",
             "description": "State of the persisted MangaUpdates legacy → modern slug cache."
+          }
+        }
+      },
+      "JobEvent": {
+        "type": "object",
+        "description": "Single broadcast frame for the SSE channel. Always has `kind`, `id`,\n`phase`, and `at` (epoch millis); `result` is only populated on\n`Finished` events.",
+        "required": [
+          "kind",
+          "id",
+          "phase",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobKind"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/JobPhase"
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JobResult"
+              }
+            ]
+          }
+        }
+      },
+      "JobKind": {
+        "type": "string",
+        "description": "Kind of work an event refers to. Stays a plain string in the\nserialized form so the frontend can pattern-match without importing\nthe enum.",
+        "enum": [
+          "source",
+          "provider"
+        ]
+      },
+      "JobPhase": {
+        "type": "string",
+        "description": "Lifecycle phase. `Started` fires after the per-key mutex was\nacquired (so a `skipped` job emits only `Finished`).",
+        "enum": [
+          "started",
+          "finished"
+        ]
+      },
+      "JobResult": {
+        "type": "object",
+        "description": "Compact result payload attached to a `finished` event. Optional\nper-trigger fields (fetched / new / resolved / bytes) are `None`\nwhen the trigger doesn't produce them.",
+        "required": [
+          "triggered",
+          "skipped"
+        ],
+        "properties": {
+          "bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "fetched": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "new": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "resolved": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "skipped": {
+            "type": "boolean"
+          },
+          "triggered": {
+            "type": "boolean"
           }
         }
       },

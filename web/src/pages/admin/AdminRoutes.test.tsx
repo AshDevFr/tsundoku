@@ -184,6 +184,59 @@ describe("admin sources page", () => {
       ).toBeInTheDocument();
     });
   });
+
+  it("flips the source-card pill when a synthetic SSE event arrives", async () => {
+    renderAt("/admin/sources");
+    await screen.findByTestId("source-card-english-manga-trusted", undefined, {
+      timeout: 3000,
+    });
+    // The EventSource our hook opens is captured by the test setup's
+    // mock. Tests share the static `instances` array across runs, so
+    // pick the most recent matching instance (the one this render
+    // actually subscribed to).
+    const MockES = (
+      globalThis as unknown as {
+        __mockEventSources: {
+          instances: {
+            emit: (data: unknown) => void;
+            url: string;
+            readyState: number;
+          }[];
+        };
+      }
+    ).__mockEventSources;
+    const live = MockES.instances
+      .slice()
+      .reverse()
+      .find((i) => i.url.includes("/events/jobs") && i.readyState !== 2);
+    const es = live;
+    expect(es).toBeDefined();
+    es?.emit({
+      kind: "source",
+      id: "english-manga-trusted",
+      phase: "started",
+      at: Date.now(),
+    });
+    expect(
+      await screen.findByTestId(
+        "job-pill-source-english-manga-trusted",
+        undefined,
+        { timeout: 1500 },
+      ),
+    ).toHaveTextContent(/running/i);
+    es?.emit({
+      kind: "source",
+      id: "english-manga-trusted",
+      phase: "finished",
+      at: Date.now(),
+      result: { triggered: true, skipped: false },
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("job-pill-source-english-manga-trusted"),
+      ).toHaveTextContent(/done/i);
+    });
+  });
 });
 
 describe("admin providers page", () => {

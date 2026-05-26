@@ -16,7 +16,9 @@ use utoipa_scalar::{Scalar, Servable};
 use crate::auth;
 use crate::docs::ApiDoc;
 use crate::embed::serve_static;
-use crate::handlers::{health, metrics, providers, releases, series, sources, stats, tagging};
+use crate::handlers::{
+    events, health, metrics, providers, releases, series, sources, stats, tagging,
+};
 use crate::state::AppState;
 
 pub fn router(state: AppState, cfg: &AppConfig) -> Router {
@@ -61,6 +63,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/metrics/providers/{id}", get(metrics::providers_detail))
         .route("/metrics/review-queue", get(metrics::review_queue))
         .route("/metrics/id-maps", get(metrics::id_maps))
+        .route("/events/jobs", get(events::jobs))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             auth::require_read,

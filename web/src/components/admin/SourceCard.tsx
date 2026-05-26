@@ -5,6 +5,7 @@ import { usePollSource } from "@/api/mutations";
 import type { SourceConfigDto, SourceDto } from "@/api/queries";
 import { formatAbsolute, formatRelative } from "@/api/utils";
 import { ConfigRow, ExternalLink } from "./atoms";
+import { JobStatusPill } from "./JobStatusPill";
 
 const LINK_STYLE = { textDecoration: "none", color: "inherit" } as const;
 
@@ -69,16 +70,19 @@ export function SourceCard({ source }: { source: SourceDto }) {
             </Group>
             <SourceStatusLine source={source} />
           </Stack>
-          <Button
-            size="xs"
-            variant="light"
-            onClick={handlePoll}
-            loading={poll.isPending}
-            disabled={source.config?.enabled === false}
-            data-testid={`poll-${source.name}`}
-          >
-            Trigger
-          </Button>
+          <Group gap="xs" wrap="nowrap" align="center">
+            <JobStatusPill kind="source" id={source.name} />
+            <Button
+              size="xs"
+              variant="light"
+              onClick={handlePoll}
+              loading={poll.isPending}
+              disabled={source.config?.enabled === false}
+              data-testid={`poll-${source.name}`}
+            >
+              Trigger
+            </Button>
+          </Group>
         </Group>
         <SourceConfigBlock config={source.config} />
       </Stack>

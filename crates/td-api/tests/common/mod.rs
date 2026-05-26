@@ -133,11 +133,37 @@ pub fn build_app_full(
     providers_config: ProvidersConfig,
     locks: Arc<JobLocks>,
 ) -> Router {
+    let (app, _) = build_app_with_events(
+        db,
+        metadata,
+        sources,
+        auth,
+        sources_config,
+        providers_config,
+        locks,
+    );
+    app
+}
+
+/// Like [`build_app_full`] but also returns a sender clone for the
+/// job-event broadcast channel. Tests can call `.subscribe()` on the
+/// sender to read events the handlers publish.
+pub fn build_app_with_events(
+    db: DatabaseConnection,
+    metadata: MetadataRegistry,
+    sources: SourceRegistry,
+    auth: AuthConfig,
+    sources_config: Vec<td_config::SourceConfig>,
+    providers_config: ProvidersConfig,
+    locks: Arc<JobLocks>,
+) -> (Router, tokio::sync::broadcast::Sender<td_api::JobEvent>) {
     let cfg = AppConfig {
         auth: auth.clone(),
         api: td_config::ApiConfig { docs: false },
         ..AppConfig::default()
     };
+    let (job_events, _) = tokio::sync::broadcast::channel(td_api::JOB_EVENT_BUFFER);
+    let events_handle = job_events.clone();
     let state = td_api::AppState {
         db,
         sources: Arc::new(sources),
@@ -149,8 +175,9 @@ pub fn build_app_full(
         providers_config: Arc::new(providers_config),
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
+        job_events,
     };
-    td_api::router(state, &cfg)
+    (td_api::router(state, &cfg), events_handle)
 }
 
 pub fn sample_release(id: &str, source_name: &str, title: &str) -> DiscoveredRelease {

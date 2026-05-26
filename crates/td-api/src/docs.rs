@@ -30,7 +30,10 @@ use crate::handlers::sources::{
 };
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
-use crate::handlers::{health, metrics, providers, releases, series, sources, stats, tagging};
+use crate::handlers::{
+    events, health, metrics, providers, releases, series, sources, stats, tagging,
+};
+use crate::state::{JobEvent, JobKind, JobPhase, JobResult};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -66,6 +69,7 @@ use crate::handlers::{health, metrics, providers, releases, series, sources, sta
         metrics::providers_detail,
         metrics::review_queue,
         metrics::id_maps,
+        events::jobs,
     ),
     components(schemas(
         ApiErrorBody,
@@ -116,6 +120,10 @@ use crate::handlers::{health, metrics, providers, releases, series, sources, sta
         ExternalIdMapCount,
         MangaupdatesRedirectStats,
         IdMapMetrics,
+        JobEvent,
+        JobKind,
+        JobPhase,
+        JobResult,
     )),
     tags(
         (name = "system", description = "Health and aggregate counters"),

@@ -12,6 +12,7 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
+import { JobEventsProvider } from "@/api/jobEventsContext";
 import { type SourceDto, useSources } from "@/api/queries";
 import { AdminAuthGate } from "@/components/AdminAuthGate";
 import { useAdminAuth } from "@/stores/auth";
@@ -42,7 +43,9 @@ const NAV: NavEntry[] = [
 export function AdminShell() {
   return (
     <AdminAuthGate>
-      <AdminLayout />
+      <JobEventsProvider>
+        <AdminLayout />
+      </JobEventsProvider>
     </AdminAuthGate>
   );
 }

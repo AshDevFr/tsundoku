@@ -14,7 +14,7 @@ use td_scheduler::jobs::refresh_provider_cache;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
-use crate::state::AppState;
+use crate::state::{AppState, JobEvent, JobKind, JobResult};
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -183,6 +183,15 @@ pub async fn refresh_cache(
     let lock = state.locks.provider_lock(&id);
     let skipped = lock.try_lock().is_err();
     if skipped {
+        state.send_job_event(JobEvent::finished(
+            JobKind::Provider,
+            &id,
+            JobResult {
+                triggered: false,
+                skipped: true,
+                ..Default::default()
+            },
+        ));
         return Ok(Json(RefreshResponse {
             provider: id,
             triggered: false,
@@ -192,10 +201,23 @@ pub async fn refresh_cache(
     // Drop the test-lock; the spawned tick re-acquires it. Same race
     // tolerance as the sources handler.
 
+    state.send_job_event(JobEvent::started(JobKind::Provider, &id));
+
     let db = state.db.clone();
     let locks = state.locks.clone();
+    let events = state.job_events.clone();
+    let event_id = id.clone();
     tokio::spawn(async move {
         refresh_provider_cache::run_tick(provider, db, locks, "manual").await;
+        let _ = events.send(JobEvent::finished(
+            JobKind::Provider,
+            event_id,
+            JobResult {
+                triggered: true,
+                skipped: false,
+                ..Default::default()
+            },
+        ));
     });
 
     Ok(Json(RefreshResponse {
@@ -229,6 +251,15 @@ pub async fn refresh_all(State(state): State<AppState>) -> ApiResult<Json<Refres
         };
         let lock = state.locks.provider_lock(&id);
         if lock.try_lock().is_err() {
+            state.send_job_event(JobEvent::finished(
+                JobKind::Provider,
+                &id,
+                JobResult {
+                    triggered: false,
+                    skipped: true,
+                    ..Default::default()
+                },
+            ));
             results.push(RefreshResponse {
                 provider: id,
                 triggered: false,
@@ -236,10 +267,22 @@ pub async fn refresh_all(State(state): State<AppState>) -> ApiResult<Json<Refres
             });
             continue;
         }
+        state.send_job_event(JobEvent::started(JobKind::Provider, &id));
         let db = state.db.clone();
         let locks = state.locks.clone();
+        let events = state.job_events.clone();
+        let event_id = id.clone();
         tokio::spawn(async move {
             refresh_provider_cache::run_tick(provider, db, locks, "manual").await;
+            let _ = events.send(JobEvent::finished(
+                JobKind::Provider,
+                event_id,
+                JobResult {
+                    triggered: true,
+                    skipped: false,
+                    ..Default::default()
+                },
+            ));
         });
         results.push(RefreshResponse {
             provider: id,
