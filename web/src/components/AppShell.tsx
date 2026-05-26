@@ -4,6 +4,7 @@ import {
   Container,
   Group,
   AppShell as MantineAppShell,
+  type MantineColor,
   Text,
   Title,
 } from "@mantine/core";
@@ -31,27 +32,23 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </Text>
               </Group>
             </Anchor>
-            <Group gap="md">
+            <Group gap="md" align="center" wrap="nowrap">
               {typeof stats.data?.series === "number" && (
-                <Text size="sm" c="dimmed">
+                <Text size="sm" c="dimmed" component="span">
                   {stats.data.series} series
                 </Text>
               )}
-              <Anchor
+              <Badge
                 component={Link}
                 to="/review"
-                underline="never"
+                color={(reviewCount > 0 ? "orange" : "gray") as MantineColor}
+                variant={reviewCount > 0 ? "light" : "default"}
+                radius="sm"
+                style={{ cursor: "pointer", textDecoration: "none" }}
                 aria-label={`Review queue (${reviewCount} pending)`}
               >
-                <Badge
-                  color={reviewCount > 0 ? "orange" : "gray"}
-                  variant={reviewCount > 0 ? "light" : "default"}
-                  radius="sm"
-                  style={{ cursor: "pointer" }}
-                >
-                  {reviewCount > 0 ? `${reviewCount} to review` : "review"}
-                </Badge>
-              </Anchor>
+                {reviewCount > 0 ? `${reviewCount} to review` : "review"}
+              </Badge>
               {stats.data?.activeProvider && (
                 <Badge variant="default" radius="sm">
                   {stats.data.activeProvider}

@@ -24,6 +24,21 @@ window.ResizeObserver = vi.fn().mockImplementation(() => ({
   disconnect: vi.fn(),
 })) as unknown as typeof ResizeObserver;
 
+window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;
+
+// Mantine's internal state updates (Tooltip mount, PasswordInput focus, etc.)
+// settle after fireEvent returns. The tests still await the visible outcome
+// via findBy*/waitFor, so the act() warnings are noise rather than real bugs.
+// Surface anything else through the original console.error.
+const originalConsoleError = console.error;
+console.error = (...args: unknown[]) => {
+  const first = args[0];
+  if (typeof first === "string" && first.includes("not wrapped in act(")) {
+    return;
+  }
+  originalConsoleError(...args);
+};
+
 // MSW: intercept API calls for the whole test run.
 beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
 afterEach(() => server.resetHandlers());

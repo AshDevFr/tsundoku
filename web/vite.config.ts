@@ -1,6 +1,6 @@
 /// <reference types="vitest/config" />
 import path from "node:path";
-import react from "@vitejs/plugin-react-swc";
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 const isMockApi = process.env.VITE_MOCK_API === "true";
@@ -47,6 +47,20 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: true,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "react",
+              test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+            },
+            { name: "mantine", test: /[\\/]node_modules[\\/]@mantine[\\/]/ },
+            { name: "tanstack", test: /[\\/]node_modules[\\/]@tanstack[\\/]/ },
+          ],
+        },
+      },
+    },
   },
   test: {
     globals: true,
