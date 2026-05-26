@@ -135,6 +135,7 @@ pub fn build_app_full(
         locks,
         sources_config: Arc::new(sources_config),
         providers_config: Arc::new(providers_config),
+        mangaupdates_redirector: None,
     };
     td_api::router(state, &cfg)
 }

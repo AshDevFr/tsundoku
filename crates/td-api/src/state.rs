@@ -8,6 +8,7 @@ use std::sync::Arc;
 use sea_orm::DatabaseConnection;
 use td_config::{AuthConfig, IngestionConfig, ProvidersConfig, SourceConfig};
 use td_metadata::MetadataRegistry;
+use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_scheduler::JobLocks;
 use td_source::SourceRegistry;
 
@@ -31,4 +32,8 @@ pub struct AppState {
     /// Snapshot of the `[providers]` config block, with the same role for
     /// the provider admin endpoints.
     pub providers_config: Arc<ProvidersConfig>,
+    /// Shared with the scheduler. `None` in tests that don't need legacy
+    /// MangaUpdates URL translation; resolver runs on the API retry path
+    /// honor this when building their `Resolver`.
+    pub mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
 }

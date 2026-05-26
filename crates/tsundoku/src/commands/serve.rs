@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use td_api::AppState;
+use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_scheduler::{JobLocks, Scheduler, SchedulerContext};
 
 pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
@@ -16,6 +17,20 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     let sources = Arc::new(crate::source_registry::build_registry(&cfg)?);
     let metadata = Arc::new(crate::metadata::build_registry(&cfg).await?);
     let locks = Arc::new(JobLocks::default());
+    // One shared MangaUpdates redirector for the whole process: scheduler
+    // ticks and the API retry handler both go through the same throttle.
+    let user_agent = concat!(
+        "tsundoku/",
+        env!("CARGO_PKG_VERSION"),
+        " (+https://github.com/skewb1k/tsundoku)"
+    );
+    let mu_redirector = match MangaUpdatesRedirector::new(user_agent) {
+        Ok(r) => Some(Arc::new(r)),
+        Err(e) => {
+            tracing::warn!(error = ?e, "failed to build mangaupdates redirector; legacy MU URLs will be dropped");
+            None
+        }
+    };
 
     let ctx = SchedulerContext {
         db: db.clone(),
@@ -23,6 +38,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
         metadata: metadata.clone(),
         ingestion: cfg.ingestion.clone(),
         locks: locks.clone(),
+        mangaupdates_redirector: mu_redirector.clone(),
     };
     let scheduler = Scheduler::build(&cfg, ctx).await?;
     scheduler.start().await?;
@@ -36,6 +52,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
         locks,
         sources_config: Arc::new(cfg.sources.clone()),
         providers_config: Arc::new(cfg.providers.clone()),
+        mangaupdates_redirector: mu_redirector,
     };
     let app = td_api::router(state, &cfg);
 

@@ -10,8 +10,21 @@
 //! Returns the original `id_or_url` as a fallback for inputs that look
 //! like a bare ID already, so callers can pass strings from either
 //! source-extracted URLs or hand-supplied IDs uniformly.
+//!
+//! MangaUpdates migrated from numeric `series.html?id=NNN` IDs to base36
+//! alphanumeric `series/{slug}/` IDs in 2022. Both shapes still appear in
+//! uploader-pasted URLs. We classify the legacy shape with the synthetic
+//! provider tag `mangaupdates-legacy`; a downstream normalization step
+//! translates those into modern `mangaupdates` IDs before the resolver
+//! pipeline consumes them.
 
 use td_source::ExternalLinks;
+
+/// Synthetic provider tag for unresolved MangaUpdates legacy numeric IDs.
+/// Never persisted; only flows through the resolver's normalization step,
+/// which swaps each entry for a real `("mangaupdates", modern_id)` pair
+/// or drops it on tombstone.
+pub const MANGAUPDATES_LEGACY: &str = "mangaupdates-legacy";
 
 /// `(canonical-provider-id, foreign-id, original-url-if-any)` triples for
 /// every populated link, in the order the resolver should try them.
@@ -19,6 +32,11 @@ pub fn pairs(links: &ExternalLinks) -> Vec<(&'static str, String, Option<String>
     links
         .iter()
         .filter_map(|(provider, url)| {
+            let provider = if provider == "mangaupdates" && is_mangaupdates_legacy(url) {
+                MANGAUPDATES_LEGACY
+            } else {
+                provider
+            };
             extract_id(provider, url).map(|id| (provider, id, Some(url.to_string())))
         })
         .collect()
@@ -38,11 +56,46 @@ pub fn extract_id(provider: &str, url: &str) -> Option<String> {
     }
     match provider {
         "mangaupdates" => extract_after_segment(trimmed, "/series/"),
+        MANGAUPDATES_LEGACY => extract_legacy_mu_id(trimmed),
         "anilist" => extract_after_segment(trimmed, "/manga/"),
         "mal" => extract_after_segment(trimmed, "/manga/"),
         "mangadex" => extract_after_segment(trimmed, "/title/"),
         _ => None,
     }
+}
+
+/// True when `url` is a legacy MangaUpdates reference: either the
+/// `series.html?id=NNN` web shape, or a bare numeric id passed by hand.
+fn is_mangaupdates_legacy(url: &str) -> bool {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if !trimmed.contains('/') {
+        // Bare numeric id (e.g. "151349") looks like a legacy MU id.
+        return trimmed.chars().all(|c| c.is_ascii_digit());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    lower.contains("/series.html") && lower.contains("?id=")
+}
+
+/// Pull the numeric `id` query parameter from a legacy MU URL.
+/// Tolerates extra parameters and any ordering; rejects non-numeric IDs.
+fn extract_legacy_mu_id(url: &str) -> Option<String> {
+    let q_start = url.find('?')?;
+    let query = &url[q_start + 1..];
+    for pair in query.split('&') {
+        let Some((key, val)) = pair.split_once('=') else {
+            continue;
+        };
+        if key.eq_ignore_ascii_case("id") {
+            let val = val.split('#').next().unwrap_or(val);
+            if !val.is_empty() && val.chars().all(|c| c.is_ascii_digit()) {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Find `segment` in `url` and return the next path token, stripped of
@@ -122,6 +175,91 @@ mod tests {
     fn empty_input_yields_none() {
         assert!(extract_id("anilist", "").is_none());
         assert!(extract_id("mangaupdates", "  ").is_none());
+    }
+
+    #[test]
+    fn mangaupdates_legacy_url_classified_with_synthetic_provider() {
+        let links = ExternalLinks {
+            mangaupdates: Some("https://www.mangaupdates.com/series.html?id=151349".into()),
+            ..ExternalLinks::default()
+        };
+        let got = pairs(&links);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, MANGAUPDATES_LEGACY);
+        assert_eq!(got[0].1, "151349");
+    }
+
+    #[test]
+    fn mangaupdates_modern_url_keeps_modern_provider() {
+        let links = ExternalLinks {
+            mangaupdates: Some("https://www.mangaupdates.com/series/6z1uqw7/solo-leveling".into()),
+            ..ExternalLinks::default()
+        };
+        let got = pairs(&links);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "mangaupdates");
+        assert_eq!(got[0].1, "6z1uqw7");
+    }
+
+    #[test]
+    fn mangaupdates_bare_numeric_is_legacy() {
+        let links = ExternalLinks {
+            mangaupdates: Some("151349".into()),
+            ..ExternalLinks::default()
+        };
+        let got = pairs(&links);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, MANGAUPDATES_LEGACY);
+        assert_eq!(got[0].1, "151349");
+    }
+
+    #[test]
+    fn mangaupdates_bare_alphanumeric_stays_modern() {
+        let links = ExternalLinks {
+            mangaupdates: Some("6z1uqw7".into()),
+            ..ExternalLinks::default()
+        };
+        let got = pairs(&links);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "mangaupdates");
+        assert_eq!(got[0].1, "6z1uqw7");
+    }
+
+    #[test]
+    fn mangaupdates_legacy_id_extracted_from_query_string() {
+        let id = extract_id(
+            MANGAUPDATES_LEGACY,
+            "https://www.mangaupdates.com/series.html?id=151349",
+        );
+        assert_eq!(id.as_deref(), Some("151349"));
+    }
+
+    #[test]
+    fn mangaupdates_legacy_handles_extra_query_params_in_any_order() {
+        let id = extract_id(
+            MANGAUPDATES_LEGACY,
+            "https://www.mangaupdates.com/series.html?foo=1&id=70263&bar=baz",
+        );
+        assert_eq!(id.as_deref(), Some("70263"));
+    }
+
+    #[test]
+    fn mangaupdates_legacy_strips_fragment() {
+        let id = extract_id(
+            MANGAUPDATES_LEGACY,
+            "https://www.mangaupdates.com/series.html?id=70263#reviews",
+        );
+        assert_eq!(id.as_deref(), Some("70263"));
+    }
+
+    #[test]
+    fn mangaupdates_legacy_rejects_alphanumeric_query_value() {
+        // Defensive: the legacy path is for pure-numeric IDs only.
+        let id = extract_id(
+            MANGAUPDATES_LEGACY,
+            "https://www.mangaupdates.com/series.html?id=abc123",
+        );
+        assert_eq!(id, None);
     }
 
     #[test]

@@ -15,11 +15,12 @@ td-source = { path = "../td-source" }
 anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
+reqwest = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 sea-orm.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]

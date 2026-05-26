@@ -27,6 +27,7 @@ use td_db::repos::run_metrics_repo::{self, PollRunCounts};
 use td_db::repos::{releases_repo, sources_repo};
 use td_metadata::MetadataRegistry;
 use td_resolution::Resolver;
+use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_resolution::pipeline::{ResolutionOutcome, ResolutionPath, ResolutionStatus};
 use td_source::{DiscoverySource, PollContext, PollOutcome};
 use tokio_cron_scheduler::{Job, JobSchedulerError};
@@ -45,6 +46,7 @@ pub fn build(
     metadata: Arc<MetadataRegistry>,
     ingestion: IngestionConfig,
     locks: Arc<JobLocks>,
+    mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
 ) -> Result<Job> {
     let job = Job::new_async(cron, move |_uuid, _scheduler| {
         let source = source.clone();
@@ -52,6 +54,7 @@ pub fn build(
         let metadata = metadata.clone();
         let ingestion = ingestion.clone();
         let locks = locks.clone();
+        let mu_redirector = mangaupdates_redirector.clone();
         Box::pin(async move {
             run_tick(
                 source,
@@ -59,6 +62,7 @@ pub fn build(
                 metadata,
                 ingestion,
                 locks,
+                mu_redirector,
                 run_metrics_repo::trigger::CRON,
             )
             .await;
@@ -78,6 +82,7 @@ pub async fn run_tick(
     metadata: Arc<MetadataRegistry>,
     ingestion: IngestionConfig,
     locks: Arc<JobLocks>,
+    mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
     trigger: &str,
 ) {
     let kind = source.kind().to_string();
@@ -173,7 +178,10 @@ pub async fn run_tick(
     // Walk the resolver per release and accumulate one counter per
     // ResolutionOutcome variant. A resolver Err counts as `Failed` so the
     // breakdown ties out against the persisted release count.
-    let resolver = Resolver::new(db.clone(), metadata, ingestion);
+    let mut resolver = Resolver::new(db.clone(), metadata, ingestion);
+    if let Some(r) = mangaupdates_redirector {
+        resolver = resolver.with_mangaupdates_redirector(r);
+    }
     let mut resolve_errors = 0usize;
     let mut breakdown = OutcomeBreakdown::default();
     for id in &persisted_ids {

@@ -18,11 +18,14 @@ use serde::{Deserialize, Serialize};
 use td_config::IngestionConfig;
 use td_db::entities::releases as releases_entity;
 use td_db::entities::review_candidates;
-use td_db::repos::{releases_repo, review_repo, series_external_ids_repo, series_repo};
+use td_db::repos::{
+    mangaupdates_id_repo, releases_repo, review_repo, series_external_ids_repo, series_repo,
+};
 use td_metadata::{MetadataRegistry, SearchHit, SeriesMetadata};
 use td_source::ExternalLinks;
 
 use crate::foreign_id;
+use crate::mangaupdates_redirect::{MangaUpdatesRedirector, ResolveOutcome};
 use crate::persist::{self, UpsertResult};
 use crate::scoring::dice;
 use crate::validation::{self, ValidationOutcome};
@@ -90,6 +93,11 @@ pub struct Resolver {
     db: DatabaseConnection,
     registry: Arc<MetadataRegistry>,
     config: IngestionConfig,
+    /// Optional redirector for translating MangaUpdates legacy numeric
+    /// IDs to modern alphanumeric slugs. `None` in tests and CLIs that
+    /// don't have network; legacy MU links are simply dropped in that
+    /// case.
+    mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
 }
 
 impl Resolver {
@@ -102,7 +110,16 @@ impl Resolver {
             db,
             registry,
             config,
+            mangaupdates_redirector: None,
         }
+    }
+
+    /// Attach a MangaUpdates redirect resolver so the pipeline can
+    /// translate legacy `series.html?id=NNN` IDs into modern slugs.
+    /// Without this, legacy MU links are silently dropped.
+    pub fn with_mangaupdates_redirector(mut self, redirector: Arc<MangaUpdatesRedirector>) -> Self {
+        self.mangaupdates_redirector = Some(redirector);
+        self
     }
 
     /// Resolve the release with id `release_id`. Walks every step in the
@@ -139,12 +156,13 @@ impl Resolver {
         let now = Utc::now();
         let attempted_at = now.timestamp();
         let links = parse_external_links(release.extracted_links_json.as_deref());
+        let normalized_pairs = self.normalize_external_links(&links).await;
         let formats = releases_repo::list_formats(&self.db, &release.id).await?;
         let active = self.registry.active().clone();
         let active_id = self.registry.active_id().to_string();
 
         // 1. Known external IDs.
-        if let Some(series_id) = self.step_known_external_id(&links).await? {
+        if let Some(series_id) = self.step_known_external_id(&normalized_pairs).await? {
             let outcome = self
                 .finalize_known_match(
                     release,
@@ -159,7 +177,7 @@ impl Resolver {
 
         // 2. Foreign-ID lookup via the active provider.
         if let Some(metadata) = self
-            .step_foreign_id_lookup(&active_id, active.as_ref(), &links)
+            .step_foreign_id_lookup(&active_id, active.as_ref(), &normalized_pairs)
             .await?
         {
             let outcome = self
@@ -214,10 +232,75 @@ impl Resolver {
         Ok(outcome)
     }
 
-    async fn step_known_external_id(&self, links: &ExternalLinks) -> Result<Option<i32>> {
-        for (provider, id, _) in foreign_id::pairs(links) {
+    /// Resolve any synthetic `mangaupdates-legacy` entries into modern
+    /// MangaUpdates IDs using the cache (and the redirect resolver on
+    /// cache miss). Entries that tombstone — or that miss with no
+    /// redirector configured — are dropped from the returned list.
+    async fn normalize_external_links(
+        &self,
+        links: &ExternalLinks,
+    ) -> Vec<(&'static str, String, Option<String>)> {
+        let mut out = Vec::with_capacity(4);
+        for (provider, id, url) in foreign_id::pairs(links) {
+            if provider == foreign_id::MANGAUPDATES_LEGACY {
+                if let Some(modern) = self.translate_legacy_mu(&id).await {
+                    out.push(("mangaupdates", modern, url));
+                }
+                // Tombstoned or transient: silently drop. A transient
+                // failure leaves the cache untouched so the next poll
+                // tries again.
+                continue;
+            }
+            out.push((provider, id, url));
+        }
+        out
+    }
+
+    async fn translate_legacy_mu(&self, legacy_id_str: &str) -> Option<String> {
+        let legacy_id: i64 = match legacy_id_str.parse() {
+            Ok(n) => n,
+            Err(_) => return None,
+        };
+        match mangaupdates_id_repo::lookup(&self.db, legacy_id).await {
+            Ok(Some(Some(modern))) => return Some(modern),
+            Ok(Some(None)) => return None,
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = ?e, legacy_id, "mangaupdates_id_map lookup failed");
+                return None;
+            }
+        }
+        let redirector = self.mangaupdates_redirector.as_ref()?;
+        let now = Utc::now().timestamp();
+        match redirector.resolve_legacy(legacy_id).await {
+            Ok(ResolveOutcome::Modern(modern)) => {
+                if let Err(e) =
+                    mangaupdates_id_repo::record(&self.db, legacy_id, Some(&modern), now).await
+                {
+                    tracing::warn!(error = ?e, legacy_id, "failed to persist mu id mapping");
+                }
+                Some(modern)
+            }
+            Ok(ResolveOutcome::Tombstone) => {
+                if let Err(e) = mangaupdates_id_repo::record(&self.db, legacy_id, None, now).await {
+                    tracing::warn!(error = ?e, legacy_id, "failed to persist mu id tombstone");
+                }
+                None
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, legacy_id, "mangaupdates redirect failed; will retry");
+                None
+            }
+        }
+    }
+
+    async fn step_known_external_id(
+        &self,
+        pairs: &[(&'static str, String, Option<String>)],
+    ) -> Result<Option<i32>> {
+        for (provider, id, _) in pairs {
             if let Some(series_id) =
-                series_external_ids_repo::find_series_id(&self.db, provider, &id).await?
+                series_external_ids_repo::find_series_id(&self.db, provider, id).await?
             {
                 return Ok(Some(series_id));
             }
@@ -229,10 +312,10 @@ impl Resolver {
         &self,
         active_id: &str,
         active: &dyn td_metadata::MetadataProvider,
-        links: &ExternalLinks,
+        pairs: &[(&'static str, String, Option<String>)],
     ) -> Result<Option<SeriesMetadata>> {
-        for (provider, id, _) in foreign_id::pairs(links) {
-            if provider == active_id {
+        for (provider, id, _) in pairs {
+            if *provider == active_id {
                 // The active provider's own ID would already have hit
                 // step 1 if it were known. A miss here means the row
                 // genuinely doesn't exist locally; the provider's `get`
@@ -241,7 +324,7 @@ impl Resolver {
                 // *foreign* IDs. Skip and let step 3 handle it.
                 continue;
             }
-            match active.resolve_by_foreign_id(provider, &id).await {
+            match active.resolve_by_foreign_id(provider, id).await {
                 Ok(Some(metadata)) => return Ok(Some(metadata)),
                 Ok(None) => continue,
                 Err(e) => {

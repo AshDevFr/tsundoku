@@ -1,6 +1,7 @@
 //! sea-orm entities for the tsundoku schema.
 
 pub mod genres;
+pub mod mangaupdates_id_map;
 pub mod poll_runs;
 pub mod provider_cache_state;
 pub mod provider_refreshes;
@@ -16,6 +17,7 @@ pub mod source_state;
 pub mod tags;
 
 pub use genres::Entity as Genres;
+pub use mangaupdates_id_map::Entity as MangaupdatesIdMap;
 pub use poll_runs::Entity as PollRuns;
 pub use provider_cache_state::Entity as ProviderCacheState;
 pub use provider_refreshes::Entity as ProviderRefreshes;

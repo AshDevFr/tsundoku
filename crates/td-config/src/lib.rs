@@ -297,7 +297,9 @@ pub struct NyaaSourceOptions {
     /// HTTP timeout (seconds) for the feed and detail fetches.
     pub timeout_seconds: u32,
     /// Fetch each post's detail HTML after the RSS pass to enrich the file
-    /// list and external links. Off by default — keeps the poll cheap.
+    /// list and external links. On by default: the extra HTTP cost is
+    /// dwarfed by the resolver wins from MangaUpdates / AniList URLs the
+    /// uploader pasted into the description.
     pub fetch_details: bool,
     /// Override for the site base URL. Useful when the feed is proxied.
     pub site_base_url: String,
@@ -361,7 +363,7 @@ impl Default for NyaaSourceOptions {
         Self {
             feed_url: String::new(),
             timeout_seconds: 30,
-            fetch_details: false,
+            fetch_details: true,
             site_base_url: "https://nyaa.si".into(),
         }
     }
@@ -623,7 +625,7 @@ cron = "0 */2 * * *"
         assert_eq!(opts.feed_url, "https://nyaa.si/?page=rss&f=2");
         // Defaults from NyaaSourceOptions::default still apply to omitted fields.
         assert_eq!(opts.timeout_seconds, 30);
-        assert!(!opts.fetch_details);
+        assert!(opts.fetch_details);
         // `enabled` defaults to true when omitted.
         assert!(cfg.sources[1].enabled);
     }

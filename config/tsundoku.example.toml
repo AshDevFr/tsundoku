@@ -102,6 +102,6 @@ queue_low_confidence  = true
 # enabled = true
 #   [sources.nyaa]
 #   feed_url        = "https://nyaa.si/?page=rss&c=3_1&f=2"
-#   fetch_details   = false    # set true to enrich files + external links
+#   fetch_details   = true     # fetch each post's detail page to enrich files + external links
 #   timeout_seconds = 30
 #   site_base_url   = "https://nyaa.si"

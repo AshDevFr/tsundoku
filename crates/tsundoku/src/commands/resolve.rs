@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use td_resolution::Resolver;
+use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 
 const DEFAULT_BATCH_SIZE: u64 = 1000;
 
@@ -27,7 +28,17 @@ pub async fn run(config_path: PathBuf, retry_unresolved: bool) -> Result<()> {
     td_db::run_migrations(&db).await?;
     let registry = Arc::new(crate::metadata::build_registry(&cfg).await?);
 
-    let resolver = Resolver::new(db.clone(), registry, cfg.ingestion.clone());
+    let user_agent = concat!(
+        "tsundoku/",
+        env!("CARGO_PKG_VERSION"),
+        " (+https://github.com/skewb1k/tsundoku)"
+    );
+    let mut resolver = Resolver::new(db.clone(), registry, cfg.ingestion.clone());
+    match MangaUpdatesRedirector::new(user_agent) {
+        Ok(r) => resolver = resolver.with_mangaupdates_redirector(Arc::new(r)),
+        Err(e) => tracing::warn!(error = ?e, "skipping mangaupdates redirector"),
+    }
+    let resolver = resolver;
 
     // `resolve_unresolved` already handles both `unresolved` and
     // `ambiguous`; `--retry-unresolved` is the same operation today but

@@ -642,3 +642,214 @@ async fn resolve_unresolved_picks_up_only_unresolved_and_ambiguous() {
     assert_eq!(u2.resolution_attempts, 0);
     assert_eq!(u2.resolution_status, "resolved");
 }
+
+// ---------------------------------------------------------------------------
+// Legacy MangaUpdates URL → modern slug normalization
+// ---------------------------------------------------------------------------
+
+mod legacy_mu {
+    //! Drives a local TCP listener that returns canned HTTP responses, so
+    //! the resolver can exercise the full legacy-id translation path:
+    //! `series.html?id=NNN` → cache miss → HEAD → 308 → modern slug →
+    //! `resolve_by_foreign_id("mangaupdates", modern)`.
+
+    use super::*;
+    use reqwest::{Client, redirect};
+    use std::io::{Read, Write};
+    use std::net::TcpListener as StdListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread;
+    use td_db::repos::mangaupdates_id_repo;
+    use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
+
+    fn spawn_canned_server(responses: Vec<&'static [u8]>) -> (String, thread::JoinHandle<()>) {
+        let listener = StdListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}");
+        let counter = Arc::new(AtomicUsize::new(0));
+        let handle = thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let idx = counter.fetch_add(1, Ordering::SeqCst);
+                if idx >= responses.len() {
+                    return;
+                }
+                let _ = stream.write_all(responses[idx]);
+                let _ = stream.flush();
+            }
+        });
+        (url, handle)
+    }
+
+    fn build_redirector(base_url: String) -> Arc<MangaUpdatesRedirector> {
+        let client = Client::builder()
+            .redirect(redirect::Policy::none())
+            .build()
+            .unwrap();
+        Arc::new(MangaUpdatesRedirector::with_client(client, base_url))
+    }
+
+    fn solo_leveling_metadata() -> SeriesMetadata {
+        SeriesMetadata {
+            external_id: "55555".into(),
+            canonical_title: "Solo Leveling".into(),
+            alternate_titles: vec!["나 혼자만 레벨업".into()],
+            kind: Some(SeriesKind::Manhwa),
+            status: None,
+            year: Some(2018),
+            cover_url: None,
+            external_url: None,
+            genres: vec![],
+            tags: vec![],
+            foreign_ids: vec![ForeignId {
+                provider: "mangaupdates".into(),
+                id: "6z1uqw7".into(),
+                url: None,
+            }],
+            raw: serde_json::json!({"id": 55555}),
+            content_hash: "hash-55555".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_mu_url_resolves_to_modern_slug_and_persists_cache() {
+        let resp =
+            b"HTTP/1.1 308 Permanent Redirect\r\nContent-Length: 0\r\nLocation: https://www.mangaupdates.com/series/6z1uqw7/solo-leveling\r\n\r\n";
+        let (server_url, _h) = spawn_canned_server(vec![resp]);
+
+        let db = fresh_db().await;
+        let provider = Arc::new(FakeProvider::new("mb"));
+        provider.register_foreign("mangaupdates", "6z1uqw7", solo_leveling_metadata());
+        let registry = build_registry(provider.clone());
+
+        let links = serde_json::json!({
+            "mangaupdates": "https://www.mangaupdates.com/series.html?id=151349",
+            "anilist": null,
+            "mal": null,
+            "mangadex": null,
+        });
+        insert_release(
+            &db,
+            "r-solo",
+            "Solo Leveling (2021-2026) (Digital) (1r0n)",
+            Some(&links.to_string()),
+            &["cbz"],
+        )
+        .await;
+
+        let redirector = build_redirector(server_url);
+        let resolver = make_resolver(&db, registry, ingestion_default())
+            .with_mangaupdates_redirector(redirector);
+
+        let outcome = resolver.resolve_one("r-solo").await.unwrap();
+
+        // The translation step should turn the legacy URL into a modern
+        // mangaupdates foreign-id lookup, which the FakeProvider answers
+        // immediately. No fuzzy search runs.
+        assert_eq!(outcome.path, Some(ResolutionPath::ForeignIdLookup));
+        assert_eq!(outcome.status, td_resolution::ResolutionStatus::Resolved);
+        let calls = provider.calls();
+        assert!(
+            calls.iter().any(|c| c == "foreign(mangaupdates,6z1uqw7)"),
+            "expected foreign-id lookup on modern slug, got {calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|c| c.starts_with("search(")),
+            "fuzzy search should not run; got {calls:?}"
+        );
+
+        // The cache row is persisted: next resolve doesn't need network.
+        let cached = mangaupdates_id_repo::lookup(&db, 151349).await.unwrap();
+        assert_eq!(cached, Some(Some("6z1uqw7".to_string())));
+    }
+
+    #[tokio::test]
+    async fn legacy_mu_tombstone_drops_link_and_falls_through() {
+        let resp =
+            b"HTTP/1.1 307 Temporary Redirect\r\nContent-Length: 0\r\nLocation: /series\r\n\r\n";
+        let (server_url, _h) = spawn_canned_server(vec![resp]);
+
+        let db = fresh_db().await;
+        let provider = Arc::new(FakeProvider::new("mb"));
+        // No foreign mapping registered; nothing to resolve to.
+        let registry = build_registry(provider.clone());
+
+        let links = serde_json::json!({
+            "mangaupdates": "https://www.mangaupdates.com/series.html?id=99999999",
+            "anilist": null,
+            "mal": null,
+            "mangadex": null,
+        });
+        insert_release(
+            &db,
+            "r-dead",
+            "Dead Series v01",
+            Some(&links.to_string()),
+            &[],
+        )
+        .await;
+
+        let redirector = build_redirector(server_url);
+        let resolver = make_resolver(&db, registry, ingestion_default())
+            .with_mangaupdates_redirector(redirector);
+
+        let outcome = resolver.resolve_one("r-dead").await.unwrap();
+
+        // No external mapping, no candidates → unresolved.
+        assert_eq!(outcome.path, None);
+        assert_eq!(outcome.status, td_resolution::ResolutionStatus::Unresolved);
+        // foreign-id was never called: the tombstone dropped the link
+        // before step 2 could see it.
+        let calls = provider.calls();
+        assert!(
+            !calls.iter().any(|c| c.starts_with("foreign(")),
+            "tombstoned link should not reach foreign-id lookup; got {calls:?}"
+        );
+
+        // Tombstone is persisted for next-poll fast-path.
+        let cached = mangaupdates_id_repo::lookup(&db, 99_999_999).await.unwrap();
+        assert_eq!(cached, Some(None));
+    }
+
+    #[tokio::test]
+    async fn legacy_mu_cache_hit_skips_network() {
+        // Pre-seed the cache; no listener responses configured, so any
+        // network call would fail or hang.
+        let db = fresh_db().await;
+        mangaupdates_id_repo::record(&db, 151349, Some("6z1uqw7"), 1_700_000_000)
+            .await
+            .unwrap();
+
+        let provider = Arc::new(FakeProvider::new("mb"));
+        provider.register_foreign("mangaupdates", "6z1uqw7", solo_leveling_metadata());
+        let registry = build_registry(provider.clone());
+
+        let links = serde_json::json!({
+            "mangaupdates": "https://www.mangaupdates.com/series.html?id=151349",
+            "anilist": null,
+            "mal": null,
+            "mangadex": null,
+        });
+        insert_release(
+            &db,
+            "r-solo2",
+            "Solo Leveling (2021-2026) (Digital) (1r0n)",
+            Some(&links.to_string()),
+            &["cbz"],
+        )
+        .await;
+
+        // Build a redirector against a port nothing listens on. The
+        // cache hit must short-circuit before we try the wire.
+        let dead_url = "http://127.0.0.1:1".to_string();
+        let redirector = build_redirector(dead_url);
+        let resolver = make_resolver(&db, registry, ingestion_default())
+            .with_mangaupdates_redirector(redirector);
+
+        let outcome = resolver.resolve_one("r-solo2").await.unwrap();
+        assert_eq!(outcome.path, Some(ResolutionPath::ForeignIdLookup));
+        assert_eq!(outcome.status, td_resolution::ResolutionStatus::Resolved);
+    }
+}

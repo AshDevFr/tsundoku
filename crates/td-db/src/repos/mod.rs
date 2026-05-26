@@ -1,5 +1,6 @@
 //! Thin query helpers over the sea-orm entities.
 
+pub mod mangaupdates_id_repo;
 pub mod provider_cache_state_repo;
 pub mod releases_repo;
 pub mod review_repo;

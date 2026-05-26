@@ -29,6 +29,7 @@ use dashmap::DashMap;
 use sea_orm::DatabaseConnection;
 use td_config::{AppConfig, IngestionConfig};
 use td_metadata::MetadataRegistry;
+use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_source::SourceRegistry;
 use tokio::sync::Mutex;
 use tokio_cron_scheduler::JobScheduler;
@@ -66,6 +67,11 @@ pub struct SchedulerContext {
     pub metadata: Arc<MetadataRegistry>,
     pub ingestion: IngestionConfig,
     pub locks: Arc<JobLocks>,
+    /// Optional MangaUpdates redirect resolver. When configured, the
+    /// resolver translates legacy `series.html?id=NNN` IDs into modern
+    /// alphanumeric slugs before the foreign-id lookup step. `None` in
+    /// tests that don't need network access.
+    pub mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
 }
 
 /// Owns the running scheduler. Drop or call [`Self::shutdown`] to stop.
@@ -111,6 +117,7 @@ impl Scheduler {
                 ctx.metadata.clone(),
                 ctx.ingestion.clone(),
                 ctx.locks.clone(),
+                ctx.mangaupdates_redirector.clone(),
             )?;
             inner
                 .add(job)

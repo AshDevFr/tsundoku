@@ -195,6 +195,7 @@ async fn poll_tick_persists_releases_and_updates_source_state() {
         metadata,
         IngestionConfig::default(),
         locks,
+        None,
         "cron",
     )
     .await;
@@ -257,6 +258,7 @@ async fn poll_tick_with_held_lock_is_a_noop() {
         metadata,
         IngestionConfig::default(),
         locks.clone(),
+        None,
         "cron",
     )
     .await;
@@ -304,6 +306,7 @@ async fn poll_tick_handles_source_failure_without_panicking() {
         metadata,
         IngestionConfig::default(),
         locks,
+        None,
         "cron",
     )
     .await;
@@ -468,6 +471,7 @@ async fn scheduler_fires_source_and_provider_jobs_on_schedule() {
         metadata,
         ingestion: IngestionConfig::default(),
         locks: Arc::new(JobLocks::default()),
+        mangaupdates_redirector: None,
     };
 
     let mut scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
@@ -540,6 +544,7 @@ async fn scheduler_skips_sources_without_cron_or_unknown_registry_entry() {
         metadata,
         ingestion: IngestionConfig::default(),
         locks: Arc::new(JobLocks::default()),
+        mangaupdates_redirector: None,
     };
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
     // Only the unconditional review-queue snapshot job lands; source +

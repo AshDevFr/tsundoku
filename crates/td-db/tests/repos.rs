@@ -9,8 +9,8 @@ use td_db::entities::{
     series_external_ids, source_state,
 };
 use td_db::repos::{
-    provider_cache_state_repo, releases_repo, review_repo, series_external_ids_repo, series_repo,
-    sources_repo,
+    mangaupdates_id_repo, provider_cache_state_repo, releases_repo, review_repo,
+    series_external_ids_repo, series_repo, sources_repo,
 };
 
 async fn fresh_db() -> DatabaseConnection {
@@ -563,4 +563,47 @@ async fn fts5_returns_series_matched_by_title_and_alternate_titles() {
     let hits = series_repo::search_fts(&db, "wikingr", 10).await.unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].id, s3.id);
+}
+
+#[tokio::test]
+async fn mangaupdates_id_repo_miss_returns_none() {
+    let db = fresh_db().await;
+    let got = mangaupdates_id_repo::lookup(&db, 151349).await.unwrap();
+    assert!(got.is_none(), "miss should yield None outer");
+}
+
+#[tokio::test]
+async fn mangaupdates_id_repo_record_then_lookup_roundtrip() {
+    let db = fresh_db().await;
+    mangaupdates_id_repo::record(&db, 151349, Some("6z1uqw7"), 1_800_000_000)
+        .await
+        .unwrap();
+    let got = mangaupdates_id_repo::lookup(&db, 151349).await.unwrap();
+    assert_eq!(got, Some(Some("6z1uqw7".to_string())));
+}
+
+#[tokio::test]
+async fn mangaupdates_id_repo_tombstone_distinct_from_miss() {
+    let db = fresh_db().await;
+    mangaupdates_id_repo::record(&db, 999_999_999, None, 1_800_000_000)
+        .await
+        .unwrap();
+    let got = mangaupdates_id_repo::lookup(&db, 999_999_999)
+        .await
+        .unwrap();
+    // Outer Some = row exists; inner None = tombstone.
+    assert_eq!(got, Some(None));
+}
+
+#[tokio::test]
+async fn mangaupdates_id_repo_record_overwrites_existing() {
+    let db = fresh_db().await;
+    mangaupdates_id_repo::record(&db, 42, None, 1_000)
+        .await
+        .unwrap();
+    mangaupdates_id_repo::record(&db, 42, Some("modern"), 2_000)
+        .await
+        .unwrap();
+    let got = mangaupdates_id_repo::lookup(&db, 42).await.unwrap();
+    assert_eq!(got, Some(Some("modern".to_string())));
 }

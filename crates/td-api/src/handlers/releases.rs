@@ -374,11 +374,14 @@ pub async fn retry(
         .await
         .map_err(anyhow_err)?
         .ok_or_else(|| ApiError::NotFound(format!("release {id:?}")))?;
-    let resolver = Resolver::new(
+    let mut resolver = Resolver::new(
         state.db.clone(),
         state.metadata.clone(),
         state.ingestion.clone(),
     );
+    if let Some(r) = state.mangaupdates_redirector.clone() {
+        resolver = resolver.with_mangaupdates_redirector(r);
+    }
     resolver
         .resolve_one(&id)
         .await

@@ -74,12 +74,12 @@ fn build_config_dto(cfg: &SourceConfig) -> SourceConfigDto {
             let opts = cfg.nyaa.as_ref();
             (
                 opts.map(|o| o.feed_url.clone()).unwrap_or_default(),
-                opts.map(|o| o.fetch_details).unwrap_or(false),
+                opts.map(|o| o.fetch_details).unwrap_or(true),
                 opts.map(|o| o.timeout_seconds).unwrap_or(30),
                 opts.map(|o| o.site_base_url.clone()),
             )
         }
-        _ => (String::new(), false, 30, None),
+        _ => (String::new(), true, 30, None),
     };
     SourceConfigDto {
         enabled: cfg.enabled,
@@ -170,8 +170,18 @@ pub async fn poll(
     let metadata = state.metadata.clone();
     let ingestion = state.ingestion.clone();
     let locks = state.locks.clone();
+    let mu_redirector = state.mangaupdates_redirector.clone();
     tokio::spawn(async move {
-        poll_source::run_tick(source, db, metadata, ingestion, locks, "manual").await;
+        poll_source::run_tick(
+            source,
+            db,
+            metadata,
+            ingestion,
+            locks,
+            mu_redirector,
+            "manual",
+        )
+        .await;
     });
 
     Ok(Json(ManualPollResponse {
@@ -215,9 +225,19 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
         let metadata = state.metadata.clone();
         let ingestion = state.ingestion.clone();
         let locks = state.locks.clone();
+        let mu_redirector = state.mangaupdates_redirector.clone();
         let spawned: Arc<dyn td_source::DiscoverySource> = source;
         tokio::spawn(async move {
-            poll_source::run_tick(spawned, db, metadata, ingestion, locks, "manual").await;
+            poll_source::run_tick(
+                spawned,
+                db,
+                metadata,
+                ingestion,
+                locks,
+                mu_redirector,
+                "manual",
+            )
+            .await;
         });
         results.push(ManualPollResponse {
             source: name,
