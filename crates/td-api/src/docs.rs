@@ -10,10 +10,11 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 
 use crate::errors::ApiErrorBody;
 use crate::handlers::metrics::{
-    ErrorKindBucket, FetchLatencyDto, ProviderMetricsBucket, ProviderMetricsDetail,
-    ProviderMetricsSummary, ProviderMetricsSummaryItem, ResolutionOutcomeBreakdown,
-    ReviewQueueMetrics, ReviewQueueSnapshotDto, SourceMetricsBucket, SourceMetricsDetail,
-    SourceMetricsSummary, SourceMetricsSummaryItem, TimeToResolutionDto,
+    ErrorKindBucket, ExternalIdMapCount, FetchLatencyDto, IdMapMetrics, MangaupdatesRedirectStats,
+    ProviderMetricsBucket, ProviderMetricsDetail, ProviderMetricsSummary,
+    ProviderMetricsSummaryItem, ResolutionOutcomeBreakdown, ReviewQueueMetrics,
+    ReviewQueueSnapshotDto, SourceMetricsBucket, SourceMetricsDetail, SourceMetricsSummary,
+    SourceMetricsSummaryItem, TimeToResolutionDto,
 };
 use crate::handlers::providers::{
     ProviderCacheState, ProviderConfigDto, ProviderDto, ProviderList, ProviderSearchHit,
@@ -64,6 +65,7 @@ use crate::handlers::{health, metrics, providers, releases, series, sources, sta
         metrics::providers_summary,
         metrics::providers_detail,
         metrics::review_queue,
+        metrics::id_maps,
     ),
     components(schemas(
         ApiErrorBody,
@@ -111,6 +113,9 @@ use crate::handlers::{health, metrics, providers, releases, series, sources, sta
         ErrorKindBucket,
         ReviewQueueSnapshotDto,
         ReviewQueueMetrics,
+        ExternalIdMapCount,
+        MangaupdatesRedirectStats,
+        IdMapMetrics,
     )),
     tags(
         (name = "system", description = "Health and aggregate counters"),

@@ -60,6 +60,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/metrics/providers", get(metrics::providers_summary))
         .route("/metrics/providers/{id}", get(metrics::providers_detail))
         .route("/metrics/review-queue", get(metrics::review_queue))
+        .route("/metrics/id-maps", get(metrics::id_maps))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             auth::require_read,

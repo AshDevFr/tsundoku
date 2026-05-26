@@ -14,11 +14,27 @@
 
 use anyhow::Result;
 use sea_orm::sea_query::OnConflict;
-use sea_orm::{DatabaseConnection, EntityTrait, Set};
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter,
+    QuerySelect, Set,
+};
 
 use crate::entities::mangaupdates_id_map;
 
 pub use mangaupdates_id_map::Model;
+
+/// Aggregate counters over the persisted legacy → modern mapping table.
+#[derive(Debug, Clone, Default)]
+pub struct CacheStats {
+    pub modern_count: i64,
+    pub tombstone_count: i64,
+    pub last_resolved_at: Option<i64>,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct MaxResolvedAt {
+    max_resolved_at: Option<i64>,
+}
 
 /// Outcome of a previous translation attempt, as far as the cache knows.
 ///
@@ -64,4 +80,67 @@ pub async fn record(
     Ok(())
 }
 
+/// Aggregate counters for the admin "id maps" view: how many legacy ids
+/// have a modern slug recorded, how many are tombstoned, and when the
+/// most recent resolution happened.
+pub async fn stats(db: &DatabaseConnection) -> Result<CacheStats> {
+    let modern_count = mangaupdates_id_map::Entity::find()
+        .filter(mangaupdates_id_map::Column::ModernId.is_not_null())
+        .count(db)
+        .await? as i64;
+    let tombstone_count = mangaupdates_id_map::Entity::find()
+        .filter(mangaupdates_id_map::Column::ModernId.is_null())
+        .count(db)
+        .await? as i64;
+    let last = mangaupdates_id_map::Entity::find()
+        .select_only()
+        .column_as(
+            mangaupdates_id_map::Column::ResolvedAt.max(),
+            "max_resolved_at",
+        )
+        .into_model::<MaxResolvedAt>()
+        .one(db)
+        .await?
+        .and_then(|r| r.max_resolved_at);
+    Ok(CacheStats {
+        modern_count,
+        tombstone_count,
+        last_resolved_at: last,
+    })
+}
+
 pub use mangaupdates_id_map::{ActiveModel, Column, Entity};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::Database;
+
+    async fn fresh_db() -> DatabaseConnection {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn stats_on_empty_table_is_zero() {
+        let db = fresh_db().await;
+        let s = stats(&db).await.unwrap();
+        assert_eq!(s.modern_count, 0);
+        assert_eq!(s.tombstone_count, 0);
+        assert_eq!(s.last_resolved_at, None);
+    }
+
+    #[tokio::test]
+    async fn stats_counts_modern_and_tombstones_separately() {
+        let db = fresh_db().await;
+        record(&db, 1, Some("modern-a"), 100).await.unwrap();
+        record(&db, 2, Some("modern-b"), 200).await.unwrap();
+        record(&db, 3, None, 150).await.unwrap();
+        let s = stats(&db).await.unwrap();
+        assert_eq!(s.modern_count, 2);
+        assert_eq!(s.tombstone_count, 1);
+        assert_eq!(s.last_resolved_at, Some(200));
+    }
+}

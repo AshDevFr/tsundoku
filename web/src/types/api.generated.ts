@@ -41,6 +41,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/metrics/id-maps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Foreign-id map sizes: `series_external_ids` counts grouped by provider,
+         *     plus persisted MangaUpdates legacy → modern slug cache stats. Used by
+         *     the admin "ID Maps" page; no range/bucketing applies because these
+         *     numbers are not time-series.
+         */
+        get: operations["metrics_id_maps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/metrics/providers": {
         parameters: {
             query?: never;
@@ -508,6 +530,15 @@ export interface components {
             fetchedAt: number;
             provider: string;
         };
+        ExternalIdMapCount: {
+            /**
+             * Format: int64
+             * @description Number of `(provider, external_id) → series_id` rows recorded.
+             */
+            count: number;
+            /** @description Canonical provider id (e.g. `mangaupdates`, `mal`, `anilist`). */
+            provider: string;
+        };
         /**
          * @description External provider links scraped from a release's description. Mirrors
          *     `td_source::ExternalLinks`; redefined here so we don't pull utoipa into
@@ -530,6 +561,15 @@ export interface components {
         Health: {
             status: string;
         };
+        IdMapMetrics: {
+            /**
+             * @description Per-provider row counts from `series_external_ids`. Sorted
+             *     alphabetically by provider for stable rendering.
+             */
+            externalIds: components["schemas"]["ExternalIdMapCount"][];
+            /** @description State of the persisted MangaUpdates legacy → modern slug cache. */
+            mangaupdatesRedirectCache: components["schemas"]["MangaupdatesRedirectStats"];
+        };
         /**
          * @description Body for the manual-link endpoint. Exactly one of:
          *     - `seriesId`: link to an existing series row by internal id.
@@ -541,6 +581,26 @@ export interface components {
             provider?: string | null;
             /** Format: int32 */
             seriesId?: number | null;
+        };
+        MangaupdatesRedirectStats: {
+            /**
+             * Format: int64
+             * @description Epoch seconds of the most recent translation. `None` when the
+             *     cache is empty.
+             */
+            lastResolvedAt?: number | null;
+            /**
+             * Format: int64
+             * @description Rows where `modern_id IS NOT NULL` — legacy ids we've successfully
+             *     translated to a slug.
+             */
+            modernCount: number;
+            /**
+             * Format: int64
+             * @description Rows where `modern_id IS NULL` — legacy ids MU retired, so we no
+             *     longer waste a HEAD request on them.
+             */
+            tombstoneCount: number;
         };
         ManualPollResponse: {
             /** @description `false` when a previous tick is still in flight; the request is a no-op. */
@@ -1049,6 +1109,25 @@ export interface operations {
             };
         };
     };
+    metrics_id_maps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdMapMetrics"];
+                };
+            };
+        };
+    };
     metrics_providers_summary: {
         parameters: {
             query?: {
@@ -1475,10 +1554,19 @@ export interface operations {
                 genre?: string;
                 /** @description Filter by a single tag name. AND-combined with the other filters. */
                 tag?: string;
-                /** @description Sort field. Supports `last_release_at` (default) and `first_seen_at`. */
+                /**
+                 * @description Sort field. Supports `last_release_at` (default) and `first_seen_at`.
+                 *     Ignored when `q` is present (results are ranked by relevance instead).
+                 */
                 sort?: string;
                 /** @description `asc` or `desc` (default). */
                 order?: string;
+                /**
+                 * @description Free-text query. When set, results are ranked by a Dice-coefficient
+                 *     score against canonical + alternate titles, with a boost for FTS5
+                 *     prefix matches. Whitespace-only is treated as absent.
+                 */
+                q?: string;
             };
             header?: never;
             path?: never;

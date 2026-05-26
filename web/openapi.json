@@ -59,6 +59,27 @@
         }
       }
     },
+    "/api/v1/metrics/id-maps": {
+      "get": {
+        "tags": [
+          "metrics"
+        ],
+        "summary": "Foreign-id map sizes: `series_external_ids` counts grouped by provider,\nplus persisted MangaUpdates legacy → modern slug cache stats. Used by\nthe admin \"ID Maps\" page; no range/bucketing applies because these\nnumbers are not time-series.",
+        "operationId": "metrics_id_maps",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdMapMetrics"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/metrics/providers": {
       "get": {
         "tags": [
@@ -806,7 +827,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "Sort field. Supports `last_release_at` (default) and `first_seen_at`.",
+            "description": "Sort field. Supports `last_release_at` (default) and `first_seen_at`.\nIgnored when `q` is present (results are ranked by relevance instead).",
             "required": false,
             "schema": {
               "type": "string"
@@ -816,6 +837,15 @@
             "name": "order",
             "in": "query",
             "description": "`asc` or `desc` (default).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Free-text query. When set, results are ranked by a Dice-coefficient\nscore against canonical + alternate titles, with a boost for FTS5\nprefix matches. Whitespace-only is treated as absent.",
             "required": false,
             "schema": {
               "type": "string"
@@ -1106,6 +1136,24 @@
           }
         }
       },
+      "ExternalIdMapCount": {
+        "type": "object",
+        "required": [
+          "provider",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of `(provider, external_id) → series_id` rows recorded."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Canonical provider id (e.g. `mangaupdates`, `mal`, `anilist`)."
+          }
+        }
+      },
       "ExtractedLinksDto": {
         "type": "object",
         "description": "External provider links scraped from a release's description. Mirrors\n`td_source::ExternalLinks`; redefined here so we don't pull utoipa into\nthe domain crate.",
@@ -1173,6 +1221,26 @@
           }
         }
       },
+      "IdMapMetrics": {
+        "type": "object",
+        "required": [
+          "externalIds",
+          "mangaupdatesRedirectCache"
+        ],
+        "properties": {
+          "externalIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdMapCount"
+            },
+            "description": "Per-provider row counts from `series_external_ids`. Sorted\nalphabetically by provider for stable rendering."
+          },
+          "mangaupdatesRedirectCache": {
+            "$ref": "#/components/schemas/MangaupdatesRedirectStats",
+            "description": "State of the persisted MangaUpdates legacy → modern slug cache."
+          }
+        }
+      },
       "LinkRequest": {
         "type": "object",
         "description": "Body for the manual-link endpoint. Exactly one of:\n- `seriesId`: link to an existing series row by internal id.\n- `provider` + `externalId`: link via the named provider's external id;\n  the provider's `get` is called when no mapping exists yet.",
@@ -1195,6 +1263,33 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "MangaupdatesRedirectStats": {
+        "type": "object",
+        "required": [
+          "modernCount",
+          "tombstoneCount"
+        ],
+        "properties": {
+          "lastResolvedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch seconds of the most recent translation. `None` when the\ncache is empty."
+          },
+          "modernCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows where `modern_id IS NOT NULL` — legacy ids we've successfully\ntranslated to a slug."
+          },
+          "tombstoneCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows where `modern_id IS NULL` — legacy ids MU retired, so we no\nlonger waste a HEAD request on them."
           }
         }
       },

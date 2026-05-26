@@ -14,7 +14,9 @@ use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use serde_json::Value;
 use td_config::AuthConfig;
 use td_db::entities::{releases, series};
-use td_db::repos::{releases_repo, run_metrics_repo, series_external_ids_repo, tagging_repo};
+use td_db::repos::{
+    mangaupdates_id_repo, releases_repo, run_metrics_repo, series_external_ids_repo, tagging_repo,
+};
 use td_source::PollOutcome;
 use tower::ServiceExt;
 
@@ -1441,4 +1443,251 @@ async fn provider_search_unknown_provider_returns_404() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn series_list_with_q_ranks_exact_match_first() {
+    let db = fresh_db().await;
+    seed_series(&db, "Naruto", "manga").await;
+    seed_series(&db, "Bleach", "manga").await;
+    seed_series(&db, "One Piece", "manga").await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?q=naruto")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert!(!items.is_empty());
+    assert_eq!(items[0]["canonicalTitle"], "Naruto");
+}
+
+#[tokio::test]
+async fn series_list_with_q_finds_typo_via_dice_rerank() {
+    let db = fresh_db().await;
+    seed_series(&db, "Naruto", "manga").await;
+    seed_series(&db, "Bleach", "manga").await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    // FTS5 would not return "Naruto" for the prefix `narto*`, but the
+    // Dice rerank still ranks it well above the score floor.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?q=narto")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let titles: Vec<&str> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["canonicalTitle"].as_str().unwrap())
+        .collect();
+    assert!(
+        titles.contains(&"Naruto"),
+        "expected Naruto to surface via Dice rerank for typo query; got {titles:?}"
+    );
+}
+
+#[tokio::test]
+async fn series_list_with_q_returns_empty_for_gibberish() {
+    let db = fresh_db().await;
+    seed_series(&db, "Naruto", "manga").await;
+    seed_series(&db, "Bleach", "manga").await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?q=xyzzy_qwerasdf")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 0);
+    assert!(body["items"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn series_list_q_composes_with_filters() {
+    let db = fresh_db().await;
+    seed_series(&db, "Naruto", "manga").await;
+    seed_series(&db, "Naruto Light Novel", "novel").await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?q=naruto&kind=novel")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["canonicalTitle"], "Naruto Light Novel");
+    assert_eq!(items[0]["kind"], "novel");
+}
+
+#[tokio::test]
+async fn series_list_with_blank_q_falls_back_to_unfiltered_list() {
+    let db = fresh_db().await;
+    seed_series(&db, "Naruto", "manga").await;
+    seed_series(&db, "Bleach", "manga").await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?q=%20%20")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 2);
+}
+
+#[tokio::test]
+async fn metrics_id_maps_reports_per_provider_counts_and_mu_cache() {
+    let db = fresh_db().await;
+    let s1 = seed_series(&db, "Series A", "manga").await;
+    let s2 = seed_series(&db, "Series B", "manga").await;
+    series_external_ids_repo::upsert(&db, s1, "mangaupdates", "mu-1", None, 100)
+        .await
+        .unwrap();
+    series_external_ids_repo::upsert(&db, s2, "mangaupdates", "mu-2", None, 100)
+        .await
+        .unwrap();
+    series_external_ids_repo::upsert(&db, s1, "mal", "mal-1", None, 100)
+        .await
+        .unwrap();
+    mangaupdates_id_repo::record(&db, 11, Some("modern-x"), 500)
+        .await
+        .unwrap();
+    mangaupdates_id_repo::record(&db, 12, None, 600)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/metrics/id-maps")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let external = body["externalIds"].as_array().unwrap();
+    // Alphabetical: `mal` before `mangaupdates`.
+    assert_eq!(external[0]["provider"], "mal");
+    assert_eq!(external[0]["count"], 1);
+    assert_eq!(external[1]["provider"], "mangaupdates");
+    assert_eq!(external[1]["count"], 2);
+    let mu = &body["mangaupdatesRedirectCache"];
+    assert_eq!(mu["modernCount"], 1);
+    assert_eq!(mu["tombstoneCount"], 1);
+    assert_eq!(mu["lastResolvedAt"], 600);
+}
+
+#[tokio::test]
+async fn metrics_id_maps_returns_empty_state_cleanly() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/metrics/id-maps")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert!(body["externalIds"].as_array().unwrap().is_empty());
+    let mu = &body["mangaupdatesRedirectCache"];
+    assert_eq!(mu["modernCount"], 0);
+    assert_eq!(mu["tombstoneCount"], 0);
+    assert!(mu["lastResolvedAt"].is_null());
 }

@@ -20,7 +20,9 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use td_db::repos::{review_snapshots_repo, run_metrics_repo};
+use td_db::repos::{
+    mangaupdates_id_repo, review_snapshots_repo, run_metrics_repo, series_external_ids_repo,
+};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
@@ -174,6 +176,39 @@ pub struct ProviderMetricsDetail {
     pub range_seconds: i64,
     pub since: i64,
     pub until: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalIdMapCount {
+    /// Canonical provider id (e.g. `mangaupdates`, `mal`, `anilist`).
+    pub provider: String,
+    /// Number of `(provider, external_id) → series_id` rows recorded.
+    pub count: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MangaupdatesRedirectStats {
+    /// Rows where `modern_id IS NOT NULL` — legacy ids we've successfully
+    /// translated to a slug.
+    pub modern_count: i64,
+    /// Rows where `modern_id IS NULL` — legacy ids MU retired, so we no
+    /// longer waste a HEAD request on them.
+    pub tombstone_count: i64,
+    /// Epoch seconds of the most recent translation. `None` when the
+    /// cache is empty.
+    pub last_resolved_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IdMapMetrics {
+    /// Per-provider row counts from `series_external_ids`. Sorted
+    /// alphabetically by provider for stable rendering.
+    pub external_ids: Vec<ExternalIdMapCount>,
+    /// State of the persisted MangaUpdates legacy → modern slug cache.
+    pub mangaupdates_redirect_cache: MangaupdatesRedirectStats,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -431,6 +466,40 @@ pub async fn review_queue(
         range_seconds,
         since,
         until: now,
+    }))
+}
+
+/// Foreign-id map sizes: `series_external_ids` counts grouped by provider,
+/// plus persisted MangaUpdates legacy → modern slug cache stats. Used by
+/// the admin "ID Maps" page; no range/bucketing applies because these
+/// numbers are not time-series.
+#[utoipa::path(
+    get,
+    path = "/api/v1/metrics/id-maps",
+    tag = "metrics",
+    operation_id = "metrics_id_maps",
+    responses((status = 200, body = IdMapMetrics))
+)]
+pub async fn id_maps(State(state): State<AppState>) -> ApiResult<Json<IdMapMetrics>> {
+    let external_rows = series_external_ids_repo::count_by_provider(&state.db)
+        .await
+        .map_err(ApiError::Internal)?;
+    let mu_stats = mangaupdates_id_repo::stats(&state.db)
+        .await
+        .map_err(ApiError::Internal)?;
+    Ok(Json(IdMapMetrics {
+        external_ids: external_rows
+            .into_iter()
+            .map(|r| ExternalIdMapCount {
+                provider: r.provider,
+                count: r.count,
+            })
+            .collect(),
+        mangaupdates_redirect_cache: MangaupdatesRedirectStats {
+            modern_count: mu_stats.modern_count,
+            tombstone_count: mu_stats.tombstone_count,
+            last_resolved_at: mu_stats.last_resolved_at,
+        },
     }))
 }
 
