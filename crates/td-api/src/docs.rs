@@ -9,12 +9,17 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 
 use crate::errors::ApiErrorBody;
-use crate::handlers::providers::{ProviderCacheState, ProviderDto, ProviderList, RefreshResponse};
+use crate::handlers::providers::{
+    ProviderCacheState, ProviderConfigDto, ProviderDto, ProviderList, RefreshAllResponse,
+    RefreshResponse,
+};
 use crate::handlers::releases::{
     LinkRequest, ReleaseDto, ReleasePage, ReviewCandidateDto, UnresolvedPage, UnresolvedRelease,
 };
 use crate::handlers::series::{ExternalIdDto, SeriesDetail, SeriesListItem, SeriesListPage};
-use crate::handlers::sources::{ManualPollResponse, SourceDto, SourceList};
+use crate::handlers::sources::{
+    ManualPollResponse, PollAllResponse, SourceConfigDto, SourceDto, SourceList,
+};
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::{health, providers, releases, series, sources, stats};
 
@@ -38,8 +43,10 @@ use crate::handlers::{health, providers, releases, series, sources, stats};
         releases::retry,
         sources::list,
         sources::poll,
+        sources::poll_all,
         providers::list,
         providers::refresh_cache,
+        providers::refresh_all,
     ),
     components(schemas(
         ApiErrorBody,
@@ -57,12 +64,16 @@ use crate::handlers::{health, providers, releases, series, sources, stats};
         ReviewCandidateDto,
         LinkRequest,
         SourceDto,
+        SourceConfigDto,
         SourceList,
         ManualPollResponse,
+        PollAllResponse,
         ProviderDto,
+        ProviderConfigDto,
         ProviderList,
         ProviderCacheState,
         RefreshResponse,
+        RefreshAllResponse,
     )),
     tags(
         (name = "system", description = "Health and aggregate counters"),

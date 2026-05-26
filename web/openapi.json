@@ -59,6 +59,32 @@
         }
       }
     },
+    "/api/v1/providers/refresh-all": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Fan-out cache refresh for every registered provider. Returns a per-id\ntriggered/skipped breakdown so the admin UI can render each result.",
+        "operationId": "refresh_all",
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshAllResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/providers/{id}/refresh-cache": {
       "post": {
         "tags": [
@@ -545,6 +571,32 @@
         }
       }
     },
+    "/api/v1/sources/poll-all": {
+      "post": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "Fan-out trigger for every registered source. Returns a per-source\ntriggered/skipped result without aggregating: callers see the same\nper-source outcomes a series of single-source calls would have produced.",
+        "operationId": "poll_all",
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PollAllResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/sources/{name}/poll": {
       "post": {
         "tags": [
@@ -706,6 +758,20 @@
           }
         }
       },
+      "PollAllResponse": {
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManualPollResponse"
+            }
+          }
+        }
+      },
       "ProviderCacheState": {
         "type": "object",
         "required": [
@@ -744,6 +810,60 @@
           }
         }
       },
+      "ProviderConfigDto": {
+        "type": "object",
+        "description": "Per-provider config exposed to the admin UI. The api_key is reported as\na boolean only; the raw value never leaves the process.",
+        "required": [
+          "apiFallback",
+          "apiKeySet",
+          "apiBaseUrl",
+          "offlineDumpConfigured",
+          "offlineCacheLoaded",
+          "negativeCacheTtlDays",
+          "timeoutSeconds"
+        ],
+        "properties": {
+          "apiBaseUrl": {
+            "type": "string"
+          },
+          "apiFallback": {
+            "type": "boolean"
+          },
+          "apiKeySet": {
+            "type": "boolean",
+            "description": "`true` when an api_key is configured (any non-empty value). The\nactual key never appears in JSON; that's the whole point of stashing\nit in `.env`."
+          },
+          "negativeCacheTtlDays": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "offlineCacheLoaded": {
+            "type": "boolean",
+            "description": "Runtime: whether the on-disk dump is currently loaded."
+          },
+          "offlineDumpConfigured": {
+            "type": "boolean"
+          },
+          "offlineDumpUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "offlineRefreshCron": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "ProviderDto": {
         "type": "object",
         "required": [
@@ -754,6 +874,17 @@
         "properties": {
           "active": {
             "type": "boolean"
+          },
+          "config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProviderConfigDto",
+                "description": "Operator-facing snapshot of the `[providers.<id>]` config block. May\nbe `None` for providers that don't have a typed config block (today\nthis only happens for test doubles)."
+              }
+            ]
           },
           "displayName": {
             "type": "string"
@@ -783,6 +914,20 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ProviderDto"
+            }
+          }
+        }
+      },
+      "RefreshAllResponse": {
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RefreshResponse"
             }
           }
         }
@@ -1217,6 +1362,46 @@
           }
         }
       },
+      "SourceConfigDto": {
+        "type": "object",
+        "description": "Operator-facing snapshot of the per-source config (the bits visible in\n`[[sources]]` and any kind-specific nested options). Never carries\nsecrets; the source layer doesn't have any in v1.",
+        "required": [
+          "enabled",
+          "feedUrl",
+          "fetchDetails",
+          "timeoutSeconds"
+        ],
+        "properties": {
+          "cron": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "feedUrl": {
+            "type": "string",
+            "description": "Feed URL for the source kind. Empty when the kind doesn't define one\n(every kind today does, so this is informational future-proofing)."
+          },
+          "fetchDetails": {
+            "type": "boolean"
+          },
+          "siteBaseUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Override for the site base URL. Useful when the feed is proxied."
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "SourceDto": {
         "type": "object",
         "required": [
@@ -1224,6 +1409,17 @@
           "kind"
         ],
         "properties": {
+          "config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SourceConfigDto",
+                "description": "Static config block snapshotted at boot. `None` when a source is in\nthe registry but its config entry isn't, which today only happens in\ntests using a hand-built `SourceRegistry`."
+              }
+            ]
+          },
           "kind": {
             "type": "string"
           },

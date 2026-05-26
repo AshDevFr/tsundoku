@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
-use td_config::{AuthConfig, IngestionConfig};
+use td_config::{AuthConfig, IngestionConfig, ProvidersConfig, SourceConfig};
 use td_metadata::MetadataRegistry;
 use td_scheduler::JobLocks;
 use td_source::SourceRegistry;
@@ -24,4 +24,11 @@ pub struct AppState {
     /// per-source / per-provider mutexes the cron jobs use, so a manual
     /// kick can't race a scheduled tick.
     pub locks: Arc<JobLocks>,
+    /// Snapshot of the `[[sources]]` config blocks the registry was built
+    /// from. Lets the admin handlers surface cron, feed_url, etc. without
+    /// a config-state table or a round trip back to the file.
+    pub sources_config: Arc<Vec<SourceConfig>>,
+    /// Snapshot of the `[providers]` config block, with the same role for
+    /// the provider admin endpoints.
+    pub providers_config: Arc<ProvidersConfig>,
 }

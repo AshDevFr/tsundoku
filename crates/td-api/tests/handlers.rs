@@ -541,6 +541,254 @@ async fn sources_list_returns_registered_sources() {
 }
 
 #[tokio::test]
+async fn sources_list_includes_config_block_from_app_state() {
+    let db = fresh_db().await;
+    let nyaa_cfg = td_config::SourceConfig {
+        kind: "nyaa".into(),
+        name: "trusted".into(),
+        cron: Some("*/30 * * * *".into()),
+        enabled: true,
+        nyaa: Some(td_config::NyaaSourceOptions {
+            feed_url: "https://nyaa.si/?page=rss&f=2".into(),
+            timeout_seconds: 45,
+            fetch_details: true,
+            site_base_url: "https://nyaa.si".into(),
+        }),
+    };
+    let app = common::build_app_full(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+        }),
+        source_registry_with(vec![StubSource {
+            name: "trusted".into(),
+            kind: "nyaa".into(),
+            outcome: PollOutcome::default(),
+        }]),
+        open_auth(),
+        vec![nyaa_cfg],
+        td_config::ProvidersConfig::default(),
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/sources")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let item = &body["items"][0];
+    assert_eq!(item["name"], "trusted");
+    assert_eq!(item["config"]["enabled"], true);
+    assert_eq!(item["config"]["cron"], "*/30 * * * *");
+    assert_eq!(item["config"]["feedUrl"], "https://nyaa.si/?page=rss&f=2");
+    assert_eq!(item["config"]["fetchDetails"], true);
+    assert_eq!(item["config"]["timeoutSeconds"], 45);
+}
+
+#[tokio::test]
+async fn providers_list_includes_config_block_without_api_key_value() {
+    let db = fresh_db().await;
+    let mut providers_cfg = td_config::ProvidersConfig::default();
+    providers_cfg.mangabaka.api_key = Some("super-secret-leaky-token".into());
+    providers_cfg.mangabaka.api_fallback = true;
+    providers_cfg.mangabaka.offline_dump_url = Some("https://example.com/mangabaka.tar.gz".into());
+    providers_cfg.mangabaka.offline_refresh_cron = Some("0 4 * * *".into());
+
+    // Use the canonical mangabaka id so the handler emits its config block.
+    let app = common::build_app_full(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mangabaka",
+            returns: None,
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+        Vec::new(),
+        providers_cfg,
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/providers")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let raw = std::str::from_utf8(&bytes).unwrap();
+    // Defense-in-depth: the api_key value must never appear anywhere in the
+    // serialized response, regardless of where it's nested.
+    assert!(
+        !raw.contains("super-secret-leaky-token"),
+        "api_key value leaked into providers response: {raw}"
+    );
+
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    let item = &body["items"][0];
+    assert_eq!(item["id"], "mangabaka");
+    assert_eq!(item["config"]["apiKeySet"], true);
+    assert_eq!(item["config"]["apiFallback"], true);
+    assert_eq!(
+        item["config"]["offlineDumpUrl"],
+        "https://example.com/mangabaka.tar.gz"
+    );
+    assert_eq!(item["config"]["offlineDumpConfigured"], true);
+    assert_eq!(item["config"]["offlineRefreshCron"], "0 4 * * *");
+    // Stub provider doesn't have an offline store loaded.
+    assert_eq!(item["config"]["offlineCacheLoaded"], false);
+    // Ensure no `apiKey` field exists (only `apiKeySet`).
+    assert!(item["config"].get("apiKey").is_none());
+}
+
+#[tokio::test]
+async fn poll_all_returns_per_source_triggered_results() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+        }),
+        source_registry_with(vec![
+            StubSource {
+                name: "a".into(),
+                kind: "stub".into(),
+                outcome: PollOutcome::default(),
+            },
+            StubSource {
+                name: "b".into(),
+                kind: "stub".into(),
+                outcome: PollOutcome::default(),
+            },
+        ]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/sources/poll-all")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    // Stable order matches `list`.
+    assert_eq!(results[0]["source"], "a");
+    assert_eq!(results[0]["triggered"], true);
+    assert_eq!(results[0]["skipped"], false);
+    assert_eq!(results[1]["source"], "b");
+    assert_eq!(results[1]["triggered"], true);
+}
+
+#[tokio::test]
+async fn poll_all_reports_locked_source_as_skipped() {
+    let db = fresh_db().await;
+    let locks = std::sync::Arc::new(td_scheduler::JobLocks::default());
+    // Acquire and hold the lock for source "a" before the request lands.
+    let held = locks.source_lock("a");
+    let _guard = held.try_lock().expect("test should hold the lock first");
+
+    let app = common::build_app_full(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+        }),
+        source_registry_with(vec![
+            StubSource {
+                name: "a".into(),
+                kind: "stub".into(),
+                outcome: PollOutcome::default(),
+            },
+            StubSource {
+                name: "b".into(),
+                kind: "stub".into(),
+                outcome: PollOutcome::default(),
+            },
+        ]),
+        open_auth(),
+        Vec::new(),
+        td_config::ProvidersConfig::default(),
+        locks,
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/sources/poll-all")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["source"], "a");
+    assert_eq!(results[0]["triggered"], false);
+    assert_eq!(results[0]["skipped"], true);
+    assert_eq!(results[1]["source"], "b");
+    assert_eq!(results[1]["triggered"], true);
+    assert_eq!(results[1]["skipped"], false);
+}
+
+#[tokio::test]
+async fn refresh_all_returns_per_provider_results() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/providers/refresh-all")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["provider"], "mb");
+    assert_eq!(results[0]["triggered"], true);
+    assert_eq!(results[0]["skipped"], false);
+}
+
+#[tokio::test]
 async fn unresolved_endpoint_returns_review_pending_releases() {
     let db = fresh_db().await;
     let r = sample_release("1", "feed", "title");

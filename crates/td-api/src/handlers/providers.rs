@@ -1,9 +1,13 @@
 //! Metadata-provider listing + manual cache-refresh trigger.
 
+use std::sync::Arc;
+
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::Serialize;
+use td_config::{MangabakaProviderConfig, ProvidersConfig};
 use td_db::repos::provider_cache_state_repo;
+use td_metadata::MetadataProvider;
 use td_scheduler::jobs::refresh_provider_cache;
 use utoipa::ToSchema;
 
@@ -27,6 +31,30 @@ pub struct ProviderDto {
     pub display_name: String,
     pub active: bool,
     pub last_refresh: Option<ProviderCacheState>,
+    /// Operator-facing snapshot of the `[providers.<id>]` config block. May
+    /// be `None` for providers that don't have a typed config block (today
+    /// this only happens for test doubles).
+    pub config: Option<ProviderConfigDto>,
+}
+
+/// Per-provider config exposed to the admin UI. The api_key is reported as
+/// a boolean only; the raw value never leaves the process.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderConfigDto {
+    pub api_fallback: bool,
+    /// `true` when an api_key is configured (any non-empty value). The
+    /// actual key never appears in JSON; that's the whole point of stashing
+    /// it in `.env`.
+    pub api_key_set: bool,
+    pub api_base_url: String,
+    pub offline_dump_url: Option<String>,
+    pub offline_dump_configured: bool,
+    /// Runtime: whether the on-disk dump is currently loaded.
+    pub offline_cache_loaded: bool,
+    pub offline_refresh_cron: Option<String>,
+    pub negative_cache_ttl_days: u32,
+    pub timeout_seconds: u32,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -42,6 +70,53 @@ pub struct RefreshResponse {
     pub triggered: bool,
     /// `false` when a refresh is already in flight; the request is a no-op.
     pub skipped: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshAllResponse {
+    pub results: Vec<RefreshResponse>,
+}
+
+fn mangabaka_config_dto(
+    cfg: &MangabakaProviderConfig,
+    offline_cache_loaded: bool,
+) -> ProviderConfigDto {
+    let api_key_set = cfg
+        .api_key
+        .as_deref()
+        .map(|k| !k.is_empty())
+        .unwrap_or(false);
+    let offline_dump_configured = cfg
+        .offline_dump_url
+        .as_deref()
+        .map(|u| !u.is_empty())
+        .unwrap_or(false);
+    ProviderConfigDto {
+        api_fallback: cfg.api_fallback,
+        api_key_set,
+        api_base_url: cfg.api_base_url.clone(),
+        offline_dump_url: cfg.offline_dump_url.clone(),
+        offline_dump_configured,
+        offline_cache_loaded,
+        offline_refresh_cron: cfg.offline_refresh_cron.clone(),
+        negative_cache_ttl_days: cfg.negative_cache_ttl_days,
+        timeout_seconds: cfg.timeout_seconds,
+    }
+}
+
+async fn build_provider_config_dto(
+    provider_id: &str,
+    provider: &Arc<dyn MetadataProvider>,
+    providers_cfg: &ProvidersConfig,
+) -> Option<ProviderConfigDto> {
+    match provider_id {
+        "mangabaka" => Some(mangabaka_config_dto(
+            &providers_cfg.mangabaka,
+            provider.offline_cache_loaded().await,
+        )),
+        _ => None,
+    }
 }
 
 /// List every registered metadata provider with its latest cache-refresh
@@ -60,6 +135,7 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<ProviderList>
         let latest = provider_cache_state_repo::latest(&state.db, id)
             .await
             .map_err(ApiError::Internal)?;
+        let config = build_provider_config_dto(id, provider, &state.providers_config).await;
         items.push(ProviderDto {
             id: id.to_string(),
             display_name: provider.display_name().to_string(),
@@ -71,6 +147,7 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<ProviderList>
                 bytes_downloaded: r.bytes_downloaded,
                 source_url: r.source_url,
             }),
+            config,
         });
     }
     items.sort_by(|a, b| a.id.cmp(&b.id));
@@ -124,4 +201,50 @@ pub async fn refresh_cache(
         triggered: true,
         skipped: false,
     }))
+}
+
+/// Fan-out cache refresh for every registered provider. Returns a per-id
+/// triggered/skipped breakdown so the admin UI can render each result.
+#[utoipa::path(
+    post,
+    path = "/api/v1/providers/refresh-all",
+    tag = "providers",
+    responses((status = 202, body = RefreshAllResponse)),
+    security(("admin" = []))
+)]
+pub async fn refresh_all(State(state): State<AppState>) -> ApiResult<Json<RefreshAllResponse>> {
+    let mut ids: Vec<String> = state
+        .metadata
+        .iter()
+        .map(|(id, _)| id.to_string())
+        .collect();
+    ids.sort();
+
+    let mut results = Vec::with_capacity(ids.len());
+    for id in ids {
+        let Some(provider) = state.metadata.get(&id).cloned() else {
+            continue;
+        };
+        let lock = state.locks.provider_lock(&id);
+        if lock.try_lock().is_err() {
+            results.push(RefreshResponse {
+                provider: id,
+                triggered: false,
+                skipped: true,
+            });
+            continue;
+        }
+        let db = state.db.clone();
+        let locks = state.locks.clone();
+        tokio::spawn(async move {
+            refresh_provider_cache::run_tick(provider, db, locks).await;
+        });
+        results.push(RefreshResponse {
+            provider: id,
+            triggered: true,
+            skipped: false,
+        });
+    }
+
+    Ok(Json(RefreshAllResponse { results }))
 }

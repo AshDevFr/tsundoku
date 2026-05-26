@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use axum::Router;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{Database, DatabaseConnection};
-use td_config::{AppConfig, AuthConfig, IngestionConfig};
+use td_config::{AppConfig, AuthConfig, IngestionConfig, ProvidersConfig};
 use td_metadata::{
     MetadataProvider, MetadataRegistry, MetadataResult, RefreshStatus, RefreshSummary, SearchHit,
     SeriesMetadata,
@@ -99,6 +99,28 @@ pub fn build_app(
     sources: SourceRegistry,
     auth: AuthConfig,
 ) -> Router {
+    build_app_full(
+        db,
+        metadata,
+        sources,
+        auth,
+        Vec::new(),
+        ProvidersConfig::default(),
+        Arc::new(JobLocks::default()),
+    )
+}
+
+/// Variant used by tests that need to inject `[[sources]]` / `[providers]`
+/// config blocks or a pre-built `JobLocks` (to simulate an in-flight tick).
+pub fn build_app_full(
+    db: DatabaseConnection,
+    metadata: MetadataRegistry,
+    sources: SourceRegistry,
+    auth: AuthConfig,
+    sources_config: Vec<td_config::SourceConfig>,
+    providers_config: ProvidersConfig,
+    locks: Arc<JobLocks>,
+) -> Router {
     let cfg = AppConfig {
         auth: auth.clone(),
         api: td_config::ApiConfig { docs: false },
@@ -110,7 +132,9 @@ pub fn build_app(
         metadata: Arc::new(metadata),
         ingestion: IngestionConfig::default(),
         auth: Arc::new(auth),
-        locks: Arc::new(JobLocks::default()),
+        locks,
+        sources_config: Arc::new(sources_config),
+        providers_config: Arc::new(providers_config),
     };
     td_api::router(state, &cfg)
 }

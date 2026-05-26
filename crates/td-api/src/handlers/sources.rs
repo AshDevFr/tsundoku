@@ -1,8 +1,11 @@
 //! Discovery-source listing + manual-poll trigger.
 
+use std::sync::Arc;
+
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::Serialize;
+use td_config::SourceConfig;
 use td_db::repos::sources_repo;
 use td_scheduler::jobs::poll_source;
 use utoipa::ToSchema;
@@ -19,6 +22,27 @@ pub struct SourceDto {
     pub last_success_at: Option<i64>,
     pub last_error: Option<String>,
     pub last_summary: Option<String>,
+    /// Static config block snapshotted at boot. `None` when a source is in
+    /// the registry but its config entry isn't, which today only happens in
+    /// tests using a hand-built `SourceRegistry`.
+    pub config: Option<SourceConfigDto>,
+}
+
+/// Operator-facing snapshot of the per-source config (the bits visible in
+/// `[[sources]]` and any kind-specific nested options). Never carries
+/// secrets; the source layer doesn't have any in v1.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceConfigDto {
+    pub enabled: bool,
+    pub cron: Option<String>,
+    /// Feed URL for the source kind. Empty when the kind doesn't define one
+    /// (every kind today does, so this is informational future-proofing).
+    pub feed_url: String,
+    pub fetch_details: bool,
+    pub timeout_seconds: u32,
+    /// Override for the site base URL. Useful when the feed is proxied.
+    pub site_base_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -36,6 +60,41 @@ pub struct ManualPollResponse {
     pub skipped: bool,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PollAllResponse {
+    pub results: Vec<ManualPollResponse>,
+}
+
+fn build_config_dto(cfg: &SourceConfig) -> SourceConfigDto {
+    // For v1 only the nyaa kind exists, so we read directly from it. New
+    // kinds add an arm here.
+    let (feed_url, fetch_details, timeout_seconds, site_base_url) = match cfg.kind.as_str() {
+        "nyaa" => {
+            let opts = cfg.nyaa.as_ref();
+            (
+                opts.map(|o| o.feed_url.clone()).unwrap_or_default(),
+                opts.map(|o| o.fetch_details).unwrap_or(false),
+                opts.map(|o| o.timeout_seconds).unwrap_or(30),
+                opts.map(|o| o.site_base_url.clone()),
+            )
+        }
+        _ => (String::new(), false, 30, None),
+    };
+    SourceConfigDto {
+        enabled: cfg.enabled,
+        cron: cfg.cron.clone(),
+        feed_url,
+        fetch_details,
+        timeout_seconds,
+        site_base_url,
+    }
+}
+
+fn find_source_config<'a>(configs: &'a [SourceConfig], name: &str) -> Option<&'a SourceConfig> {
+    configs.iter().find(|c| c.name == name)
+}
+
 /// List every registered discovery source with its last-poll markers.
 #[utoipa::path(
     get,
@@ -50,6 +109,7 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<SourceList>> 
         let row = sources_repo::get(&state.db, source.kind(), name)
             .await
             .map_err(ApiError::Internal)?;
+        let config = find_source_config(&state.sources_config, name).map(build_config_dto);
         items.push(SourceDto {
             name: name.to_string(),
             kind: source.kind().to_string(),
@@ -57,6 +117,7 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<SourceList>> 
             last_success_at: row.as_ref().and_then(|r| r.last_success_at),
             last_error: row.as_ref().and_then(|r| r.last_error.clone()),
             last_summary: row.as_ref().and_then(|r| r.last_summary.clone()),
+            config,
         });
     }
     // Stable ordering for snapshot tests / UI sort.
@@ -118,4 +179,52 @@ pub async fn poll(
         triggered: true,
         skipped: false,
     }))
+}
+
+/// Fan-out trigger for every registered source. Returns a per-source
+/// triggered/skipped result without aggregating: callers see the same
+/// per-source outcomes a series of single-source calls would have produced.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sources/poll-all",
+    tag = "sources",
+    responses((status = 202, body = PollAllResponse)),
+    security(("admin" = []))
+)]
+pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllResponse>> {
+    let mut names: Vec<String> = state.sources.names().map(|n| n.to_string()).collect();
+    // Stable order matches `list` so the UI can zip the two responses.
+    names.sort();
+
+    let mut results = Vec::with_capacity(names.len());
+    for name in names {
+        let Some(source) = state.sources.get(&name).cloned() else {
+            // Race: a source got removed mid-iteration. Skip silently.
+            continue;
+        };
+        let lock = state.locks.source_lock(&name);
+        if lock.try_lock().is_err() {
+            results.push(ManualPollResponse {
+                source: name,
+                triggered: false,
+                skipped: true,
+            });
+            continue;
+        }
+        let db = state.db.clone();
+        let metadata = state.metadata.clone();
+        let ingestion = state.ingestion.clone();
+        let locks = state.locks.clone();
+        let spawned: Arc<dyn td_source::DiscoverySource> = source;
+        tokio::spawn(async move {
+            poll_source::run_tick(spawned, db, metadata, ingestion, locks).await;
+        });
+        results.push(ManualPollResponse {
+            source: name,
+            triggered: true,
+            skipped: false,
+        });
+    }
+
+    Ok(Json(PollAllResponse { results }))
 }

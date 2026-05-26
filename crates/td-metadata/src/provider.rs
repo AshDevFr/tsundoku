@@ -52,4 +52,13 @@ pub trait MetadataProvider: Send + Sync {
     async fn refresh_cache(&self) -> MetadataResult<RefreshSummary> {
         Ok(RefreshSummary::not_supported(self.id()))
     }
+
+    /// Whether an offline cache (dump, on-disk index, etc.) is currently
+    /// loaded and ready to serve reads. Reported by the admin UI so the
+    /// operator can tell at a glance whether a provider is hitting disk or
+    /// going straight to the network. Providers with no offline path return
+    /// the default `false`.
+    async fn offline_cache_loaded(&self) -> bool {
+        false
+    }
 }

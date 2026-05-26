@@ -34,6 +34,8 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
         ingestion: cfg.ingestion.clone(),
         auth: Arc::new(cfg.auth.clone()),
         locks,
+        sources_config: Arc::new(cfg.sources.clone()),
+        providers_config: Arc::new(cfg.providers.clone()),
     };
     let app = td_api::router(state, &cfg);
 

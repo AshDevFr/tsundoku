@@ -231,6 +231,10 @@ impl MetadataProvider for MangabakaProvider {
         Ok(api_hit)
     }
 
+    async fn offline_cache_loaded(&self) -> bool {
+        self.offline.read().await.is_some()
+    }
+
     async fn refresh_cache(&self) -> MetadataResult<RefreshSummary> {
         let Some(dump_url) = self.dump_url.as_deref() else {
             return Ok(RefreshSummary::not_supported(PROVIDER_ID));
@@ -340,6 +344,20 @@ mod tests {
         clean.dump_url = None;
         let s = clean.refresh_cache().await.unwrap();
         assert!(matches!(s.status, RefreshStatus::NotSupported));
+    }
+
+    #[tokio::test]
+    async fn offline_cache_loaded_reports_false_when_no_dump_on_disk() {
+        let cfg = MangabakaProviderConfig {
+            api_key: None,
+            api_fallback: false,
+            ..Default::default()
+        };
+        let provider =
+            MangabakaProvider::from_config(&cfg, PathBuf::from("/tmp/td-test-offline-loaded"))
+                .await
+                .unwrap();
+        assert!(!provider.offline_cache_loaded().await);
     }
 
     #[test]

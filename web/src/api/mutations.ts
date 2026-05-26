@@ -67,3 +67,74 @@ export function useRetryRelease() {
     onSuccess: () => invalidateReleaseQueries(qc),
   });
 }
+
+function invalidateSourceQueries(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["sources"] });
+  qc.invalidateQueries({ queryKey: ["stats"] });
+}
+
+function invalidateProviderQueries(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["providers"] });
+  qc.invalidateQueries({ queryKey: ["stats"] });
+}
+
+export function usePollSource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string) => {
+      const { data, error } = await api.POST("/api/v1/sources/{name}/poll", {
+        params: { path: { name } },
+      });
+      if (error) throw new Error(describeError(error, "failed to poll source"));
+      return data;
+    },
+    onSuccess: () => invalidateSourceQueries(qc),
+  });
+}
+
+export function usePollAllSources() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST("/api/v1/sources/poll-all", {});
+      if (error)
+        throw new Error(describeError(error, "failed to poll sources"));
+      return data;
+    },
+    onSuccess: () => invalidateSourceQueries(qc),
+  });
+}
+
+export function useRefreshProvider() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data, error } = await api.POST(
+        "/api/v1/providers/{id}/refresh-cache",
+        {
+          params: { path: { id } },
+        },
+      );
+      if (error)
+        throw new Error(describeError(error, "failed to refresh provider"));
+      return data;
+    },
+    onSuccess: () => invalidateProviderQueries(qc),
+  });
+}
+
+export function useRefreshAllProviders() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/api/v1/providers/refresh-all",
+        {},
+      );
+      if (error)
+        throw new Error(describeError(error, "failed to refresh providers"));
+      return data;
+    },
+    onSuccess: () => invalidateProviderQueries(qc),
+  });
+}

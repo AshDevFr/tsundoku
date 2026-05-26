@@ -49,6 +49,17 @@ export function AppShell({ children }: { children: ReactNode }) {
               >
                 {reviewCount > 0 ? `${reviewCount} to review` : "review"}
               </Badge>
+              <Badge
+                component={Link}
+                to="/admin"
+                color="grape"
+                variant="default"
+                radius="sm"
+                style={{ cursor: "pointer", textDecoration: "none" }}
+                aria-label="Admin"
+              >
+                admin
+              </Badge>
               {stats.data?.activeProvider && (
                 <Badge variant="default" radius="sm">
                   {stats.data.activeProvider}

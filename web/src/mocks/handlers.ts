@@ -191,10 +191,40 @@ export const handlers = [
               "https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz",
             bytesDownloaded: 476_000_000,
           },
+          config: {
+            apiFallback: true,
+            apiKeySet: true,
+            apiBaseUrl: "https://api.mangabaka.dev",
+            offlineDumpUrl:
+              "https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz",
+            offlineDumpConfigured: true,
+            offlineCacheLoaded: true,
+            offlineRefreshCron: "0 4 * * *",
+            negativeCacheTtlDays: 7,
+            timeoutSeconds: 60,
+          },
         },
       ],
     }),
   ),
+
+  http.post("/api/v1/providers/refresh-all", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({
+      results: [{ provider: "mangabaka", triggered: true, skipped: false }],
+    });
+  }),
+
+  http.post("/api/v1/providers/:id/refresh-cache", ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({
+      provider: String(params.id),
+      triggered: true,
+      skipped: false,
+    });
+  }),
 
   http.get("/api/v1/sources", () =>
     HttpResponse.json({
@@ -206,10 +236,42 @@ export const handlers = [
           lastSuccessAt: NOW - 600,
           lastError: null,
           lastSummary: "75 new releases",
+          config: {
+            enabled: true,
+            cron: "*/30 * * * *",
+            feedUrl: "https://nyaa.si/?page=rss&c=3_1&f=2",
+            fetchDetails: false,
+            timeoutSeconds: 30,
+            siteBaseUrl: "https://nyaa.si",
+          },
         },
       ],
     }),
   ),
+
+  http.post("/api/v1/sources/poll-all", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({
+      results: [
+        {
+          source: "english-manga-trusted",
+          triggered: true,
+          skipped: false,
+        },
+      ],
+    });
+  }),
+
+  http.post("/api/v1/sources/:name/poll", ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({
+      source: String(params.name),
+      triggered: true,
+      skipped: false,
+    });
+  }),
 
   http.get("/api/v1/series", ({ request }) => {
     const url = new URL(request.url);

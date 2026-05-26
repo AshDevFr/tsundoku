@@ -31,10 +31,12 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/releases/{id}/reject", post(releases::reject))
         .route("/releases/{id}/retry", post(releases::retry))
         .route("/sources/{name}/poll", post(sources::poll))
+        .route("/sources/poll-all", post(sources::poll_all))
         .route(
             "/providers/{id}/refresh-cache",
             post(providers::refresh_cache),
         )
+        .route("/providers/refresh-all", post(providers::refresh_all))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             auth::require_admin,

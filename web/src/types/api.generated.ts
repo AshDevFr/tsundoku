@@ -41,6 +41,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/providers/refresh-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fan-out cache refresh for every registered provider. Returns a per-id
+         *     triggered/skipped breakdown so the admin UI can render each result.
+         */
+        post: operations["refresh_all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers/{id}/refresh-cache": {
         parameters: {
             query?: never;
@@ -234,6 +254,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sources/poll-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fan-out trigger for every registered source. Returns a per-source
+         *     triggered/skipped result without aggregating: callers see the same
+         *     per-source outcomes a series of single-source calls would have produced.
+         */
+        post: operations["poll_all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sources/{name}/poll": {
         parameters: {
             query?: never;
@@ -308,6 +349,9 @@ export interface components {
             source: string;
             triggered: boolean;
         };
+        PollAllResponse: {
+            results: components["schemas"]["ManualPollResponse"][];
+        };
         ProviderCacheState: {
             /** Format: int64 */
             bytesDownloaded?: number | null;
@@ -318,14 +362,41 @@ export interface components {
             recordCount?: number | null;
             sourceUrl?: string | null;
         };
+        /**
+         * @description Per-provider config exposed to the admin UI. The api_key is reported as
+         *     a boolean only; the raw value never leaves the process.
+         */
+        ProviderConfigDto: {
+            apiBaseUrl: string;
+            apiFallback: boolean;
+            /**
+             * @description `true` when an api_key is configured (any non-empty value). The
+             *     actual key never appears in JSON; that's the whole point of stashing
+             *     it in `.env`.
+             */
+            apiKeySet: boolean;
+            /** Format: int32 */
+            negativeCacheTtlDays: number;
+            /** @description Runtime: whether the on-disk dump is currently loaded. */
+            offlineCacheLoaded: boolean;
+            offlineDumpConfigured: boolean;
+            offlineDumpUrl?: string | null;
+            offlineRefreshCron?: string | null;
+            /** Format: int32 */
+            timeoutSeconds: number;
+        };
         ProviderDto: {
             active: boolean;
+            config?: null | components["schemas"]["ProviderConfigDto"];
             displayName: string;
             id: string;
             lastRefresh?: null | components["schemas"]["ProviderCacheState"];
         };
         ProviderList: {
             items: components["schemas"]["ProviderDto"][];
+        };
+        RefreshAllResponse: {
+            results: components["schemas"]["RefreshResponse"][];
         };
         RefreshResponse: {
             provider: string;
@@ -442,7 +513,27 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
+        /**
+         * @description Operator-facing snapshot of the per-source config (the bits visible in
+         *     `[[sources]]` and any kind-specific nested options). Never carries
+         *     secrets; the source layer doesn't have any in v1.
+         */
+        SourceConfigDto: {
+            cron?: string | null;
+            enabled: boolean;
+            /**
+             * @description Feed URL for the source kind. Empty when the kind doesn't define one
+             *     (every kind today does, so this is informational future-proofing).
+             */
+            feedUrl: string;
+            fetchDetails: boolean;
+            /** @description Override for the site base URL. Useful when the feed is proxied. */
+            siteBaseUrl?: string | null;
+            /** Format: int32 */
+            timeoutSeconds: number;
+        };
         SourceDto: {
+            config?: null | components["schemas"]["SourceConfigDto"];
             kind: string;
             lastError?: string | null;
             /** Format: int64 */
@@ -525,6 +616,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderList"];
+                };
+            };
+        };
+    };
+    refresh_all: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefreshAllResponse"];
                 };
             };
         };
@@ -819,6 +929,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceList"];
+                };
+            };
+        };
+    };
+    poll_all: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PollAllResponse"];
                 };
             };
         };

@@ -5,6 +5,7 @@ import {
   Outlet,
 } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
+import { AdminPage } from "@/pages/AdminPage";
 import { FeedPage } from "@/pages/FeedPage";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { SeriesDetailPage } from "@/pages/SeriesDetailPage";
@@ -51,10 +52,17 @@ export const reviewRoute = createRoute({
   component: ReviewPage,
 });
 
+export const adminRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/admin",
+  component: AdminPage,
+});
+
 const routeTree = rootRoute.addChildren([
   feedRoute,
   seriesDetailRoute,
   reviewRoute,
+  adminRoute,
 ]);
 
 export const router = createRouter({ routeTree });
