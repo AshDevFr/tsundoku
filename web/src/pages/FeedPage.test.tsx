@@ -41,6 +41,9 @@ function makeTestRouter(initialPath: string) {
             : raw.owned === "false"
               ? false
               : undefined;
+      if (typeof raw.q === "string" && raw.q.trim()) out.q = raw.q;
+      if (raw.view === "list") out.view = "list";
+      else if (raw.view === "card") out.view = "card";
       return out;
     },
   });
@@ -126,6 +129,59 @@ describe("FeedPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(/Save filter preset/i)).toBeInTheDocument();
+  });
+
+  it("filters the results when a URL q= is present", async () => {
+    renderWithProviders("/?q=chainsaw");
+    expect(
+      await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Solo Leveling")).not.toBeInTheDocument();
+    expect(screen.getByText("1 match")).toBeInTheDocument();
+  });
+
+  it("debounces the search input and refetches with the new q", async () => {
+    const { router } = renderWithProviders("/");
+    await screen.findByText("Chainsaw Man");
+    const input = screen.getByTestId("feed-search-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "solo" } });
+    // Input mirrors the typed value immediately…
+    expect(input.value).toBe("solo");
+    // …and the URL picks it up after the debounce window.
+    await waitFor(
+      () => {
+        expect(
+          (router.state.location.search as Record<string, unknown>).q,
+        ).toBe("solo");
+      },
+      { timeout: 1500 },
+    );
+    await waitFor(
+      () => {
+        expect(screen.getByText("1 match")).toBeInTheDocument();
+      },
+      { timeout: 1500 },
+    );
+    expect(screen.queryByText("Chainsaw Man")).not.toBeInTheDocument();
+  });
+
+  it("toggles between card and list views via the URL view= param", async () => {
+    const { router } = renderWithProviders("/");
+    await screen.findByText("Chainsaw Man");
+    expect(screen.queryByTestId("feed-list-view")).not.toBeInTheDocument();
+    const toggle = screen.getByTestId("feed-view-toggle");
+    // SegmentedControl renders one input[type=radio] per option; click the
+    // "List" label to flip it.
+    fireEvent.click(within(toggle).getByText("List"));
+    await waitFor(() => {
+      expect(
+        (router.state.location.search as Record<string, unknown>).view,
+      ).toBe("list");
+    });
+    expect(
+      await screen.findByTestId("feed-list-view", undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("series-row-1")).toBeInTheDocument();
   });
 });
 

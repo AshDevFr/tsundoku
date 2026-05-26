@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Box,
   Button,
+  CloseButton,
   Group,
   Menu,
   Modal,
@@ -14,11 +15,13 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
-import { useDisclosure } from "@mantine/hooks";
+import { useDebouncedCallback, useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useGenres, useTags } from "@/api/queries";
 import { type FilterSearch, useFilterPresets } from "@/stores/filters";
+
+const SEARCH_DEBOUNCE_MS = 250;
 
 interface FilterPanelProps {
   search: FilterSearch;
@@ -54,11 +57,25 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
   const deletePreset = useFilterPresets((s) => s.deletePreset);
   const [saveOpen, { open: openSave, close: closeSave }] = useDisclosure(false);
   const [presetName, setPresetName] = useState("");
+  // Local mirror of the URL `q` so the input stays responsive while the
+  // debounced commit catches up. Initialized from the URL and re-synced
+  // when navigation changes `q` externally (e.g. preset apply, clear).
+  const [qDraft, setQDraft] = useState(search.q ?? "");
+  useEffect(() => {
+    setQDraft(search.q ?? "");
+  }, [search.q]);
   const genres = useGenres();
   const tags = useTags();
 
   const merge = (patch: Partial<FilterSearch>) =>
     onChange({ ...search, ...patch, page: 1 });
+
+  const commitQ = useDebouncedCallback((next: string) => {
+    const trimmed = next.trim();
+    const current = search.q?.trim() ?? "";
+    if (trimmed === current) return;
+    onChange({ ...search, q: trimmed || undefined, page: 1 });
+  }, SEARCH_DEBOUNCE_MS);
 
   const clearAll = () =>
     onChange({ sort: search.sort, order: search.order, page: 1 });
@@ -68,6 +85,7 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     Boolean(search.status) ||
     Boolean(search.genre) ||
     Boolean(search.tag) ||
+    Boolean(search.q) ||
     typeof search.owned === "boolean";
 
   const genreOptions = (genres.data?.items ?? []).map((i) => ({
@@ -142,6 +160,30 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
             </Button>
           </Group>
         </Group>
+
+        <TextInput
+          label="Search"
+          placeholder="Title or author…"
+          value={qDraft}
+          onChange={(e) => {
+            const next = e.currentTarget.value;
+            setQDraft(next);
+            commitQ(next);
+          }}
+          rightSection={
+            qDraft ? (
+              <CloseButton
+                size="sm"
+                aria-label="Clear search"
+                onClick={() => {
+                  setQDraft("");
+                  commitQ("");
+                }}
+              />
+            ) : null
+          }
+          data-testid="feed-search-input"
+        />
 
         <Select
           label="Kind"

@@ -20,6 +20,10 @@ export interface FilterSearch {
   sort?: string;
   order?: string;
   page?: number;
+  /// Free-text search query. Whitespace-only treated as absent.
+  q?: string;
+  /// View mode for the results grid: `card` (default) or `list`.
+  view?: "card" | "list";
 }
 
 interface PresetState {

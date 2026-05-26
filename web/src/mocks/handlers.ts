@@ -560,6 +560,7 @@ export const handlers = [
     const owned = url.searchParams.get("owned");
     const genre = url.searchParams.get("genre");
     const tag = url.searchParams.get("tag");
+    const q = url.searchParams.get("q");
     const page = Number(url.searchParams.get("page") ?? "1");
     const pageSize = Number(url.searchParams.get("pageSize") ?? "24");
 
@@ -578,6 +579,17 @@ export const handlers = [
       const needle = tag.toLowerCase();
       filtered = filtered.filter((s) =>
         s.tags.some((t) => t.toLowerCase() === needle),
+      );
+    }
+    // Loose substring match against canonical + alternate titles. The
+    // real backend reranks by Dice; for the mock we just need *some*
+    // q-aware filtering so tests can assert it round-trips.
+    if (q?.trim()) {
+      const needle = q.trim().toLowerCase();
+      filtered = filtered.filter(
+        (s) =>
+          s.canonicalTitle.toLowerCase().includes(needle) ||
+          s.alternateTitles.some((t) => t.toLowerCase().includes(needle)),
       );
     }
 

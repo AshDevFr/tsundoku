@@ -59,11 +59,15 @@ export interface SeriesFilters {
   order?: string;
   page?: number;
   pageSize?: number;
+  /// Free-text search query. Whitespace-only is treated as absent so the
+  /// server avoids the rerank pass for an effectively-empty query.
+  q?: string;
 }
 
 const DEFAULT_PAGE_SIZE = 24;
 
 export function useSeriesList(filters: SeriesFilters) {
+  const trimmedQ = filters.q?.trim();
   const query = {
     page: filters.page ?? 1,
     pageSize: filters.pageSize ?? DEFAULT_PAGE_SIZE,
@@ -74,6 +78,7 @@ export function useSeriesList(filters: SeriesFilters) {
     tag: filters.tag || undefined,
     sort: filters.sort || undefined,
     order: filters.order || undefined,
+    q: trimmedQ || undefined,
   };
   return useQuery({
     queryKey: ["series-list", query],

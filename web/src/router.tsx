@@ -45,6 +45,9 @@ export const feedRoute = createRoute({
     else if (raw.owned === false || raw.owned === "false") search.owned = false;
     const page = Number(raw.page);
     if (Number.isFinite(page) && page > 0) search.page = Math.floor(page);
+    if (typeof raw.q === "string" && raw.q.trim()) search.q = raw.q;
+    if (raw.view === "list") search.view = "list";
+    else if (raw.view === "card") search.view = "card";
     return search;
   },
 });
