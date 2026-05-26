@@ -22,6 +22,7 @@ td-db = { path = "../td-db" }
 td-metadata = { path = "../td-metadata" }
 td-metadata-mangabaka = { path = "../td-metadata-mangabaka" }
 td-resolution = { path = "../td-resolution" }
+td-scheduler = { path = "../td-scheduler" }
 td-source = { path = "../td-source" }
 td-source-nyaa = { path = "../td-source-nyaa" }
 

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
+use td_scheduler::{JobLocks, Scheduler, SchedulerContext};
 
 use crate::api;
 
@@ -13,6 +14,19 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     let db = td_db::connect(&cfg).await?;
     td_db::run_migrations(&db).await?;
 
+    let sources = Arc::new(crate::source_registry::build_registry(&cfg)?);
+    let metadata = Arc::new(crate::metadata::build_registry(&cfg).await?);
+
+    let ctx = SchedulerContext {
+        db: db.clone(),
+        sources: sources.clone(),
+        metadata: metadata.clone(),
+        ingestion: cfg.ingestion.clone(),
+        locks: Arc::new(JobLocks::default()),
+    };
+    let scheduler = Scheduler::build(&cfg, ctx).await?;
+    scheduler.start().await?;
+
     let state = Arc::new(api::AppState { db });
     let app = api::router(state, &cfg);
 
@@ -20,5 +34,10 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "listening");
     axum::serve(listener, app).await?;
+
+    // axum::serve returns when the listener is closed (Ctrl-C on most
+    // platforms). Drop the scheduler explicitly so any in-flight tick is
+    // cancelled before we exit.
+    drop(scheduler);
     Ok(())
 }

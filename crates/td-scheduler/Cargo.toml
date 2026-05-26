@@ -1,0 +1,27 @@
+[package]
+name = "td-scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Per-source and per-provider cron scheduler for tsundoku"
+
+[dependencies]
+td-config = { path = "../td-config" }
+td-db = { path = "../td-db" }
+td-metadata = { path = "../td-metadata" }
+td-resolution = { path = "../td-resolution" }
+td-source = { path = "../td-source" }
+
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+dashmap.workspace = true
+sea-orm.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+tokio-cron-scheduler.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+migration = { path = "../../migration" }
+tempfile = "3"

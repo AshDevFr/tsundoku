@@ -6,6 +6,7 @@ members = [
     "crates/td-metadata",
     "crates/td-metadata-mangabaka",
     "crates/td-resolution",
+    "crates/td-scheduler",
     "crates/td-source",
     "crates/td-source-nyaa",
     "migration",

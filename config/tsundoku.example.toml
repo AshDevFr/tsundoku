@@ -48,7 +48,7 @@ api_base_url           = "https://api.mangabaka.dev"
 # api_key              = "mb-..."
 # api_fallback         = true
 # offline_dump_url     = "https://..."        # leave unset to disable offline cache
-# offline_refresh_cron = "0 4 * * 0"          # weekly Sunday 04:00 UTC
+# offline_refresh_cron = "0 4 * * 0"          # weekly Sunday 04:00 UTC; 5-field is auto-padded to seconds-0
 negative_cache_ttl_days = 7
 timeout_seconds        = 60
 
@@ -87,7 +87,9 @@ queue_low_confidence  = true
 # [[sources]]
 # kind    = "nyaa"
 # name    = "english-manga-trusted"
-# cron    = "0 */2 * * *"     # every 2 hours; only used by the scheduler
+# cron    = "0 */2 * * *"     # every 2 hours; 5-field crons are auto-padded to seconds-0.
+                              # Omit to skip the scheduled poll; `tsundoku poll --source <name>`
+                              # still works as a one-shot.
 # enabled = true
 #   [sources.nyaa]
 #   feed_url        = "https://nyaa.si/?page=rss&c=3_1&f=2"
