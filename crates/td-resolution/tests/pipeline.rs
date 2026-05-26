@@ -160,6 +160,8 @@ async fn insert_release(
         volume_span_json: Set(None),
         chapter_span_json: Set(None),
         resolved_at: Set(None),
+        search_queries: Set(None),
+        cleanup_rules_applied: Set(None),
     };
     releases::Entity::insert(row).exec(db).await.unwrap();
     for f in formats {
@@ -433,6 +435,157 @@ async fn fuzzy_title_above_threshold_resolves() {
         .unwrap()
         .unwrap();
     assert_eq!(stored.resolution_status, "resolved");
+}
+
+#[tokio::test]
+async fn fuzzy_title_resolves_noisy_raw_title_via_cleaned_query() {
+    // Regression test for the original Solo Leveling failure: the raw
+    // nyaa title carries `(2021-2026) (Digital) (1r0n)` noise that, when
+    // Diced directly against the MangaBaka candidate, drops the score
+    // below the 0.85 threshold. After Phase B the cleaner produces
+    // "Solo Leveling" and Dice against THAT yields 1.0.
+    let db = fresh_db().await;
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let metadata = SeriesMetadata {
+        external_id: "77777".into(),
+        canonical_title: "Solo Leveling".into(),
+        alternate_titles: vec![],
+        kind: Some(SeriesKind::Manhwa),
+        status: None,
+        year: Some(2018),
+        cover_url: None,
+        external_url: None,
+        genres: vec![],
+        tags: vec![],
+        foreign_ids: vec![],
+        raw: serde_json::json!({"id": 77777}),
+        content_hash: "hash-77777".into(),
+    };
+    provider.register_get(metadata.clone());
+    // Provider answers searches keyed on the CLEANED query, not the raw
+    // title — that's what the resolver should send.
+    provider.register_search(
+        "Solo Leveling",
+        vec![SearchHit {
+            external_id: "77777".into(),
+            title: "Solo Leveling".into(),
+            year: Some(2018),
+            cover_url: None,
+            score: Some(0.99),
+        }],
+    );
+    let registry = build_registry(provider.clone());
+
+    insert_release(
+        &db,
+        "r-solo-fuzzy",
+        "Solo Leveling (2021-2026) (Digital) (1r0n)",
+        None,
+        &["cbz"],
+    )
+    .await;
+
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-solo-fuzzy").await.unwrap();
+    assert_eq!(out.path, Some(ResolutionPath::FuzzyTitle));
+    assert_eq!(
+        out.status,
+        td_resolution::ResolutionStatus::Resolved,
+        "expected auto-resolve after cleanup; got {out:?}"
+    );
+    let confidence = out.confidence.expect("confidence must be set");
+    assert!(
+        confidence >= 0.85,
+        "confidence should clear threshold once Dice runs against cleaned query; got {confidence}"
+    );
+
+    // Cleaned queries persisted alongside the resolved release.
+    let stored = releases::Entity::find_by_id("r-solo-fuzzy".to_string())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.resolution_status, "resolved");
+    let queries: Vec<String> =
+        serde_json::from_str(stored.search_queries.as_deref().unwrap_or("[]")).unwrap();
+    assert_eq!(queries, vec!["Solo Leveling".to_string()]);
+    let rules: Vec<String> =
+        serde_json::from_str(stored.cleanup_rules_applied.as_deref().unwrap_or("[]")).unwrap();
+    assert!(rules.contains(&"strip_parens".to_string()));
+}
+
+#[tokio::test]
+async fn fuzzy_title_with_multi_title_separator_searches_all_halves() {
+    // Multi-title separator case: raw release has English | romaji.
+    // Provider only knows the romaji half; the cleaner emits both, the
+    // resolver searches each, and the romaji match wins.
+    let db = fresh_db().await;
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let metadata = SeriesMetadata {
+        external_id: "88888".into(),
+        canonical_title: "Kamitachi ni Hirowareta Otoko".into(),
+        alternate_titles: vec!["By the Grace of the Gods".into()],
+        kind: Some(SeriesKind::Manga),
+        status: None,
+        year: None,
+        cover_url: None,
+        external_url: None,
+        genres: vec![],
+        tags: vec![],
+        foreign_ids: vec![],
+        raw: serde_json::json!({"id": 88888}),
+        content_hash: "hash-88888".into(),
+    };
+    provider.register_get(metadata.clone());
+    provider.register_search(
+        "Kamitachi ni Hirowareta Otoko",
+        vec![SearchHit {
+            external_id: "88888".into(),
+            title: "Kamitachi ni Hirowareta Otoko".into(),
+            year: None,
+            cover_url: None,
+            score: Some(0.99),
+        }],
+    );
+    // No registration for the English half — provider returns empty.
+
+    let registry = build_registry(provider.clone());
+    insert_release(
+        &db,
+        "r-multi",
+        "By the Grace of the Gods | Kamitachi ni Hirowareta Otoko",
+        None,
+        &["cbz"],
+    )
+    .await;
+
+    let resolver = make_resolver(&db, registry.clone(), ingestion_default());
+    let out = resolver.resolve_one("r-multi").await.unwrap();
+    assert_eq!(out.path, Some(ResolutionPath::FuzzyTitle));
+    assert_eq!(out.status, td_resolution::ResolutionStatus::Resolved);
+
+    // The provider saw both queries: the resolver searched each half.
+    let calls = provider.calls();
+    assert!(
+        calls.iter().any(|c| c.contains("Kamitachi")),
+        "expected romaji query; got {calls:?}"
+    );
+    assert!(
+        calls.iter().any(|c| c.contains("By the Grace")),
+        "expected English query; got {calls:?}"
+    );
+
+    let stored = releases::Entity::find_by_id("r-multi".to_string())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let queries: Vec<String> =
+        serde_json::from_str(stored.search_queries.as_deref().unwrap_or("[]")).unwrap();
+    assert_eq!(queries.len(), 2);
+    let rules: Vec<String> =
+        serde_json::from_str(stored.cleanup_rules_applied.as_deref().unwrap_or("[]")).unwrap();
+    assert!(rules.contains(&"split_alternates".to_string()));
 }
 
 #[tokio::test]

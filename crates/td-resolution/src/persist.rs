@@ -196,6 +196,29 @@ pub async fn upsert_series_from_metadata(
     })
 }
 
+/// Stamp the title cleaner's output onto the release. Runs once per
+/// resolve cycle regardless of which step ultimately matches (or none) —
+/// the review UI surfaces the cleaned queries + applied rule names even
+/// for releases that resolved via foreign-id, so the operator can see
+/// what *would* have been searched.
+pub async fn persist_search_queries(
+    db: &DatabaseConnection,
+    release_id: &str,
+    queries: &[String],
+    rules_applied: &[String],
+) -> Result<()> {
+    let queries_json = serde_json::to_string(queries)?;
+    let rules_json = serde_json::to_string(rules_applied)?;
+    let model = releases::ActiveModel {
+        id: Set(release_id.to_string()),
+        search_queries: Set(Some(queries_json)),
+        cleanup_rules_applied: Set(Some(rules_json)),
+        ..Default::default()
+    };
+    releases::Entity::update(model).exec(db).await?;
+    Ok(())
+}
+
 /// Resolve the link between a release and its series. Writes
 /// `series_id`, `resolution_path`, `resolution_confidence`,
 /// `resolution_status`, bumps `resolution_attempts`, and sets
@@ -510,6 +533,8 @@ mod tests {
             volume_span_json: Set(None),
             chapter_span_json: Set(None),
             resolved_at: Set(None),
+            search_queries: Set(None),
+            cleanup_rules_applied: Set(None),
         };
         releases::Entity::insert(row).exec(&db).await.unwrap();
 

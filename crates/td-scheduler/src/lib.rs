@@ -30,6 +30,7 @@ use sea_orm::DatabaseConnection;
 use td_config::{AppConfig, IngestionConfig};
 use td_metadata::MetadataRegistry;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
+use td_resolution::query_builder::QueryBuilder;
 use td_source::SourceRegistry;
 use tokio::sync::Mutex;
 use tokio_cron_scheduler::JobScheduler;
@@ -67,6 +68,10 @@ pub struct SchedulerContext {
     pub metadata: Arc<MetadataRegistry>,
     pub ingestion: IngestionConfig,
     pub locks: Arc<JobLocks>,
+    /// Title cleaner shared across every poll-tick resolver. Built once
+    /// at startup from the built-in keyword list plus
+    /// `ingestion.cleanup.extra_format_keywords`.
+    pub query_builder: Arc<QueryBuilder>,
     /// Optional MangaUpdates redirect resolver. When configured, the
     /// resolver translates legacy `series.html?id=NNN` IDs into modern
     /// alphanumeric slugs before the foreign-id lookup step. `None` in
@@ -117,6 +122,7 @@ impl Scheduler {
                 ctx.metadata.clone(),
                 ctx.ingestion.clone(),
                 ctx.locks.clone(),
+                ctx.query_builder.clone(),
                 ctx.mangaupdates_redirector.clone(),
             )?;
             inner

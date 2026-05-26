@@ -22,16 +22,18 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   useLinkRelease,
   useRejectRelease,
   useRetryRelease,
 } from "@/api/mutations";
 import {
+  type ProviderSearchHit,
   type ReleaseDto,
   type ReviewCandidateDto,
   type UnresolvedRelease,
+  useProviderSearch,
   useProviders,
   useUnresolvedReleases,
 } from "@/api/queries";
@@ -182,6 +184,10 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
     <Paper withBorder radius="md" p="md" data-testid={`review-card-${item.id}`}>
       <Stack gap="sm">
         <ReleaseHeader release={item} />
+        <CleanupTrail
+          queries={item.searchQueries}
+          rules={item.cleanupRulesApplied}
+        />
         <CandidateList
           candidates={item.candidates}
           disabled={busy}
@@ -195,7 +201,7 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
               onClick={openManual}
               disabled={busy}
             >
-              Link by external ID
+              Search provider
             </Button>
           </Group>
           <Group gap="xs">
@@ -223,12 +229,63 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
         </Group>
       </Stack>
 
-      <ManualLinkModal
+      <ProviderSearchModal
         opened={manualOpen}
         onClose={closeManual}
         releaseId={item.id}
+        seedQuery={item.searchQueries[0] ?? item.title}
       />
     </Paper>
+  );
+}
+
+/// Diagnostic strip: shows the cleaned primary search query (with any
+/// alternates as small chips) and the rule names that fired during
+/// cleanup. Surfaces "what surgery happened" without expanding to a
+/// debug pane.
+function CleanupTrail({
+  queries,
+  rules,
+}: {
+  queries: string[];
+  rules: string[];
+}) {
+  if (queries.length === 0 && rules.length === 0) {
+    return null;
+  }
+  return (
+    <Stack gap={4} data-testid="cleanup-trail">
+      {queries.length > 0 && (
+        <Group gap={6} wrap="wrap">
+          <Text size="xs" c="dimmed" tt="uppercase" fw={500}>
+            searched
+          </Text>
+          <Text size="xs" ff="monospace">
+            “{queries[0]}”
+          </Text>
+          {queries.slice(1).map((q) => (
+            <Badge key={q} size="xs" variant="light" color="gray">
+              {q}
+            </Badge>
+          ))}
+        </Group>
+      )}
+      {rules.length > 0 && (
+        <Group gap={4} wrap="wrap">
+          {rules.map((r) => (
+            <Badge
+              key={r}
+              size="xs"
+              variant="outline"
+              color="grape"
+              ff="monospace"
+            >
+              {r}
+            </Badge>
+          ))}
+        </Group>
+      )}
+    </Stack>
   );
 }
 
@@ -371,19 +428,48 @@ function CandidateList({
   );
 }
 
-function ManualLinkModal({
+/// Modal for linking a review-queue release to a provider series. Two
+/// paths share one UI:
+///
+/// - Paste an external ID → exact lookup, single result, one click.
+/// - Type a title → debounced search, scrollable result list,
+///   click-to-link.
+///
+/// External ID takes priority when both are filled; the helper text
+/// makes that explicit.
+function ProviderSearchModal({
   opened,
   onClose,
   releaseId,
+  seedQuery,
 }: {
   opened: boolean;
   onClose: () => void;
   releaseId: string;
+  seedQuery: string;
 }) {
   const providers = useProviders();
   const link = useLinkRelease();
   const [provider, setProvider] = useState<string | null>(null);
+  const [title, setTitle] = useState(seedQuery);
   const [externalId, setExternalId] = useState("");
+  // Debounce the title input so each keystroke doesn't fire a search.
+  const [debouncedTitle, setDebouncedTitle] = useState(seedQuery);
+
+  // Reset state when the modal opens against a new release.
+  useEffect(() => {
+    if (opened) {
+      setTitle(seedQuery);
+      setDebouncedTitle(seedQuery);
+      setExternalId("");
+      setProvider(null);
+    }
+  }, [opened, seedQuery]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebouncedTitle(title), 300);
+    return () => window.clearTimeout(handle);
+  }, [title]);
 
   const options =
     providers.data?.items.map((p) => ({
@@ -398,22 +484,26 @@ function ManualLinkModal({
 
   const effectiveProvider = provider ?? activeId;
 
-  const submit = () => {
-    const trimmedId = externalId.trim();
-    if (!effectiveProvider || !trimmedId) return;
+  const search = useProviderSearch({
+    providerId: effectiveProvider,
+    q: debouncedTitle,
+    externalId,
+    enabled: opened,
+  });
+
+  const handleLink = (chosenExternalId: string, displayLabel: string) => {
+    if (!effectiveProvider) return;
     link.mutate(
       {
         releaseId,
-        body: { provider: effectiveProvider, externalId: trimmedId },
+        body: { provider: effectiveProvider, externalId: chosenExternalId },
       },
       {
         onSuccess: () => {
           notifications.show({
             color: "green",
-            message: `Linked via ${effectiveProvider}:${trimmedId}`,
+            message: `Linked to ${displayLabel}`,
           });
-          setExternalId("");
-          setProvider(null);
           onClose();
         },
         onError: (e) => {
@@ -431,21 +521,11 @@ function ManualLinkModal({
     <Modal
       opened={opened}
       onClose={onClose}
-      title="Link by external ID"
+      title="Search provider"
+      size="lg"
       centered
     >
-      <Stack>
-        <Text size="sm" c="dimmed">
-          Pick a provider and paste its external ID. If no
-          <Text span ff="monospace" mx={4}>
-            series_external_ids
-          </Text>
-          row exists yet, the provider's
-          <Text span ff="monospace" mx={4}>
-            get
-          </Text>
-          is called to fetch metadata and create the series row.
-        </Text>
+      <Stack gap="md">
         <Select
           label="Provider"
           data={options}
@@ -456,27 +536,145 @@ function ManualLinkModal({
         />
         <TextInput
           label="External ID"
-          placeholder="e.g. 1677"
+          description="Paste a provider ID to look up directly (takes priority over title)"
+          placeholder="e.g. 12345"
           value={externalId}
           onChange={(e) => setExternalId(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-          }}
-          data-testid="manual-external-id"
+          data-testid="search-external-id"
         />
+        <TextInput
+          label="Title"
+          placeholder="Search by series title"
+          value={title}
+          onChange={(e) => setTitle(e.currentTarget.value)}
+          disabled={externalId.trim().length > 0}
+          data-testid="search-title"
+        />
+
+        <SearchResults
+          hits={search.data?.hits ?? []}
+          loading={search.isFetching}
+          enabled={Boolean(
+            effectiveProvider && (debouncedTitle.trim() || externalId.trim()),
+          )}
+          disabled={link.isPending}
+          onPick={handleLink}
+        />
+
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            onClick={submit}
-            loading={link.isPending}
-            disabled={!effectiveProvider || !externalId.trim()}
-          >
-            Link release
+            Close
           </Button>
         </Group>
       </Stack>
     </Modal>
+  );
+}
+
+function SearchResults({
+  hits,
+  loading,
+  enabled,
+  disabled,
+  onPick,
+}: {
+  hits: ProviderSearchHit[];
+  loading: boolean;
+  enabled: boolean;
+  disabled: boolean;
+  onPick: (externalId: string, displayLabel: string) => void;
+}) {
+  if (!enabled) {
+    return (
+      <Text size="xs" c="dimmed">
+        Enter a title or external ID above to search.
+      </Text>
+    );
+  }
+  if (loading && hits.length === 0) {
+    return (
+      <Center py="md">
+        <Loader size="sm" />
+      </Center>
+    );
+  }
+  if (hits.length === 0) {
+    return (
+      <Text size="xs" c="dimmed">
+        No results.
+      </Text>
+    );
+  }
+  return (
+    <Stack gap={6} data-testid="search-results">
+      <Text size="xs" fw={500} c="dimmed" tt="uppercase">
+        {hits.length} result{hits.length === 1 ? "" : "s"}
+      </Text>
+      <Stack gap={6} mah={400} style={{ overflowY: "auto" }}>
+        {hits.map((h) => (
+          <Card
+            key={`${h.externalId}-${h.title}`}
+            withBorder
+            padding="xs"
+            radius="sm"
+            data-testid={`search-hit-${h.externalId}`}
+          >
+            <Group justify="space-between" wrap="nowrap" align="center">
+              <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+                <Box w={42} miw={42} h={56}>
+                  <Image
+                    src={h.coverUrl ?? CANDIDATE_PLACEHOLDER}
+                    fallbackSrc={CANDIDATE_PLACEHOLDER}
+                    alt={h.title}
+                    radius="sm"
+                    h={56}
+                    fit="cover"
+                  />
+                </Box>
+                <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+                  <Text size="sm" fw={500} lineClamp={1} title={h.title}>
+                    {h.title}
+                  </Text>
+                  {h.nativeTitle && (
+                    <Text size="xs" c="dimmed" lineClamp={1}>
+                      {h.nativeTitle}
+                    </Text>
+                  )}
+                  <Group gap={6} wrap="wrap">
+                    <Badge size="xs" variant="default">
+                      score {h.score.toFixed(2)}
+                    </Badge>
+                    {h.year && (
+                      <Badge size="xs" variant="light" color="gray">
+                        {h.year}
+                      </Badge>
+                    )}
+                    {h.kind && (
+                      <Badge size="xs" variant="light" color="indigo">
+                        {h.kind}
+                      </Badge>
+                    )}
+                    {h.status && (
+                      <Badge size="xs" variant="light" color="teal">
+                        {h.status}
+                      </Badge>
+                    )}
+                  </Group>
+                </Stack>
+              </Group>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => onPick(h.externalId, h.title)}
+                disabled={disabled}
+                data-testid={`link-hit-${h.externalId}`}
+              >
+                Link
+              </Button>
+            </Group>
+          </Card>
+        ))}
+      </Stack>
+    </Stack>
   );
 }

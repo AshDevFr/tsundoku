@@ -20,6 +20,15 @@ use td_source::{
 pub struct StubProvider {
     pub id: &'static str,
     pub returns: Option<SeriesMetadata>,
+    /// Hits returned verbatim by every `search()` call. Tests that
+    /// exercise the search endpoint set this; default-built stubs
+    /// continue to return empty.
+    pub search_hits: Vec<SearchHit>,
+    /// Per-external-id metadata. When set, `get()` looks the id up in
+    /// this map first (falling back to `returns` on miss). Lets the
+    /// search-endpoint tests register multiple candidates with
+    /// distinct metadata.
+    pub get_table: std::collections::HashMap<String, SeriesMetadata>,
 }
 
 #[async_trait]
@@ -30,11 +39,14 @@ impl MetadataProvider for StubProvider {
     fn display_name(&self) -> &str {
         "Stub"
     }
-    async fn get(&self, _external_id: &str) -> MetadataResult<Option<SeriesMetadata>> {
+    async fn get(&self, external_id: &str) -> MetadataResult<Option<SeriesMetadata>> {
+        if let Some(m) = self.get_table.get(external_id) {
+            return Ok(Some(m.clone()));
+        }
         Ok(self.returns.clone())
     }
     async fn search(&self, _query: &str, _limit: u32) -> MetadataResult<Vec<SearchHit>> {
-        Ok(Vec::new())
+        Ok(self.search_hits.clone())
     }
     async fn refresh_cache(&self) -> MetadataResult<RefreshSummary> {
         let now = chrono::Utc::now();
@@ -135,6 +147,7 @@ pub fn build_app_full(
         locks,
         sources_config: Arc::new(sources_config),
         providers_config: Arc::new(providers_config),
+        query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
     };
     td_api::router(state, &cfg)

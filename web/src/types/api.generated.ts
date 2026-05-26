@@ -187,6 +187,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/providers/{id}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Title-or-externalId search against a single provider. Powers the
+         *     review-queue "Link release" modal.
+         * @description - `?externalId=<id>` — direct lookup via `MetadataProvider::get`.
+         *     - `?q=<title>` — `MetadataProvider::search`, then enrichment via
+         *       `get` on the top N hits and Dice-rescoring against `q`.
+         *     - both empty → `400 Bad Request`.
+         *     - unknown `id` → `404 Not Found`.
+         */
+        get: operations["search_provider"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/releases": {
         parameters: {
             query?: never;
@@ -585,6 +610,33 @@ export interface components {
             /** Format: int64 */
             totalRuns: number;
         };
+        /**
+         * @description One enriched hit. `score` is Dice(`q`, `title`) for the title-search
+         *     path, or `1.0` for the externalId short-circuit path.
+         */
+        ProviderSearchHit: {
+            coverUrl?: string | null;
+            externalId: string;
+            externalUrl?: string | null;
+            genres: string[];
+            kind?: string | null;
+            /**
+             * @description First alternate title, if any. Useful for showing the
+             *     romaji/Japanese form alongside the canonical English title.
+             */
+            nativeTitle?: string | null;
+            /** Format: float */
+            score: number;
+            status?: string | null;
+            tags: string[];
+            title: string;
+            /** Format: int32 */
+            year?: number | null;
+        };
+        ProviderSearchResponse: {
+            hits: components["schemas"]["ProviderSearchHit"][];
+            provider: string;
+        };
         RefreshAllResponse: {
             results: components["schemas"]["RefreshResponse"][];
         };
@@ -882,6 +934,18 @@ export interface components {
         };
         UnresolvedRelease: components["schemas"]["ReleaseDto"] & {
             candidates: components["schemas"]["ReviewCandidateDto"][];
+            /**
+             * @description Stable rule names that fired during cleanup (e.g. `strip_parens`,
+             *     `split_alternates`). Rendered as badge chips on the review card.
+             */
+            cleanupRulesApplied: string[];
+            /**
+             * @description Search queries the title cleaner produced for this release
+             *     (longest-first). Empty when the release predates the cleaner or
+             *     failed to persist; the next resolve cycle backfills.
+             */
+            searchQueries: string[];
+            topCandidate?: null | components["schemas"]["ReviewCandidateDto"];
         };
     };
     responses: never;
@@ -1122,6 +1186,56 @@ export interface operations {
                 };
             };
             /** @description No provider with that id registered */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    search_provider: {
+        parameters: {
+            query?: {
+                /** @description Free-text title query. Trimmed before use; ignored when empty. */
+                q?: string;
+                /**
+                 * @description Direct provider external-id lookup. When set, the handler short-
+                 *     circuits to `MetadataProvider::get` and returns at most one hit
+                 *     with `score = 1.0`.
+                 */
+                externalId?: string;
+                /**
+                 * @description Maximum number of hits to enrich with full metadata. Defaults to
+                 *     10; clamped to `[1, 50]` to keep the per-request cost bounded.
+                 */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Provider id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderSearchResponse"];
+                };
+            };
+            /** @description Both q and externalId missing or empty */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown provider id */
             404: {
                 headers: {
                     [name: string]: unknown;

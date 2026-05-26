@@ -16,8 +16,8 @@ use crate::handlers::metrics::{
     SourceMetricsSummary, SourceMetricsSummaryItem, TimeToResolutionDto,
 };
 use crate::handlers::providers::{
-    ProviderCacheState, ProviderConfigDto, ProviderDto, ProviderList, RefreshAllResponse,
-    RefreshResponse,
+    ProviderCacheState, ProviderConfigDto, ProviderDto, ProviderList, ProviderSearchHit,
+    ProviderSearchResponse, RefreshAllResponse, RefreshResponse,
 };
 use crate::handlers::releases::{
     LinkRequest, ReleaseDto, ReleasePage, ReviewCandidateDto, UnresolvedPage, UnresolvedRelease,
@@ -54,6 +54,7 @@ use crate::handlers::{health, metrics, providers, releases, series, sources, sta
         providers::list,
         providers::refresh_cache,
         providers::refresh_all,
+        providers::search,
         tagging::list_genres,
         tagging::list_tags,
         metrics::sources_summary,
@@ -88,6 +89,8 @@ use crate::handlers::{health, metrics, providers, releases, series, sources, sta
         ProviderCacheState,
         RefreshResponse,
         RefreshAllResponse,
+        ProviderSearchHit,
+        ProviderSearchResponse,
         TagUsageDto,
         TagList,
         SourceMetricsSummary,

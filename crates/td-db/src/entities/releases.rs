@@ -32,6 +32,14 @@ pub struct Model {
     /// Set when `resolution_status` transitions to `resolved`. Anchors the
     /// time-to-resolution histogram surfaced on the admin metrics view.
     pub resolved_at: Option<i64>,
+    /// JSON array of search queries the title cleaner produced (longest
+    /// first). NULL on rows persisted before the cleaner shipped; the
+    /// next resolve cycle backfills.
+    pub search_queries: Option<String>,
+    /// JSON array of stable rule names that fired during title cleanup.
+    /// Surfaced as badge chips on the review card so the operator can
+    /// audit what surgery happened.
+    pub cleanup_rules_applied: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

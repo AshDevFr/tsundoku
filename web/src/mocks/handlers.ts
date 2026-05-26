@@ -105,6 +105,19 @@ const INITIAL_QUEUE: UnresolvedRelease[] = [
         reason: "fuzzy title (0.61)",
       },
     ],
+    searchQueries: ["Mystery Series"],
+    cleanupRulesApplied: [
+      "strip_brackets",
+      "strip_parens",
+      "strip_vol_compact",
+    ],
+    topCandidate: {
+      seriesId: 1,
+      seriesTitle: "Chainsaw Man",
+      seriesCoverUrl: null,
+      score: 0.72,
+      reason: "fuzzy title (0.72)",
+    },
   },
   {
     id: "nyaa:9002",
@@ -129,6 +142,9 @@ const INITIAL_QUEUE: UnresolvedRelease[] = [
     resolutionAttempts: 1,
     lastResolveAttemptAt: NOW - 6_000,
     candidates: [],
+    searchQueries: ["Unknown Title"],
+    cleanupRulesApplied: ["strip_brackets", "strip_vol_compact"],
+    topCandidate: null,
   },
 ];
 
@@ -212,6 +228,84 @@ export const handlers = [
       ],
     }),
   ),
+
+  http.get("/api/v1/providers/:id/search", ({ request, params }) => {
+    const url = new URL(request.url);
+    const q = url.searchParams.get("q") ?? "";
+    const externalId = url.searchParams.get("externalId") ?? "";
+    const providerId = String(params.id);
+    if (providerId !== "mangabaka") {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "not_found",
+          message: `provider ${providerId}`,
+        }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (!q.trim() && !externalId.trim()) {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "bad_request",
+          message: "either q or externalId is required",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    // externalId path: one hit at score 1.0.
+    if (externalId.trim()) {
+      return HttpResponse.json({
+        provider: providerId,
+        hits: [
+          {
+            externalId: externalId.trim(),
+            title: `Lookup #${externalId.trim()}`,
+            year: null,
+            coverUrl: null,
+            kind: "manga",
+            status: "ongoing",
+            nativeTitle: null,
+            genres: [],
+            tags: [],
+            externalUrl: null,
+            score: 1.0,
+          },
+        ],
+      });
+    }
+    // Title path: two canned hits.
+    return HttpResponse.json({
+      provider: providerId,
+      hits: [
+        {
+          externalId: "mb-1",
+          title: q.trim(),
+          year: 2020,
+          coverUrl: null,
+          kind: "manga",
+          status: "ongoing",
+          nativeTitle: null,
+          genres: [],
+          tags: [],
+          externalUrl: null,
+          score: 0.95,
+        },
+        {
+          externalId: "mb-2",
+          title: `${q.trim()} Side Stories`,
+          year: 2021,
+          coverUrl: null,
+          kind: "manhwa",
+          status: "completed",
+          nativeTitle: null,
+          genres: [],
+          tags: [],
+          externalUrl: null,
+          score: 0.65,
+        },
+      ],
+    });
+  }),
 
   http.post("/api/v1/providers/refresh-all", ({ request }) => {
     const denied = requireAdmin(request);

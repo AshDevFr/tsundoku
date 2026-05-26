@@ -379,6 +379,74 @@
         ]
       }
     },
+    "/api/v1/providers/{id}/search": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Title-or-externalId search against a single provider. Powers the\nreview-queue \"Link release\" modal.",
+        "description": "- `?externalId=<id>` — direct lookup via `MetadataProvider::get`.\n- `?q=<title>` — `MetadataProvider::search`, then enrichment via\n  `get` on the top N hits and Dice-rescoring against `q`.\n- both empty → `400 Bad Request`.\n- unknown `id` → `404 Not Found`.",
+        "operationId": "search_provider",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Provider id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Free-text title query. Trimmed before use; ignored when empty.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "externalId",
+            "in": "query",
+            "description": "Direct provider external-id lookup. When set, the handler short-\ncircuits to `MetadataProvider::get` and returns at most one hit\nwith `score = 1.0`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of hits to enrich with full metadata. Defaults to\n10; clamped to `[1, 50]` to keep the per-request cost bounded.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderSearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Both q and externalId missing or empty"
+          },
+          "404": {
+            "description": "Unknown provider id"
+          }
+        }
+      }
+    },
     "/api/v1/releases": {
       "get": {
         "tags": [
@@ -1420,6 +1488,97 @@
           }
         }
       },
+      "ProviderSearchHit": {
+        "type": "object",
+        "description": "One enriched hit. `score` is Dice(`q`, `title`) for the title-search\npath, or `1.0` for the externalId short-circuit path.",
+        "required": [
+          "externalId",
+          "title",
+          "genres",
+          "tags",
+          "score"
+        ],
+        "properties": {
+          "coverUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "externalId": {
+            "type": "string"
+          },
+          "externalUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nativeTitle": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First alternate title, if any. Useful for showing the\nromaji/Japanese form alongside the canonical English title."
+          },
+          "score": {
+            "type": "number",
+            "format": "float"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "ProviderSearchResponse": {
+        "type": "object",
+        "required": [
+          "provider",
+          "hits"
+        ],
+        "properties": {
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderSearchHit"
+            }
+          },
+          "provider": {
+            "type": "string"
+          }
+        }
+      },
       "RefreshAllResponse": {
         "type": "object",
         "required": [
@@ -2423,7 +2582,9 @@
           {
             "type": "object",
             "required": [
-              "candidates"
+              "candidates",
+              "searchQueries",
+              "cleanupRulesApplied"
             ],
             "properties": {
               "candidates": {
@@ -2431,6 +2592,31 @@
                 "items": {
                   "$ref": "#/components/schemas/ReviewCandidateDto"
                 }
+              },
+              "cleanupRulesApplied": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Stable rule names that fired during cleanup (e.g. `strip_parens`,\n`split_alternates`). Rendered as badge chips on the review card."
+              },
+              "searchQueries": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Search queries the title cleaner produced for this release\n(longest-first). Empty when the release predates the cleaner or\nfailed to persist; the next resolve cycle backfills."
+              },
+              "topCandidate": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReviewCandidateDto",
+                    "description": "Convenience pointer to `candidates[0]`, when present. Lets the\ncard render without defensive-checking the array on every render."
+                  }
+                ]
               }
             }
           }

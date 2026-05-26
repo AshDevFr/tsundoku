@@ -170,6 +170,7 @@ pub async fn poll(
     let metadata = state.metadata.clone();
     let ingestion = state.ingestion.clone();
     let locks = state.locks.clone();
+    let query_builder = state.query_builder.clone();
     let mu_redirector = state.mangaupdates_redirector.clone();
     tokio::spawn(async move {
         poll_source::run_tick(
@@ -178,6 +179,7 @@ pub async fn poll(
             metadata,
             ingestion,
             locks,
+            query_builder,
             mu_redirector,
             "manual",
         )
@@ -225,6 +227,7 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
         let metadata = state.metadata.clone();
         let ingestion = state.ingestion.clone();
         let locks = state.locks.clone();
+        let query_builder = state.query_builder.clone();
         let mu_redirector = state.mangaupdates_redirector.clone();
         let spawned: Arc<dyn td_source::DiscoverySource> = source;
         tokio::spawn(async move {
@@ -234,6 +237,7 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
                 metadata,
                 ingestion,
                 locks,
+                query_builder,
                 mu_redirector,
                 "manual",
             )

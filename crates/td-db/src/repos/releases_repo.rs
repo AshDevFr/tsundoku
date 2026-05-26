@@ -96,6 +96,8 @@ fn to_active_model(
         volume_span_json: Set(None),
         chapter_span_json: Set(None),
         resolved_at: Set(None),
+        search_queries: Set(None),
+        cleanup_rules_applied: Set(None),
     })
 }
 

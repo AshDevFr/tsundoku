@@ -51,6 +51,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/releases/unresolved", get(releases::list_unresolved))
         .route("/sources", get(sources::list))
         .route("/providers", get(providers::list))
+        .route("/providers/{id}/search", get(providers::search))
         .route("/genres", get(tagging::list_genres))
         .route("/tags", get(tagging::list_tags))
         .route("/metrics/sources", get(metrics::sources_summary))

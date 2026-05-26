@@ -69,7 +69,9 @@ describe("ReviewPage", () => {
       await screen.findByText(/Review queue/, undefined, { timeout: 3000 }),
     ).toBeInTheDocument();
     expect(
-      await screen.findByText(/Mystery Series/, undefined, { timeout: 3000 }),
+      await screen.findByText(/Mystery Series v01/, undefined, {
+        timeout: 3000,
+      }),
     ).toBeInTheDocument();
     expect(screen.getByText(/Unknown Title v05/)).toBeInTheDocument();
     expect(
@@ -80,7 +82,7 @@ describe("ReviewPage", () => {
   it("links a release by picking a candidate and drops it from the queue", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderReview();
-    await screen.findByText(/Mystery Series/, undefined, { timeout: 3000 });
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
     // Two candidates render for the first card: Chainsaw Man (1), Solo Leveling (3).
     fireEvent.click(screen.getByTestId("link-candidate-1"));
     await waitFor(
@@ -99,7 +101,7 @@ describe("ReviewPage", () => {
   it("rejects a release via the reject button", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderReview();
-    await screen.findByText(/Mystery Series/, undefined, { timeout: 3000 });
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
     const card = screen.getByTestId("review-card-nyaa:9001");
     const rejectBtn = Array.from(card.querySelectorAll("button")).find(
       (b) => b.textContent?.trim() === "Reject",
@@ -116,30 +118,30 @@ describe("ReviewPage", () => {
     );
   });
 
-  it("opens the manual link modal and submits provider+externalId", async () => {
+  it("opens the search modal, pastes an external ID, and links the release", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderReview();
     await screen.findByText(/Unknown Title v05/, undefined, { timeout: 3000 });
     const card = screen.getByTestId("review-card-nyaa:9002");
-    const manualBtn = Array.from(card.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("Link by external ID"),
+    const searchBtn = Array.from(card.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Search provider"),
     );
-    if (!manualBtn) throw new Error("manual-link button not rendered");
-    fireEvent.click(manualBtn);
+    if (!searchBtn) throw new Error("Search provider button not rendered");
+    fireEvent.click(searchBtn);
     const dialog = await screen.findByRole("dialog");
     const idInput = await waitFor(() => {
       const el = dialog.querySelector<HTMLInputElement>(
-        '[data-testid="manual-external-id"]',
+        '[data-testid="search-external-id"]',
       );
-      if (!el) throw new Error("manual-external-id input not rendered");
+      if (!el) throw new Error("search-external-id input not rendered");
       return el;
     });
     fireEvent.change(idInput, { target: { value: "1234" } });
-    const submit = Array.from(dialog.querySelectorAll("button")).find(
-      (b) => b.textContent?.trim() === "Link release",
-    );
-    if (!submit) throw new Error("Link release button not rendered");
-    fireEvent.click(submit);
+    // The externalId path returns one hit; click its Link button.
+    const linkBtn = await screen.findByTestId("link-hit-1234", undefined, {
+      timeout: 3000,
+    });
+    fireEvent.click(linkBtn);
     await waitFor(
       () => {
         expect(
@@ -148,5 +150,19 @@ describe("ReviewPage", () => {
       },
       { timeout: 3000 },
     );
+  });
+
+  it("renders the cleanup trail (cleaned query + rule chips) on each card", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+    const card = screen.getByTestId("review-card-nyaa:9001");
+    const trail = card.querySelector('[data-testid="cleanup-trail"]');
+    if (!trail) throw new Error("cleanup-trail not rendered");
+    // Primary search query is shown as monospaced text.
+    expect(trail.textContent).toContain("Mystery Series");
+    // Rule chips render the rule names.
+    expect(trail.textContent).toContain("strip_brackets");
+    expect(trail.textContent).toContain("strip_parens");
   });
 });

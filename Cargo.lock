@@ -3856,6 +3856,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "migration",
+ "regex",
  "reqwest",
  "sea-orm",
  "serde",

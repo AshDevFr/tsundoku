@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use td_api::AppState;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
+use td_resolution::query_builder::QueryBuilder;
 use td_scheduler::{JobLocks, Scheduler, SchedulerContext};
 
 pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
@@ -31,6 +32,13 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
             None
         }
     };
+    // Build the title cleaner once: built-in keyword list + operator
+    // extras from `[ingestion.cleanup]`. Invalid extras (regex
+    // metacharacters, empty strings) make the binary refuse to start.
+    let query_builder = Arc::new(
+        QueryBuilder::new(&cfg.ingestion.cleanup.extra_format_keywords)
+            .context("building title cleaner from ingestion.cleanup config")?,
+    );
 
     let ctx = SchedulerContext {
         db: db.clone(),
@@ -38,6 +46,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
         metadata: metadata.clone(),
         ingestion: cfg.ingestion.clone(),
         locks: locks.clone(),
+        query_builder: query_builder.clone(),
         mangaupdates_redirector: mu_redirector.clone(),
     };
     let scheduler = Scheduler::build(&cfg, ctx).await?;
@@ -52,6 +61,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
         locks,
         sources_config: Arc::new(cfg.sources.clone()),
         providers_config: Arc::new(cfg.providers.clone()),
+        query_builder,
         mangaupdates_redirector: mu_redirector,
     };
     let app = td_api::router(state, &cfg);

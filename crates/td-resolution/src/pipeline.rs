@@ -24,9 +24,12 @@ use td_db::repos::{
 use td_metadata::{MetadataRegistry, SearchHit, SeriesMetadata};
 use td_source::ExternalLinks;
 
+use std::collections::HashMap;
+
 use crate::foreign_id;
 use crate::mangaupdates_redirect::{MangaUpdatesRedirector, ResolveOutcome};
 use crate::persist::{self, UpsertResult};
+use crate::query_builder::{CleanedQuery, QueryBuilder};
 use crate::scoring::dice;
 use crate::validation::{self, ValidationOutcome};
 
@@ -93,6 +96,11 @@ pub struct Resolver {
     db: DatabaseConnection,
     registry: Arc<MetadataRegistry>,
     config: IngestionConfig,
+    /// Title cleaner. Built once at startup from the built-in keyword
+    /// list plus any `ingestion.cleanup.extra_format_keywords` from
+    /// config. Defaults to a built-in-only cleaner when constructed via
+    /// `Resolver::new` so existing call sites don't have to opt in.
+    query_builder: Arc<QueryBuilder>,
     /// Optional redirector for translating MangaUpdates legacy numeric
     /// IDs to modern alphanumeric slugs. `None` in tests and CLIs that
     /// don't have network; legacy MU links are simply dropped in that
@@ -110,8 +118,17 @@ impl Resolver {
             db,
             registry,
             config,
+            query_builder: Arc::new(QueryBuilder::with_defaults()),
             mangaupdates_redirector: None,
         }
+    }
+
+    /// Attach a pre-built title cleaner. Production callers pass one
+    /// built from the operator's `ingestion.cleanup.extra_format_keywords`;
+    /// tests typically use the default.
+    pub fn with_query_builder(mut self, query_builder: Arc<QueryBuilder>) -> Self {
+        self.query_builder = query_builder;
+        self
     }
 
     /// Attach a MangaUpdates redirect resolver so the pipeline can
@@ -161,6 +178,26 @@ impl Resolver {
         let active = self.registry.active().clone();
         let active_id = self.registry.active_id().to_string();
 
+        // Clean the title once and persist immediately. Persisting on
+        // every release (regardless of which step matches) gives the
+        // review UI a consistent diagnostic surface and pre-populates
+        // the search modal for manual relink.
+        let cleaned = self.query_builder.clean(&release.title);
+        if let Err(e) = persist::persist_search_queries(
+            &self.db,
+            &release.id,
+            &cleaned.queries,
+            &cleaned.rules_applied,
+        )
+        .await
+        {
+            tracing::warn!(
+                error = ?e,
+                release_id = %release.id,
+                "failed to persist cleaned search queries; continuing resolve"
+            );
+        }
+
         // 1. Known external IDs.
         if let Some(series_id) = self.step_known_external_id(&normalized_pairs).await? {
             let outcome = self
@@ -195,9 +232,14 @@ impl Resolver {
             return Ok(outcome);
         }
 
-        // 3. Fuzzy title via the active provider.
+        // 3. Fuzzy title via the active provider. Run one search per
+        // cleaned query and Dice-rescore each candidate against the
+        // closest matching query — fixes the prior behavior where
+        // `dice(release.title, hit.title)` against the raw nyaa title
+        // dragged noisy releases below the resolution threshold even
+        // when the right candidate had been found.
         let fuzzy = self
-            .step_fuzzy_title(&active_id, active.as_ref(), &release.title)
+            .step_fuzzy_title(&active_id, active.as_ref(), &cleaned)
             .await?;
 
         if let Some((hit, score)) = fuzzy.best_above_threshold(self.config.resolution_threshold) {
@@ -340,26 +382,44 @@ impl Resolver {
         &self,
         active_id: &str,
         active: &dyn td_metadata::MetadataProvider,
-        title: &str,
+        cleaned: &CleanedQuery,
     ) -> Result<FuzzyResults> {
-        let hits = match active.search(title, self.config.fuzzy_search_limit).await {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::warn!(error = ?e, provider = %active_id, "fuzzy search failed");
-                return Ok(FuzzyResults::default());
+        // Run one search per cleaned query (typically one; up to ~3 when
+        // the raw title had a romaji / English split). Dedupe hits by
+        // external_id, keeping the max Dice score across all queries —
+        // a candidate that matches the romaji half tightly should not be
+        // demoted just because the English half also got searched.
+        let mut by_id: HashMap<String, (SearchHit, f32)> = HashMap::new();
+        for query in &cleaned.queries {
+            let hits = match active.search(query, self.config.fuzzy_search_limit).await {
+                Ok(h) => h,
+                Err(e) => {
+                    tracing::warn!(
+                        error = ?e,
+                        provider = %active_id,
+                        query = %query,
+                        "fuzzy search failed; continuing with remaining queries"
+                    );
+                    continue;
+                }
+            };
+            for hit in hits {
+                let score = cleaned
+                    .queries
+                    .iter()
+                    .map(|q| dice(q, &hit.title))
+                    .fold(0f32, f32::max);
+                by_id
+                    .entry(hit.external_id.clone())
+                    .and_modify(|(_, s)| {
+                        if score > *s {
+                            *s = score;
+                        }
+                    })
+                    .or_insert((hit, score));
             }
-        };
-        // Re-score every hit with Dice against the hit's title. We don't
-        // have alternates here (search() doesn't surface them); if the
-        // provider's relevance score is meaningful we keep it as a tie
-        // breaker.
-        let mut scored: Vec<(SearchHit, f32)> = hits
-            .into_iter()
-            .map(|h| {
-                let s = dice(title, &h.title);
-                (h, s)
-            })
-            .collect();
+        }
+        let mut scored: Vec<(SearchHit, f32)> = by_id.into_values().collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         Ok(FuzzyResults { hits: scored })
     }

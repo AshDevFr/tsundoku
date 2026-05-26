@@ -26,6 +26,7 @@ pub mod foreign_id;
 pub mod mangaupdates_redirect;
 pub mod persist;
 pub mod pipeline;
+pub mod query_builder;
 pub mod scoring;
 pub mod validation;
 

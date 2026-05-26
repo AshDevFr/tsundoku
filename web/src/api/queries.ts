@@ -17,6 +17,9 @@ export type StatsResponse = components["schemas"]["StatsResponse"];
 export type UnresolvedPage = components["schemas"]["UnresolvedPage"];
 export type UnresolvedRelease = components["schemas"]["UnresolvedRelease"];
 export type ReviewCandidateDto = components["schemas"]["ReviewCandidateDto"];
+export type ProviderSearchHit = components["schemas"]["ProviderSearchHit"];
+export type ProviderSearchResponse =
+  components["schemas"]["ProviderSearchResponse"];
 export type TagList = components["schemas"]["TagList"];
 export type TagUsageDto = components["schemas"]["TagUsageDto"];
 export type SourceMetricsSummary =
@@ -151,6 +154,41 @@ export function useProviders() {
       return data;
     },
     staleTime: 60_000,
+  });
+}
+
+/// Search a single provider by title or external ID. Disabled until both
+/// the provider id and at least one of (q, externalId) are non-empty —
+/// keeps the modal from firing speculative network requests as the
+/// operator types the very first character.
+export function useProviderSearch(opts: {
+  providerId: string | null;
+  q: string;
+  externalId: string;
+  enabled?: boolean;
+}) {
+  const trimmedQ = opts.q.trim();
+  const trimmedExt = opts.externalId.trim();
+  const hasInput = Boolean(trimmedQ || trimmedExt);
+  const enabled =
+    Boolean(opts.providerId) && hasInput && (opts.enabled ?? true);
+  return useQuery({
+    queryKey: ["provider-search", opts.providerId, trimmedQ, trimmedExt],
+    enabled,
+    queryFn: async () => {
+      const params: { q?: string; externalId?: string } = {};
+      if (trimmedExt) params.externalId = trimmedExt;
+      else if (trimmedQ) params.q = trimmedQ;
+      const { data, error } = await api.GET("/api/v1/providers/{id}/search", {
+        params: {
+          path: { id: opts.providerId as string },
+          query: params,
+        },
+      });
+      if (error) throw new Error("provider search failed");
+      return data;
+    },
+    staleTime: 30_000,
   });
 }
 

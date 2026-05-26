@@ -65,6 +65,7 @@ async fn health_returns_ok() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -95,6 +96,7 @@ async fn series_list_paginates_and_filters_by_kind() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -137,6 +139,7 @@ async fn series_detail_returns_external_ids() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -172,6 +175,7 @@ async fn series_detail_404s_for_unknown_id() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -201,6 +205,7 @@ async fn release_list_returns_persisted_rows() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -229,6 +234,7 @@ async fn write_endpoint_rejects_request_without_bearer() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -255,6 +261,7 @@ async fn write_endpoint_503s_when_admin_token_unset() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         AuthConfig {
@@ -286,6 +293,7 @@ async fn read_endpoint_requires_api_key_when_configured() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         AuthConfig {
@@ -334,6 +342,7 @@ async fn release_link_by_series_id_updates_resolution() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -372,6 +381,7 @@ async fn release_link_by_provider_external_id_upserts_series() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: Some(sample_metadata("mb", "1677", "Chainsaw Man")),
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -414,6 +424,7 @@ async fn release_reject_sets_rejected_status() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -454,6 +465,7 @@ async fn stats_reports_counts() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -484,6 +496,7 @@ async fn providers_list_marks_active() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -514,6 +527,7 @@ async fn sources_list_returns_registered_sources() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![StubSource {
             name: "test-feed".into(),
@@ -560,6 +574,7 @@ async fn sources_list_includes_config_block_from_app_state() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![StubSource {
             name: "trusted".into(),
@@ -607,6 +622,7 @@ async fn providers_list_includes_config_block_without_api_key_value() {
         metadata_registry_with(StubProvider {
             id: "mangabaka",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -661,6 +677,7 @@ async fn poll_all_returns_per_source_triggered_results() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![
             StubSource {
@@ -713,6 +730,7 @@ async fn poll_all_reports_locked_source_as_skipped() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![
             StubSource {
@@ -763,6 +781,7 @@ async fn refresh_all_returns_per_provider_results() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -801,6 +820,7 @@ async fn unresolved_endpoint_returns_review_pending_releases() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -818,6 +838,86 @@ async fn unresolved_endpoint_returns_review_pending_releases() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     assert_eq!(body["total"], 1);
+    // Phase B additions: every item carries arrays (default-empty for
+    // a release that hasn't run through the resolver yet) and a
+    // top_candidate convenience field.
+    let item = &body["items"][0];
+    assert!(item.get("searchQueries").is_some(), "missing searchQueries");
+    assert!(
+        item.get("cleanupRulesApplied").is_some(),
+        "missing cleanupRulesApplied"
+    );
+    assert!(item.get("topCandidate").is_some(), "missing topCandidate");
+    assert_eq!(item["searchQueries"].as_array().unwrap().len(), 0);
+    assert_eq!(item["cleanupRulesApplied"].as_array().unwrap().len(), 0);
+    assert!(item["topCandidate"].is_null());
+}
+
+#[tokio::test]
+async fn unresolved_endpoint_surfaces_persisted_search_queries_and_rules() {
+    use td_db::entities::releases;
+    use td_resolution::persist::persist_search_queries;
+
+    let db = fresh_db().await;
+    let r = sample_release(
+        "phase-b-1",
+        "feed",
+        "Solo Leveling (2021-2026) (Digital) (1r0n)",
+    );
+    releases_repo::persist_discovered(&db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+    // Simulate a resolve cycle that left the cleaned queries on the row.
+    let release_id = format!("{}:{}:{}", r.source_kind, r.source_name, r.external_id);
+    assert!(
+        releases::Entity::find_by_id(release_id.clone())
+            .one(&db)
+            .await
+            .unwrap()
+            .is_some(),
+        "persisted release should be findable"
+    );
+    persist_search_queries(
+        &db,
+        &release_id,
+        &["Solo Leveling".to_string()],
+        &["strip_parens".to_string(), "strip_format".to_string()],
+    )
+    .await
+    .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/releases/unresolved")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let item = &body["items"][0];
+    assert_eq!(item["searchQueries"][0], "Solo Leveling");
+    let rules: Vec<String> = item["cleanupRulesApplied"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert!(rules.contains(&"strip_parens".to_string()));
+    assert!(rules.contains(&"strip_format".to_string()));
 }
 
 #[tokio::test]
@@ -844,6 +944,7 @@ async fn series_list_filters_by_genre_and_tag_and_combines() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -914,6 +1015,7 @@ async fn genres_endpoint_lists_canonical_names_with_counts() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -972,6 +1074,7 @@ async fn series_detail_surfaces_join_table_tags() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -1049,6 +1152,7 @@ async fn metrics_sources_summary_returns_per_source_aggregates() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -1113,6 +1217,7 @@ async fn metrics_sources_detail_emits_buckets_for_named_source() {
         metadata_registry_with(StubProvider {
             id: "mb",
             returns: None,
+            ..Default::default()
         }),
         source_registry_with(vec![]),
         open_auth(),
@@ -1144,4 +1249,196 @@ async fn metrics_sources_detail_emits_buckets_for_named_source() {
         .map(|b| b["failureCount"].as_i64().unwrap())
         .sum();
     assert_eq!(total_success + total_failure, 3);
+}
+
+#[tokio::test]
+async fn provider_search_title_returns_dice_rescored_hits() {
+    use td_metadata::{SearchHit, SeriesKind};
+    let db = fresh_db().await;
+
+    // Two hits: one is an exact title match (Dice ≈ 1.0), the other a
+    // weak partial. Rescore should order them desc.
+    let mut get_table = std::collections::HashMap::new();
+    get_table.insert(
+        "exact".into(),
+        sample_metadata("mb", "exact", "Solo Leveling"),
+    );
+    let mut partial = sample_metadata("mb", "partial", "Solo Leveling Side Stories");
+    partial.kind = Some(SeriesKind::Manhwa);
+    get_table.insert("partial".into(), partial);
+
+    let stub = StubProvider {
+        id: "mb",
+        returns: None,
+        search_hits: vec![
+            SearchHit {
+                external_id: "partial".into(),
+                title: "Solo Leveling Side Stories".into(),
+                year: Some(2020),
+                cover_url: None,
+                score: None,
+            },
+            SearchHit {
+                external_id: "exact".into(),
+                title: "Solo Leveling".into(),
+                year: Some(2018),
+                cover_url: None,
+                score: None,
+            },
+        ],
+        get_table,
+    };
+    let app = build_app(
+        db,
+        metadata_registry_with(stub),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/providers/mb/search?q=Solo+Leveling")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["provider"], "mb");
+    let hits = body["hits"].as_array().expect("hits array");
+    assert_eq!(hits.len(), 2);
+    // Exact match scores higher and lands first.
+    assert_eq!(hits[0]["externalId"], "exact");
+    assert_eq!(hits[0]["title"], "Solo Leveling");
+    assert!(hits[0]["score"].as_f64().unwrap() > hits[1]["score"].as_f64().unwrap());
+    // Enrichment from `get()` is present.
+    assert_eq!(hits[0]["kind"], "manga");
+    assert_eq!(hits[0]["status"], "ongoing");
+}
+
+#[tokio::test]
+async fn provider_search_external_id_short_circuits_to_get_with_score_one() {
+    let db = fresh_db().await;
+    let mut get_table = std::collections::HashMap::new();
+    get_table.insert(
+        "12345".into(),
+        sample_metadata("mb", "12345", "Direct Lookup Series"),
+    );
+    let stub = StubProvider {
+        id: "mb",
+        returns: None,
+        search_hits: vec![],
+        get_table,
+    };
+    let app = build_app(
+        db,
+        metadata_registry_with(stub),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/providers/mb/search?externalId=12345")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let hits = body["hits"].as_array().unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0]["externalId"], "12345");
+    assert_eq!(hits[0]["title"], "Direct Lookup Series");
+    assert_eq!(hits[0]["score"].as_f64().unwrap(), 1.0);
+}
+
+#[tokio::test]
+async fn provider_search_external_id_miss_returns_empty_hits() {
+    let db = fresh_db().await;
+    let stub = StubProvider {
+        id: "mb",
+        returns: None,
+        search_hits: vec![],
+        get_table: std::collections::HashMap::new(),
+    };
+    let app = build_app(
+        db,
+        metadata_registry_with(stub),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/providers/mb/search?externalId=does-not-exist")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["hits"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn provider_search_rejects_empty_query() {
+    let db = fresh_db().await;
+    let stub = StubProvider {
+        id: "mb",
+        returns: None,
+        search_hits: vec![],
+        get_table: std::collections::HashMap::new(),
+    };
+    let app = build_app(
+        db,
+        metadata_registry_with(stub),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/providers/mb/search")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn provider_search_unknown_provider_returns_404() {
+    let db = fresh_db().await;
+    let stub = StubProvider {
+        id: "mb",
+        returns: None,
+        search_hits: vec![],
+        get_table: std::collections::HashMap::new(),
+    };
+    let app = build_app(
+        db,
+        metadata_registry_with(stub),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/providers/nope/search?q=anything")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

@@ -29,6 +29,7 @@ use td_metadata::MetadataRegistry;
 use td_resolution::Resolver;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_resolution::pipeline::{ResolutionOutcome, ResolutionPath, ResolutionStatus};
+use td_resolution::query_builder::QueryBuilder;
 use td_source::{DiscoverySource, PollContext, PollOutcome};
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
@@ -39,6 +40,7 @@ use crate::error_kind;
 /// the 6- or 7-field form expected by tokio-cron-scheduler (the bootstrap
 /// in [`crate::Scheduler::build`] normalises 5-field strings before getting
 /// here).
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     cron: &str,
     source: Arc<dyn DiscoverySource>,
@@ -46,6 +48,7 @@ pub fn build(
     metadata: Arc<MetadataRegistry>,
     ingestion: IngestionConfig,
     locks: Arc<JobLocks>,
+    query_builder: Arc<QueryBuilder>,
     mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
 ) -> Result<Job> {
     let job = Job::new_async(cron, move |_uuid, _scheduler| {
@@ -54,6 +57,7 @@ pub fn build(
         let metadata = metadata.clone();
         let ingestion = ingestion.clone();
         let locks = locks.clone();
+        let query_builder = query_builder.clone();
         let mu_redirector = mangaupdates_redirector.clone();
         Box::pin(async move {
             run_tick(
@@ -62,6 +66,7 @@ pub fn build(
                 metadata,
                 ingestion,
                 locks,
+                query_builder,
                 mu_redirector,
                 run_metrics_repo::trigger::CRON,
             )
@@ -76,12 +81,14 @@ pub fn build(
 /// in [`crate::jobs::poll_source::tests`] and for any future "trigger
 /// manually" CLI; the scheduled job uses the same code path so behaviour
 /// matches.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_tick(
     source: Arc<dyn DiscoverySource>,
     db: DatabaseConnection,
     metadata: Arc<MetadataRegistry>,
     ingestion: IngestionConfig,
     locks: Arc<JobLocks>,
+    query_builder: Arc<QueryBuilder>,
     mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
     trigger: &str,
 ) {
@@ -178,7 +185,8 @@ pub async fn run_tick(
     // Walk the resolver per release and accumulate one counter per
     // ResolutionOutcome variant. A resolver Err counts as `Failed` so the
     // breakdown ties out against the persisted release count.
-    let mut resolver = Resolver::new(db.clone(), metadata, ingestion);
+    let mut resolver =
+        Resolver::new(db.clone(), metadata, ingestion).with_query_builder(query_builder);
     if let Some(r) = mangaupdates_redirector {
         resolver = resolver.with_mangaupdates_redirector(r);
     }

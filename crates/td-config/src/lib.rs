@@ -331,6 +331,23 @@ pub struct IngestionConfig {
     /// vector disables format-type validation entirely.
     #[serde(default)]
     pub format_type_rules: Vec<FormatTypeRule>,
+    /// Title-cleaning knobs consumed by `td_resolution::query_builder`.
+    #[serde(default)]
+    pub cleanup: CleanupConfig,
+}
+
+/// Operator-extension surface for the title cleaner. Additive only: the
+/// built-in keyword list cannot be shrunk or overridden.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CleanupConfig {
+    /// Extra format-keyword strings appended to the built-in list. Each
+    /// entry must be a plain word or phrase — regex metacharacters are
+    /// rejected at config-load time so a stray `.+` can't widen the
+    /// strip pattern. Built-in list: Digital, Raw, Color, Colored,
+    /// Omnibus, Premium, Complete, Decensored, Uncensored, Webtoon, WN,
+    /// LN.
+    pub extra_format_keywords: Vec<String>,
 }
 
 /// One format-to-kind rule. If the release has at least one of `formats`,
@@ -354,6 +371,7 @@ impl Default for IngestionConfig {
             fuzzy_search_limit: 10,
             queue_low_confidence: true,
             format_type_rules: Vec::new(),
+            cleanup: CleanupConfig::default(),
         }
     }
 }
@@ -673,6 +691,39 @@ required_kinds = ["novel"]
             cfg.ingestion.format_type_rules[1].required_kinds,
             vec!["novel".to_string()]
         );
+    }
+
+    #[test]
+    fn ingestion_cleanup_extra_format_keywords_round_trip() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[storage]
+data_dir = "./data"
+
+[ingestion.cleanup]
+extra_format_keywords = ["Remastered", "DigitalUncen"]
+            "#
+        )
+        .unwrap();
+
+        let cfg = load(&path).unwrap();
+        assert_eq!(
+            cfg.ingestion.cleanup.extra_format_keywords,
+            vec!["Remastered".to_string(), "DigitalUncen".into()]
+        );
+    }
+
+    #[test]
+    fn ingestion_cleanup_defaults_to_empty_extras() {
+        // Default config has no extras — the cleaner uses only the
+        // built-in keyword list.
+        let cfg = AppConfig::default();
+        assert!(cfg.ingestion.cleanup.extra_format_keywords.is_empty());
     }
 
     #[test]

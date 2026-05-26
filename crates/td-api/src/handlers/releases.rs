@@ -50,7 +50,7 @@ pub struct ReleasePage {
     pub total: u64,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewCandidateDto {
     pub series_id: i32,
@@ -66,6 +66,16 @@ pub struct UnresolvedRelease {
     #[serde(flatten)]
     pub release: ReleaseDto,
     pub candidates: Vec<ReviewCandidateDto>,
+    /// Search queries the title cleaner produced for this release
+    /// (longest-first). Empty when the release predates the cleaner or
+    /// failed to persist; the next resolve cycle backfills.
+    pub search_queries: Vec<String>,
+    /// Stable rule names that fired during cleanup (e.g. `strip_parens`,
+    /// `split_alternates`). Rendered as badge chips on the review card.
+    pub cleanup_rules_applied: Vec<String>,
+    /// Convenience pointer to `candidates[0]`, when present. Lets the
+    /// card render without defensive-checking the array on every render.
+    pub top_candidate: Option<ReviewCandidateDto>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -218,9 +228,23 @@ pub async fn list_unresolved(
                 reason: c.reason,
             });
         }
+        let search_queries: Vec<String> = row
+            .search_queries
+            .as_deref()
+            .and_then(|j| serde_json::from_str(j).ok())
+            .unwrap_or_default();
+        let cleanup_rules_applied: Vec<String> = row
+            .cleanup_rules_applied
+            .as_deref()
+            .and_then(|j| serde_json::from_str(j).ok())
+            .unwrap_or_default();
+        let top_candidate = candidates.first().cloned();
         items.push(UnresolvedRelease {
             release: model_to_release(row, formats),
             candidates,
+            search_queries,
+            cleanup_rules_applied,
+            top_candidate,
         });
     }
 
@@ -378,7 +402,8 @@ pub async fn retry(
         state.db.clone(),
         state.metadata.clone(),
         state.ingestion.clone(),
-    );
+    )
+    .with_query_builder(state.query_builder.clone());
     if let Some(r) = state.mangaupdates_redirector.clone() {
         resolver = resolver.with_mangaupdates_redirector(r);
     }

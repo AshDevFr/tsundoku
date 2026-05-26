@@ -16,6 +16,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use td_resolution::Resolver;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
+use td_resolution::query_builder::QueryBuilder;
 
 const DEFAULT_BATCH_SIZE: u64 = 1000;
 
@@ -33,7 +34,12 @@ pub async fn run(config_path: PathBuf, retry_unresolved: bool) -> Result<()> {
         env!("CARGO_PKG_VERSION"),
         " (+https://github.com/skewb1k/tsundoku)"
     );
-    let mut resolver = Resolver::new(db.clone(), registry, cfg.ingestion.clone());
+    let query_builder = Arc::new(
+        QueryBuilder::new(&cfg.ingestion.cleanup.extra_format_keywords)
+            .context("building title cleaner from ingestion.cleanup config")?,
+    );
+    let mut resolver = Resolver::new(db.clone(), registry, cfg.ingestion.clone())
+        .with_query_builder(query_builder);
     match MangaUpdatesRedirector::new(user_agent) {
         Ok(r) => resolver = resolver.with_mangaupdates_redirector(Arc::new(r)),
         Err(e) => tracing::warn!(error = ?e, "skipping mangaupdates redirector"),

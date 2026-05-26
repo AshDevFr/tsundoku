@@ -9,6 +9,7 @@ use sea_orm::DatabaseConnection;
 use td_config::{AuthConfig, IngestionConfig, ProvidersConfig, SourceConfig};
 use td_metadata::MetadataRegistry;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
+use td_resolution::query_builder::QueryBuilder;
 use td_scheduler::JobLocks;
 use td_source::SourceRegistry;
 
@@ -32,6 +33,11 @@ pub struct AppState {
     /// Snapshot of the `[providers]` config block, with the same role for
     /// the provider admin endpoints.
     pub providers_config: Arc<ProvidersConfig>,
+    /// Title cleaner shared with the scheduler. Built once at startup
+    /// from the built-in keyword list plus
+    /// `ingestion.cleanup.extra_format_keywords`. Tests fall back to a
+    /// defaults-only cleaner.
+    pub query_builder: Arc<QueryBuilder>,
     /// Shared with the scheduler. `None` in tests that don't need legacy
     /// MangaUpdates URL translation; resolver runs on the API retry path
     /// honor this when building their `Resolver`.

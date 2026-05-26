@@ -195,6 +195,7 @@ async fn poll_tick_persists_releases_and_updates_source_state() {
         metadata,
         IngestionConfig::default(),
         locks,
+        Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         None,
         "cron",
     )
@@ -258,6 +259,7 @@ async fn poll_tick_with_held_lock_is_a_noop() {
         metadata,
         IngestionConfig::default(),
         locks.clone(),
+        Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         None,
         "cron",
     )
@@ -306,6 +308,7 @@ async fn poll_tick_handles_source_failure_without_panicking() {
         metadata,
         IngestionConfig::default(),
         locks,
+        Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         None,
         "cron",
     )
@@ -471,6 +474,7 @@ async fn scheduler_fires_source_and_provider_jobs_on_schedule() {
         metadata,
         ingestion: IngestionConfig::default(),
         locks: Arc::new(JobLocks::default()),
+        query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
     };
 
@@ -544,6 +548,7 @@ async fn scheduler_skips_sources_without_cron_or_unknown_registry_entry() {
         metadata,
         ingestion: IngestionConfig::default(),
         locks: Arc::new(JobLocks::default()),
+        query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
     };
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
@@ -586,6 +591,8 @@ async fn snapshot_review_queue_writes_row_with_pending_breakdown() {
         volume_span_json: Set(None),
         chapter_span_json: Set(None),
         resolved_at: Set(None),
+        search_queries: Set(None),
+        cleanup_rules_applied: Set(None),
     };
     pending.insert(&db).await.unwrap();
     let ambiguous = releases_entity::ActiveModel {
@@ -614,6 +621,8 @@ async fn snapshot_review_queue_writes_row_with_pending_breakdown() {
         volume_span_json: Set(None),
         chapter_span_json: Set(None),
         resolved_at: Set(None),
+        search_queries: Set(None),
+        cleanup_rules_applied: Set(None),
     };
     ambiguous.insert(&db).await.unwrap();
 

@@ -68,6 +68,8 @@ fn sample_release(id: &str, series_id: Option<i32>) -> releases::ActiveModel {
         volume_span_json: Set(None),
         chapter_span_json: Set(None),
         resolved_at: Set(None),
+        search_queries: Set(None),
+        cleanup_rules_applied: Set(None),
     }
 }
 

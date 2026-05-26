@@ -5,6 +5,7 @@ mod m20260525_000001_genres_tags;
 mod m20260525_000002_run_metrics;
 mod m20260525_000003_observability;
 mod m20260526_000001_mangaupdates_id_map;
+mod m20260526_000002_release_search_queries;
 
 pub struct Migrator;
 
@@ -19,6 +20,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260525_000002_run_metrics::Migration),
             Box::new(m20260525_000003_observability::Migration),
             Box::new(m20260526_000001_mangaupdates_id_map::Migration),
+            Box::new(m20260526_000002_release_search_queries::Migration),
         ];
         m.extend(td_metadata_mangabaka::migration::migrations());
         m

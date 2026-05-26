@@ -1,15 +1,17 @@
-//! Metadata-provider listing + manual cache-refresh trigger.
+//! Metadata-provider listing + manual cache-refresh trigger + ad-hoc
+//! provider search (used by the review-queue link modal).
 
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, State};
-use serde::Serialize;
+use axum::extract::{Path, Query, State};
+use serde::{Deserialize, Serialize};
 use td_config::{MangabakaProviderConfig, ProvidersConfig};
 use td_db::repos::provider_cache_state_repo;
-use td_metadata::MetadataProvider;
+use td_metadata::{MetadataProvider, SeriesKind, SeriesStatus};
+use td_resolution::scoring::dice;
 use td_scheduler::jobs::refresh_provider_cache;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
 use crate::state::AppState;
@@ -247,4 +249,197 @@ pub async fn refresh_all(State(state): State<AppState>) -> ApiResult<Json<Refres
     }
 
     Ok(Json(RefreshAllResponse { results }))
+}
+
+/// Query string for [`search`]. Exactly one of `q` / `external_id` is
+/// required — when both are present, `external_id` wins (lookup is
+/// faster and more precise than search).
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderSearchQuery {
+    /// Free-text title query. Trimmed before use; ignored when empty.
+    #[serde(default)]
+    pub q: Option<String>,
+    /// Direct provider external-id lookup. When set, the handler short-
+    /// circuits to `MetadataProvider::get` and returns at most one hit
+    /// with `score = 1.0`.
+    #[serde(default)]
+    pub external_id: Option<String>,
+    /// Maximum number of hits to enrich with full metadata. Defaults to
+    /// 10; clamped to `[1, 50]` to keep the per-request cost bounded.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// One enriched hit. `score` is Dice(`q`, `title`) for the title-search
+/// path, or `1.0` for the externalId short-circuit path.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderSearchHit {
+    pub external_id: String,
+    pub title: String,
+    pub year: Option<i32>,
+    pub cover_url: Option<String>,
+    pub kind: Option<String>,
+    pub status: Option<String>,
+    /// First alternate title, if any. Useful for showing the
+    /// romaji/Japanese form alongside the canonical English title.
+    pub native_title: Option<String>,
+    pub genres: Vec<String>,
+    pub tags: Vec<String>,
+    pub external_url: Option<String>,
+    pub score: f32,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderSearchResponse {
+    pub provider: String,
+    pub hits: Vec<ProviderSearchHit>,
+}
+
+/// Title-or-externalId search against a single provider. Powers the
+/// review-queue "Link release" modal.
+///
+/// - `?externalId=<id>` — direct lookup via `MetadataProvider::get`.
+/// - `?q=<title>` — `MetadataProvider::search`, then enrichment via
+///   `get` on the top N hits and Dice-rescoring against `q`.
+/// - both empty → `400 Bad Request`.
+/// - unknown `id` → `404 Not Found`.
+#[utoipa::path(
+    get,
+    path = "/api/v1/providers/{id}/search",
+    tag = "providers",
+    operation_id = "search_provider",
+    params(
+        ("id" = String, Path, description = "Provider id"),
+        ProviderSearchQuery,
+    ),
+    responses(
+        (status = 200, body = ProviderSearchResponse),
+        (status = 400, description = "Both q and externalId missing or empty"),
+        (status = 404, description = "Unknown provider id")
+    )
+)]
+pub async fn search(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<ProviderSearchQuery>,
+) -> ApiResult<Json<ProviderSearchResponse>> {
+    let provider = state
+        .metadata
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound(format!("provider {id:?}")))?;
+
+    let external_id = params
+        .external_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let q = params.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
+    // externalId path: precise lookup, single hit at score 1.0.
+    if let Some(external_id) = external_id {
+        let meta = provider
+            .get(external_id)
+            .await
+            .map_err(|e| ApiError::Internal(anyhow::anyhow!("provider get failed: {e}")))?;
+        let hits = match meta {
+            Some(m) => vec![enrich(m, 1.0)],
+            None => Vec::new(),
+        };
+        return Ok(Json(ProviderSearchResponse { provider: id, hits }));
+    }
+
+    // Title path: search → enrich top N → Dice-rescore.
+    let q =
+        q.ok_or_else(|| ApiError::BadRequest("either q or externalId is required".to_string()))?;
+    let limit = params.limit.unwrap_or(10).clamp(1, 50);
+    let hits = provider
+        .search(q, limit)
+        .await
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("provider search failed: {e}")))?;
+
+    let mut enriched = Vec::with_capacity(hits.len());
+    for hit in hits {
+        let score = dice(q, &hit.title);
+        // Pull full metadata so the UI gets cover/kind/tags. Skip on
+        // miss or error (the search returned an ID we then couldn't
+        // resolve — surface the stub anyway with empty enrichment).
+        match provider.get(&hit.external_id).await {
+            Ok(Some(m)) => enriched.push(enrich(m, score)),
+            Ok(None) => enriched.push(stub_hit(hit, score)),
+            Err(e) => {
+                tracing::warn!(error = ?e, provider = %id, external_id = %hit.external_id,
+                    "provider get failed during search enrichment; emitting stub");
+                enriched.push(stub_hit(hit, score));
+            }
+        }
+    }
+    enriched.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(Json(ProviderSearchResponse {
+        provider: id,
+        hits: enriched,
+    }))
+}
+
+fn enrich(m: td_metadata::SeriesMetadata, score: f32) -> ProviderSearchHit {
+    ProviderSearchHit {
+        external_id: m.external_id,
+        title: m.canonical_title,
+        year: m.year,
+        cover_url: m.cover_url,
+        kind: m.kind.as_ref().map(series_kind_str),
+        status: m.status.as_ref().map(series_status_str),
+        native_title: m.alternate_titles.into_iter().next(),
+        genres: m.genres,
+        tags: m.tags,
+        external_url: m.external_url,
+        score,
+    }
+}
+
+fn stub_hit(hit: td_metadata::SearchHit, score: f32) -> ProviderSearchHit {
+    ProviderSearchHit {
+        external_id: hit.external_id,
+        title: hit.title,
+        year: hit.year,
+        cover_url: hit.cover_url,
+        kind: None,
+        status: None,
+        native_title: None,
+        genres: Vec::new(),
+        tags: Vec::new(),
+        external_url: None,
+        score,
+    }
+}
+
+fn series_kind_str(k: &SeriesKind) -> String {
+    match k {
+        SeriesKind::Manga => "manga".into(),
+        SeriesKind::Manhwa => "manhwa".into(),
+        SeriesKind::Manhua => "manhua".into(),
+        SeriesKind::Novel => "novel".into(),
+        SeriesKind::OneShot => "one_shot".into(),
+        SeriesKind::Oel => "oel".into(),
+        SeriesKind::Other(s) => s.clone(),
+    }
+}
+
+fn series_status_str(s: &SeriesStatus) -> String {
+    match s {
+        SeriesStatus::Ongoing => "ongoing".into(),
+        SeriesStatus::Completed => "completed".into(),
+        SeriesStatus::Hiatus => "hiatus".into(),
+        SeriesStatus::Cancelled => "cancelled".into(),
+        SeriesStatus::Upcoming => "upcoming".into(),
+        SeriesStatus::Unknown => "unknown".into(),
+    }
 }
