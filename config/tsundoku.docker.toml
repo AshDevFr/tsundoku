@@ -1,5 +1,9 @@
 # Config used by the dev container (Dockerfile.dev / docker compose dev profile).
 # Binds all interfaces and roots all on-disk state at the mounted /app/data volume.
+#
+# A sibling `tsundoku.docker.local.toml` (gitignored) is auto-merged on top of
+# this file by td_config::load. Put per-host sources and any other local-only
+# overrides there; secrets (api_key, admin_token) go in the project-root .env.
 
 [server]
 host = "0.0.0.0"
@@ -21,6 +25,17 @@ active_provider = "mangabaka"
 [providers.mangabaka]
 enabled = true
 api_base_url = "https://api.mangabaka.dev"
-# Set api_key + api_fallback = true in your production config to use the live API.
+# Offline dump URL + api_fallback are set in docker-compose.yml so both
+# profiles share the same MangaBaka wiring; api_key lives in .env.
 negative_cache_ttl_days = 7
 timeout_seconds = 60
+
+# Broad English-translated-manga feed, trusted uploaders only. Narrower
+# uploader-specific feeds live in tsundoku.docker.local.toml.
+[[sources]]
+kind = "nyaa"
+name = "nyaa-english-trusted"
+cron = "0 */2 * * *"   # every 2 hours; 5-field cron, seconds-0 auto-padded
+enabled = true
+  [sources.nyaa]
+  feed_url = "https://nyaa.si/?page=rss&c=3_1&f=2"

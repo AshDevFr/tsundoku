@@ -40,7 +40,7 @@ compose.*.yml
 Makefile
 config/tsundoku.toml
 config/tsundoku.yaml
-config/tsundoku.local.*
+config/*.local.*
 .env
 .env.example
 

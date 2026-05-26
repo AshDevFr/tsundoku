@@ -15,12 +15,14 @@ docker/data/
 *.log
 logs/
 
-# Local config (committed via *.example.toml; *.docker.toml is also committed)
+# Local config (committed via *.example.toml; *.docker.toml is also committed).
+# Any `<stem>.local.<ext>` sibling next to a committed config is auto-merged
+# on top of it by td_config::load and stays local-only.
 tsundoku.toml
 tsundoku.yaml
 config/tsundoku.toml
 config/tsundoku.yaml
-config/tsundoku.local.*
+config/*.local.*
 
 # Local env vars for docker compose (committed via .env.example)
 .env

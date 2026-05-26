@@ -1,8 +1,13 @@
-//! Layered configuration: struct defaults -> config file -> environment.
+//! Layered configuration: struct defaults -> config file -> local overlay
+//! -> environment.
 //!
 //! The config file may be TOML or YAML; the provider is chosen from the file
-//! extension. Environment variables use the `TSUNDOKU_` prefix with
-//! `__` as the nesting separator, e.g. `TSUNDOKU_SERVER__PORT=9000`.
+//! extension. A sibling `<stem>.local.<ext>` file (e.g. `tsundoku.docker.toml`
+//! -> `tsundoku.docker.local.toml`) is auto-merged on top of the base file
+//! when present, so operators can pin secrets and per-host overrides without
+//! touching the committed config. Environment variables use the `TSUNDOKU_`
+//! prefix with `__` as the nesting separator, e.g. `TSUNDOKU_SERVER__PORT=9000`,
+//! and override both files.
 
 use std::path::{Path, PathBuf};
 
@@ -362,21 +367,43 @@ impl Default for NyaaSourceOptions {
     }
 }
 
-/// Load configuration, applying defaults, then the file (if present), then env.
+/// Load configuration, applying defaults, then the base file (if present),
+/// then the sibling `.local` overlay (if present), then env vars.
 pub fn load(path: &Path) -> anyhow::Result<AppConfig> {
     let mut fig = Figment::from(Serialized::defaults(AppConfig::default()));
 
     if path.exists() {
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        fig = match ext {
-            "yaml" | "yml" => fig.merge(Yaml::file(path)),
-            _ => fig.merge(Toml::file(path)),
-        };
+        fig = merge_file(fig, path);
+    }
+
+    if let Some(local) = local_overlay_path(path)
+        && local.exists()
+    {
+        fig = merge_file(fig, &local);
     }
 
     fig.merge(Env::prefixed("TSUNDOKU_").split("__"))
         .extract()
         .context("parsing configuration")
+}
+
+fn merge_file(fig: Figment, path: &Path) -> Figment {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    match ext {
+        "yaml" | "yml" => fig.merge(Yaml::file(path)),
+        _ => fig.merge(Toml::file(path)),
+    }
+}
+
+/// Derive the sibling local-overlay path by inserting `.local` before the
+/// final extension: `config/tsundoku.docker.toml` -> `config/tsundoku.docker.local.toml`.
+/// Returns `None` when the input has no extension to anchor against.
+fn local_overlay_path(path: &Path) -> Option<PathBuf> {
+    let ext = path.extension()?.to_str()?;
+    let stem = path.file_stem()?.to_str()?;
+    let mut local = path.to_path_buf();
+    local.set_file_name(format!("{stem}.local.{ext}"));
+    Some(local)
 }
 
 #[cfg(test)]
@@ -426,6 +453,128 @@ mod tests {
             p.database_url(),
             "sqlite:///var/tsundoku/db/tsundoku.db?mode=rwc"
         );
+    }
+
+    #[test]
+    fn local_overlay_overrides_base_file() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("tsundoku.docker.toml");
+        let local = dir.path().join("tsundoku.docker.local.toml");
+
+        // Base sets a port and one source.
+        writeln!(
+            std::fs::File::create(&base).unwrap(),
+            r#"
+[server]
+port = 8080
+
+[[sources]]
+kind = "nyaa"
+name = "broad"
+  [sources.nyaa]
+  feed_url = "https://nyaa.si/?page=rss&c=3_1&f=2"
+            "#
+        )
+        .unwrap();
+
+        // Local overrides the port AND replaces the sources array (figment
+        // replaces arrays wholesale; partial array merges aren't supported).
+        writeln!(
+            std::fs::File::create(&local).unwrap(),
+            r#"
+[server]
+port = 9000
+
+[[sources]]
+kind = "nyaa"
+name = "broad"
+  [sources.nyaa]
+  feed_url = "https://nyaa.si/?page=rss&c=3_1&f=2"
+
+[[sources]]
+kind = "nyaa"
+name = "uploader-tsuna69"
+  [sources.nyaa]
+  feed_url = "https://nyaa.si/?page=rss&u=tsuna69"
+            "#
+        )
+        .unwrap();
+
+        let cfg = load(&base).unwrap();
+        assert_eq!(cfg.server.port, 9000, "local overlay should win over base");
+        assert_eq!(cfg.sources.len(), 2);
+        assert_eq!(cfg.sources[1].name, "uploader-tsuna69");
+    }
+
+    #[test]
+    fn local_overlay_is_optional() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("tsundoku.docker.toml");
+        std::fs::write(&base, "[server]\nport = 8081\n").unwrap();
+
+        // No sibling .local.toml exists: load must still succeed.
+        let cfg = load(&base).unwrap();
+        assert_eq!(cfg.server.port, 8081);
+    }
+
+    #[test]
+    fn local_overlay_merges_dict_fields_recursively() {
+        // Dicts merge field-by-field (only arrays are replaced wholesale), so
+        // base + local can each contribute different keys to the same table.
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("tsundoku.docker.toml");
+        let local = dir.path().join("tsundoku.docker.local.toml");
+
+        std::fs::write(
+            &base,
+            r#"
+[providers.mangabaka]
+api_base_url = "https://proxy.example.com"
+timeout_seconds = 90
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            &local,
+            r#"
+[providers.mangabaka]
+api_key = "mb-secret"
+api_fallback = true
+"#,
+        )
+        .unwrap();
+
+        let cfg = load(&base).unwrap();
+        let mb = &cfg.providers.mangabaka;
+        // Base-only field survives the merge.
+        assert_eq!(mb.api_base_url, "https://proxy.example.com");
+        assert_eq!(mb.timeout_seconds, 90);
+        // Local-only fields are applied.
+        assert_eq!(mb.api_key.as_deref(), Some("mb-secret"));
+        assert!(mb.api_fallback);
+    }
+
+    #[test]
+    fn local_overlay_path_derives_sibling_with_local_infix() {
+        // Standard `<stem>.<ext>` cases.
+        assert_eq!(
+            local_overlay_path(Path::new("config/tsundoku.docker.toml")),
+            Some(PathBuf::from("config/tsundoku.docker.local.toml"))
+        );
+        assert_eq!(
+            local_overlay_path(Path::new("config/tsundoku.yaml")),
+            Some(PathBuf::from("config/tsundoku.local.yaml"))
+        );
+        // file_stem() strips only the final extension, so multi-dot stems
+        // round-trip cleanly.
+        assert_eq!(
+            local_overlay_path(Path::new("/etc/tsundoku/app.prod.yml")),
+            Some(PathBuf::from("/etc/tsundoku/app.prod.local.yml"))
+        );
+        // Anchorless paths have no `.local.<ext>` to derive.
+        assert_eq!(local_overlay_path(Path::new("tsundoku")), None);
     }
 
     #[test]
