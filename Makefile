@@ -3,6 +3,7 @@
 	fmt lint check ci test test-fast \
 	frontend frontend-build frontend-install frontend-lint frontend-lint-fix test-frontend \
 	openapi openapi-types openapi-all \
+	docs docs-build docs-install \
 	dev-up dev-up-d dev-up-build dev-down dev-down-v dev-logs dev-watch dev-shell \
 	prod-up prod-up-d prod-down prod-logs \
 	docker-build docker-run docker-push \
@@ -75,6 +76,17 @@ frontend-lint-fix: ## Lint and auto-fix the frontend
 
 test-frontend: ## Run frontend tests
 	cd web && npm run test:run
+
+# ── Docs site (Docusaurus) ───────────────────────────────────────────────────
+
+docs: ## Start the Docusaurus dev server at http://localhost:3000
+	cd docs && npm install && npm run start
+
+docs-build: ## Build the docs site into docs/build (Cloudflare Pages publishes this)
+	cd docs && npm ci && npm run build
+
+docs-install: ## Install docs site dependencies
+	cd docs && npm install
 
 # ── OpenAPI ──────────────────────────────────────────────────────────────────
 

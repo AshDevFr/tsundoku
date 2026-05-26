@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    Placeholder logo: a small stack of books sketched in indigo, evoking
+    "tsundoku" (積ん読 — a pile of unread books). Three offset bars with
+    a subtle highlight on each spine. Replace with real artwork when
+    available; the docusaurus.config.ts references this exact path.
+  -->
+  <rect width="64" height="64" rx="12" fill="#4f46e5"/>
+  <g transform="translate(12 14)">
+    <!-- bottom book -->
+    <rect x="0" y="28" width="40" height="8" rx="1.5" fill="#a5b4fc"/>
+    <rect x="0" y="28" width="40" height="2" fill="#e0e7ff" opacity="0.7"/>
+    <!-- middle book (offset right) -->
+    <rect x="3" y="18" width="36" height="8" rx="1.5" fill="#c7d2fe"/>
+    <rect x="3" y="18" width="36" height="2" fill="#eef2ff" opacity="0.7"/>
+    <!-- top book (offset left) -->
+    <rect x="-2" y="8" width="34" height="8" rx="1.5" fill="#e0e7ff"/>
+    <rect x="-2" y="8" width="34" height="2" fill="#ffffff" opacity="0.7"/>
+  </g>
+</svg>

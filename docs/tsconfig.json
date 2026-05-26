@@ -1,0 +1,14 @@
+{
+  // This file is not used in compilation. It is here for the editor experience.
+  "extends": "@docusaurus/tsconfig",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "resolveJsonModule": true,
+    // `baseUrl` (used here and by `@docusaurus/tsconfig` to wire the
+    // `@site/*` path alias) is deprecated in TS 6.0 and will stop
+    // working in 7.0. Drop this flag — and find a baseUrl-free way to
+    // wire the alias — when Docusaurus releases a TS-7-ready tsconfig.
+    "ignoreDeprecations": "6.0"
+  },
+  "exclude": [".docusaurus", "build"]
+}

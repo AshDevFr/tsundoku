@@ -40,3 +40,8 @@ config/*.local.*
 
 # Generated frontend bits
 web/coverage/
+
+# Docusaurus docs site
+docs/build/
+docs/.docusaurus/
+docs/.cache-loader/

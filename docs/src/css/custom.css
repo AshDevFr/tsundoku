@@ -1,0 +1,33 @@
+/**
+ * Global CSS. Infima (the classic-preset CSS framework) is included
+ * automatically; we override its primary color tokens here to give
+ * tsundoku its own identity, separate from Codex's teal/orange palette.
+ *
+ * Palette: indigo primary, slate accents. Matches the Mantine indigo
+ * the React SPA uses for badges so the two surfaces feel related.
+ */
+
+:root {
+  --ifm-color-primary: #4f46e5; /* indigo 600 */
+  --ifm-color-primary-dark: #4338ca; /* indigo 700 */
+  --ifm-color-primary-darker: #3730a3; /* indigo 800 */
+  --ifm-color-primary-darkest: #312e81; /* indigo 900 */
+  --ifm-color-primary-light: #6366f1; /* indigo 500 */
+  --ifm-color-primary-lighter: #818cf8; /* indigo 400 */
+  --ifm-color-primary-lightest: #a5b4fc; /* indigo 300 */
+
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(79, 70, 229, 0.1);
+}
+
+[data-theme="dark"] {
+  --ifm-color-primary: #818cf8; /* indigo 400 */
+  --ifm-color-primary-dark: #6366f1; /* indigo 500 */
+  --ifm-color-primary-darker: #4f46e5; /* indigo 600 */
+  --ifm-color-primary-darkest: #4338ca; /* indigo 700 */
+  --ifm-color-primary-light: #a5b4fc; /* indigo 300 */
+  --ifm-color-primary-lighter: #c7d2fe; /* indigo 200 */
+  --ifm-color-primary-lightest: #e0e7ff; /* indigo 100 */
+
+  --docusaurus-highlighted-code-line-bg: rgba(129, 140, 248, 0.2);
+}
