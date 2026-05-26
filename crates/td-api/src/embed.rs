@@ -1,3 +1,9 @@
+//! SPA fallback handler.
+//!
+//! With `--features embed-frontend`, the built `web/dist` is compiled into
+//! the binary via `rust-embed`. Without it, every non-API path returns a
+//! friendly 404 explaining how to run the Vite dev server.
+
 use axum::http::Uri;
 use axum::response::IntoResponse;
 
@@ -8,7 +14,7 @@ mod embedded {
     use axum::response::{IntoResponse, Response};
     use rust_embed::RustEmbed;
 
-    // Path is relative to this crate's manifest dir (crates/tsundoku).
+    // Path is relative to this crate's manifest dir (crates/td-api).
     // `../../web/dist` resolves to `web/dist` at the workspace root.
     #[derive(RustEmbed)]
     #[folder = "../../web/dist"]

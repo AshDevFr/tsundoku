@@ -31,6 +31,15 @@ json = false
 # Mount the Scalar API docs UI at /docs
 docs = true
 
+# Single-user auth. Reads are public by default; flip `read_requires_auth`
+# to gate them behind `api_key`. Write endpoints always require
+# `admin_token` as a Bearer token, and are disabled (503) if unset — set
+# `admin_token` before exposing the API publicly.
+[auth]
+read_requires_auth = false
+# api_key      = "read-...........-only"
+# admin_token  = "write-..........-only"
+
 # Metadata-layer settings. Exactly one provider runs the auto-detect
 # resolution path; others may still be registered for review UI search
 # and foreign-ID lookups.

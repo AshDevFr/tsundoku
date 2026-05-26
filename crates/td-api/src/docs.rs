@@ -1,0 +1,94 @@
+//! OpenAPI specification.
+//!
+//! Every handler is listed in `paths(...)` and every DTO in
+//! `components(schemas(...))`. utoipa derives the rest from the handler
+//! attributes. Frontend codegen (`openapi-typescript`) reads this spec via
+//! `tsundoku openapi`.
+
+use utoipa::OpenApi;
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+
+use crate::errors::ApiErrorBody;
+use crate::handlers::providers::{ProviderCacheState, ProviderDto, ProviderList, RefreshResponse};
+use crate::handlers::releases::{
+    LinkRequest, ReleaseDto, ReleasePage, ReviewCandidateDto, UnresolvedPage, UnresolvedRelease,
+};
+use crate::handlers::series::{ExternalIdDto, SeriesDetail, SeriesListItem, SeriesListPage};
+use crate::handlers::sources::{ManualPollResponse, SourceDto, SourceList};
+use crate::handlers::stats::{ReleaseCounts, StatsResponse};
+use crate::handlers::{health, providers, releases, series, sources, stats};
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "tsundoku API",
+        version = env!("CARGO_PKG_VERSION"),
+        description = "Manga discovery service. Read endpoints (`GET`) are public unless `auth.read_requires_auth = true`. Write endpoints (`POST`) always require the admin bearer."
+    ),
+    paths(
+        health::health,
+        stats::stats,
+        series::list,
+        series::get,
+        series::refresh_metadata,
+        releases::list,
+        releases::list_unresolved,
+        releases::link,
+        releases::reject,
+        releases::retry,
+        sources::list,
+        sources::poll,
+        providers::list,
+        providers::refresh_cache,
+    ),
+    components(schemas(
+        ApiErrorBody,
+        health::Health,
+        StatsResponse,
+        ReleaseCounts,
+        SeriesListItem,
+        SeriesListPage,
+        SeriesDetail,
+        ExternalIdDto,
+        ReleaseDto,
+        ReleasePage,
+        UnresolvedRelease,
+        UnresolvedPage,
+        ReviewCandidateDto,
+        LinkRequest,
+        SourceDto,
+        SourceList,
+        ManualPollResponse,
+        ProviderDto,
+        ProviderList,
+        ProviderCacheState,
+        RefreshResponse,
+    )),
+    tags(
+        (name = "system", description = "Health and aggregate counters"),
+        (name = "series", description = "Resolved series catalog"),
+        (name = "releases", description = "Raw release feed and review queue"),
+        (name = "sources", description = "Discovery-source state and triggers"),
+        (name = "providers", description = "Metadata-provider state and triggers")
+    ),
+    modifiers(&BearerSecurity)
+)]
+pub struct ApiDoc;
+
+struct BearerSecurity;
+
+impl utoipa::Modify for BearerSecurity {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            "admin",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("opaque")
+                    .description(Some("Admin bearer token (auth.admin_token in config)."))
+                    .build(),
+            ),
+        );
+    }
+}

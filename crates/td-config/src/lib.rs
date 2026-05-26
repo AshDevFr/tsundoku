@@ -18,6 +18,7 @@ pub struct AppConfig {
     pub storage: StorageConfig,
     pub logging: LoggingConfig,
     pub api: ApiConfig,
+    pub auth: AuthConfig,
     pub metadata: MetadataConfig,
     pub providers: ProvidersConfig,
     /// Configured discovery sources. Each entry is one instance (kind +
@@ -130,6 +131,24 @@ pub struct LoggingConfig {
 pub struct ApiConfig {
     /// Mount the Scalar API docs UI at `/docs`.
     pub docs: bool,
+}
+
+/// Single-user auth, populated from `[auth]`. Read endpoints are public by
+/// default; flip `read_requires_auth` to gate them behind `api_key`. Write
+/// endpoints always require the `admin_token` bearer; if it is unset the
+/// service refuses to start.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuthConfig {
+    /// When true, every `/api/v1/*` GET requires `X-API-Key: <api_key>` (or
+    /// `Authorization: Bearer <api_key>`). When false, reads are open.
+    pub read_requires_auth: bool,
+    /// API key for read endpoints. Required when `read_requires_auth` is
+    /// true. Otherwise informational.
+    pub api_key: Option<String>,
+    /// Bearer token for write endpoints. When `None`, every write returns
+    /// 503 (clearer than 401 for a misconfigured deploy).
+    pub admin_token: Option<String>,
 }
 
 /// Metadata-layer settings independent of any specific provider.
@@ -511,6 +530,36 @@ required_kinds = ["novel"]
         assert!((cfg.ingestion.resolution_threshold - 0.85).abs() < 1e-6);
         assert!(cfg.ingestion.queue_low_confidence);
         assert!(cfg.ingestion.format_type_rules.is_empty());
+    }
+
+    #[test]
+    fn auth_defaults_are_open_with_no_tokens() {
+        let cfg = load(&PathBuf::from("does-not-exist.toml")).unwrap();
+        assert!(!cfg.auth.read_requires_auth);
+        assert!(cfg.auth.api_key.is_none());
+        assert!(cfg.auth.admin_token.is_none());
+    }
+
+    #[test]
+    fn auth_block_parses() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[auth]
+read_requires_auth = true
+api_key = "read-me"
+admin_token = "write-me"
+            "#
+        )
+        .unwrap();
+        let cfg = load(&path).unwrap();
+        assert!(cfg.auth.read_requires_auth);
+        assert_eq!(cfg.auth.api_key.as_deref(), Some("read-me"));
+        assert_eq!(cfg.auth.admin_token.as_deref(), Some("write-me"));
     }
 
     #[test]

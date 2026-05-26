@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "tsundoku API",
-    "description": "Manga discovery service that polls sources and resolves releases to MangaBaka series",
+    "description": "Manga discovery service. Read endpoints (`GET`) are public unless `auth.read_requires_auth = true`. Write endpoints (`POST`) always require the admin bearer.",
     "contact": {
       "name": "Sylvain Cau",
       "email": "sylvain.cau@gmail.com"
@@ -17,9 +17,9 @@
     "/api/v1/health": {
       "get": {
         "tags": [
-          "tsundoku"
+          "system"
         ],
-        "summary": "Liveness check. Pings the database and reports `ok`.",
+        "summary": "Pings the database and reports `ok` when reachable.",
         "operationId": "health",
         "responses": {
           "200": {
@@ -37,10 +37,619 @@
           }
         }
       }
+    },
+    "/api/v1/providers": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "List every registered metadata provider with its latest cache-refresh\nmarkers and the active-provider flag.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{id}/refresh-cache": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Trigger an offline-cache refresh for the named provider. Same locking\nsemantics as the scheduled refresh job; an in-flight refresh causes\nthis request to report `skipped = true` without spawning a duplicate.",
+        "operationId": "refresh_cache",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Provider id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No provider with that id registered"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/releases": {
+      "get": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "List releases ordered by `observed_at` descending. Filters compose.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by resolution status (`resolved`, `unresolved`, `ambiguous`, `review_pending`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sourceKind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sourceName",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "seriesId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleasePage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/releases/unresolved": {
+      "get": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Review queue: releases awaiting human attention.",
+        "description": "Returns releases whose status is `unresolved`, `ambiguous`, or\n`review_pending`, each with the recorded review candidates so the UI\ncan render a \"pick the right match\" panel without a second fetch.",
+        "operationId": "list_unresolved",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "1-indexed page number.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "description": "Items per page (capped server-side at 200).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnresolvedPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/releases/{id}/link": {
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Manually link a release to a series. Body shape:",
+        "description": "- `{ \"seriesId\": 42 }` — link to an existing series row by internal id.\n- `{ \"provider\": \"mangabaka\", \"externalId\": \"1677\" }` — link by a\n  provider's external id. If no `series_external_ids` row matches yet,\n  the active provider's `get` is called to fetch metadata and create\n  the series row before linking.",
+        "operationId": "link",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Release id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Provider not registered or external_id unknown to provider"
+          },
+          "404": {
+            "description": "Release or series not found"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/releases/{id}/reject": {
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Mark a release as \"not a series we care about\". Drops candidates and\npins the resolution status to `rejected` so the resolver leaves it\nalone on subsequent runs.",
+        "operationId": "reject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Release id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Release not found"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/releases/{id}/retry": {
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Re-run the resolver against a single release. Useful after a provider\nrefresh, a config change, or a manual edit.",
+        "operationId": "retry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Release id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Release not found"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/series": {
+      "get": {
+        "tags": [
+          "series"
+        ],
+        "summary": "List series ordered by last release timestamp (most recent first by default).",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Filter by stored `series.type` (e.g. `manga`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by stored `series.status` (e.g. `ongoing`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "owned",
+            "in": "query",
+            "description": "Filter by ownership flag (true = owned by Codex, false = discoverable).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort field. Supports `last_release_at` (default) and `first_seen_at`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "`asc` or `desc` (default).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesListPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/series/{id}": {
+      "get": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Series detail, including the resolved external-ID mappings.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Internal series id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No series with that id"
+          }
+        }
+      }
+    },
+    "/api/v1/series/{id}/refresh-metadata": {
+      "post": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Re-fetch metadata for a series from the active provider and re-persist.",
+        "operationId": "refresh_metadata",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Internal series id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Series or provider entry not found"
+          },
+          "409": {
+            "description": "No mapping for the active provider on this series"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/sources": {
+      "get": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "List every registered discovery source with its last-poll markers.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sources/{name}/poll": {
+      "post": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "Trigger a one-shot poll for the named source. Uses the same per-source\nmutex the cron job holds, so a manual kick during a scheduled tick is\nsilently skipped (`skipped = true`).",
+        "operationId": "poll",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Source instance name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualPollResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No source with that name registered"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Aggregate counts surfaced by the frontend home page and review badge.",
+        "operationId": "stats",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ApiErrorBody": {
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ExternalIdDto": {
+        "type": "object",
+        "required": [
+          "provider",
+          "externalId",
+          "fetchedAt"
+        ],
+        "properties": {
+          "externalId": {
+            "type": "string"
+          },
+          "externalUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fetchedAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "provider": {
+            "type": "string"
+          }
+        }
+      },
       "Health": {
         "type": "object",
         "required": [
@@ -51,13 +660,728 @@
             "type": "string"
           }
         }
+      },
+      "LinkRequest": {
+        "type": "object",
+        "description": "Body for the manual-link endpoint. Exactly one of:\n- `seriesId`: link to an existing series row by internal id.\n- `provider` + `externalId`: link via the named provider's external id;\n  the provider's `get` is called when no mapping exists yet.",
+        "properties": {
+          "externalId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seriesId": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "ManualPollResponse": {
+        "type": "object",
+        "required": [
+          "source",
+          "triggered",
+          "skipped"
+        ],
+        "properties": {
+          "skipped": {
+            "type": "boolean",
+            "description": "`false` when a previous tick is still in flight; the request is a no-op."
+          },
+          "source": {
+            "type": "string"
+          },
+          "triggered": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ProviderCacheState": {
+        "type": "object",
+        "required": [
+          "fetchedAt"
+        ],
+        "properties": {
+          "bytesDownloaded": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "cacheVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fetchedAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "recordCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "sourceUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ProviderDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "displayName",
+          "active"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "lastRefresh": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProviderCacheState"
+              }
+            ]
+          }
+        }
+      },
+      "ProviderList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderDto"
+            }
+          }
+        }
+      },
+      "RefreshResponse": {
+        "type": "object",
+        "required": [
+          "provider",
+          "triggered",
+          "skipped"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "skipped": {
+            "type": "boolean",
+            "description": "`false` when a refresh is already in flight; the request is a no-op."
+          },
+          "triggered": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ReleaseCounts": {
+        "type": "object",
+        "required": [
+          "resolved",
+          "unresolved",
+          "ambiguous",
+          "reviewPending",
+          "rejected"
+        ],
+        "properties": {
+          "ambiguous": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "resolved": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reviewPending": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "unresolved": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ReleaseDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "sourceKind",
+          "sourceName",
+          "externalId",
+          "title",
+          "link",
+          "files",
+          "formats",
+          "postedAt",
+          "observedAt",
+          "resolutionStatus",
+          "resolutionAttempts"
+        ],
+        "properties": {
+          "ddlUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "externalId": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "formats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "infoHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastResolveAttemptAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "link": {
+            "type": "string"
+          },
+          "magnet": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "observedAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "postedAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resolutionAttempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "resolutionConfidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "resolutionPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolutionStatus": {
+            "type": "string"
+          },
+          "seriesId": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "sizeBytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "sourceKind": {
+            "type": "string"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "torrentUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ReleasePage": {
+        "type": "object",
+        "required": [
+          "items",
+          "page",
+          "pageSize",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseDto"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ReviewCandidateDto": {
+        "type": "object",
+        "required": [
+          "seriesId",
+          "seriesTitle",
+          "score"
+        ],
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "score": {
+            "type": "number",
+            "format": "double"
+          },
+          "seriesCoverUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seriesId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "seriesTitle": {
+            "type": "string"
+          }
+        }
+      },
+      "SeriesDetail": {
+        "type": "object",
+        "required": [
+          "id",
+          "canonicalTitle",
+          "alternateTitles",
+          "genres",
+          "metadataSource",
+          "metadataFetchedAt",
+          "firstSeenAt",
+          "lastReleaseAt",
+          "owned",
+          "externalIds"
+        ],
+        "properties": {
+          "alternateTitles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "canonicalTitle": {
+            "type": "string"
+          },
+          "coverUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "externalIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdDto"
+            }
+          },
+          "firstSeenAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "highestChapter": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "highestVolume": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastReleaseAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "metadataFetchedAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "metadataSource": {
+            "type": "string"
+          },
+          "owned": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "SeriesListItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "canonicalTitle",
+          "lastReleaseAt",
+          "firstSeenAt",
+          "owned"
+        ],
+        "properties": {
+          "canonicalTitle": {
+            "type": "string"
+          },
+          "coverUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "firstSeenAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastReleaseAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "owned": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "SeriesListPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "page",
+          "pageSize",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesListItem"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "SourceDto": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastPolledAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "lastSuccessAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "lastSummary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "SourceList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceDto"
+            }
+          }
+        }
+      },
+      "StatsResponse": {
+        "type": "object",
+        "required": [
+          "series",
+          "releases",
+          "totalReleases",
+          "activeProvider"
+        ],
+        "properties": {
+          "activeProvider": {
+            "type": "string"
+          },
+          "releases": {
+            "$ref": "#/components/schemas/ReleaseCounts"
+          },
+          "series": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "totalReleases": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "UnresolvedPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "page",
+          "pageSize",
+          "total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnresolvedRelease"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "UnresolvedRelease": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ReleaseDto"
+          },
+          {
+            "type": "object",
+            "required": [
+              "candidates"
+            ],
+            "properties": {
+              "candidates": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReviewCandidateDto"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "securitySchemes": {
+      "admin": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque",
+        "description": "Admin bearer token (auth.admin_token in config)."
       }
     }
   },
   "tags": [
     {
-      "name": "tsundoku",
-      "description": "Manga discovery service that polls sources and resolves releases to MangaBaka series"
+      "name": "system",
+      "description": "Health and aggregate counters"
+    },
+    {
+      "name": "series",
+      "description": "Resolved series catalog"
+    },
+    {
+      "name": "releases",
+      "description": "Raw release feed and review queue"
+    },
+    {
+      "name": "sources",
+      "description": "Discovery-source state and triggers"
+    },
+    {
+      "name": "providers",
+      "description": "Metadata-provider state and triggers"
     }
   ]
 }

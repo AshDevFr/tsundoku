@@ -1,4 +1,3 @@
-mod api;
 mod commands;
 mod metadata;
 mod source_registry;

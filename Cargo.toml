@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/tsundoku",
+    "crates/td-api",
     "crates/td-config",
     "crates/td-db",
     "crates/td-metadata",

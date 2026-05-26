@@ -1,40 +1,47 @@
 [package]
-name = "tsundoku"
+name = "td-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description.workspace = true
 
-[[bin]]
-name = "tsundoku"
-path = "src/main.rs"
-
 [features]
 default = []
 # Embed the built `web/dist` into the binary at compile time.
 # Requires `web/dist` to exist first (run `make frontend-build`).
-embed-frontend = ["td-api/embed-frontend"]
+embed-frontend = ["dep:rust-embed", "dep:mime_guess"]
 
 [dependencies]
-td-api = { path = "../td-api" }
 td-config = { path = "../td-config" }
 td-db = { path = "../td-db" }
 td-metadata = { path = "../td-metadata" }
-td-metadata-mangabaka = { path = "../td-metadata-mangabaka" }
 td-resolution = { path = "../td-resolution" }
 td-scheduler = { path = "../td-scheduler" }
 td-source = { path = "../td-source" }
-td-source-nyaa = { path = "../td-source-nyaa" }
 
 tokio.workspace = true
+async-trait.workspace = true
 axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+axum-extra.workspace = true
 sea-orm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 utoipa.workspace = true
-clap.workspace = true
+utoipa-axum.workspace = true
+utoipa-scalar.workspace = true
 chrono.workspace = true
+
+rust-embed = { workspace = true, optional = true }
+mime_guess = { workspace = true, optional = true }
+
+[dev-dependencies]
+migration = { path = "../../migration" }
+tower = { workspace = true, features = ["util"] }
+http-body-util.workspace = true
+bytes.workspace = true

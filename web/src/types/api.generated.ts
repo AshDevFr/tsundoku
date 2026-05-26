@@ -11,8 +11,259 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Liveness check. Pings the database and reports `ok`. */
+        /** Pings the database and reports `ok` when reachable. */
         get: operations["health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every registered metadata provider with its latest cache-refresh
+         *     markers and the active-provider flag.
+         */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/{id}/refresh-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger an offline-cache refresh for the named provider. Same locking
+         *     semantics as the scheduled refresh job; an in-flight refresh causes
+         *     this request to report `skipped = true` without spawning a duplicate.
+         */
+        post: operations["refresh_cache"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List releases ordered by `observed_at` descending. Filters compose. */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/releases/unresolved": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Review queue: releases awaiting human attention.
+         * @description Returns releases whose status is `unresolved`, `ambiguous`, or
+         *     `review_pending`, each with the recorded review candidates so the UI
+         *     can render a "pick the right match" panel without a second fetch.
+         */
+        get: operations["list_unresolved"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/releases/{id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Manually link a release to a series. Body shape:
+         * @description - `{ "seriesId": 42 }` — link to an existing series row by internal id.
+         *     - `{ "provider": "mangabaka", "externalId": "1677" }` — link by a
+         *       provider's external id. If no `series_external_ids` row matches yet,
+         *       the active provider's `get` is called to fetch metadata and create
+         *       the series row before linking.
+         */
+        post: operations["link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/releases/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a release as "not a series we care about". Drops candidates and
+         *     pins the resolution status to `rejected` so the resolver leaves it
+         *     alone on subsequent runs.
+         */
+        post: operations["reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/releases/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-run the resolver against a single release. Useful after a provider
+         *     refresh, a config change, or a manual edit.
+         */
+        post: operations["retry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List series ordered by last release timestamp (most recent first by default). */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/series/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Series detail, including the resolved external-ID mappings. */
+        get: operations["get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/series/{id}/refresh-metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-fetch metadata for a series from the active provider and re-persist. */
+        post: operations["refresh_metadata"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List every registered discovery source with its last-poll markers. */
+        get: operations["list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources/{name}/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger a one-shot poll for the named source. Uses the same per-source
+         *     mutex the cron job holds, so a manual kick during a scheduled tick is
+         *     silently skipped (`skipped = true`).
+         */
+        post: operations["poll"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Aggregate counts surfaced by the frontend home page and review badge. */
+        get: operations["stats"];
         put?: never;
         post?: never;
         delete?: never;
@@ -25,8 +276,204 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ApiErrorBody: {
+            error: string;
+            message: string;
+        };
+        ExternalIdDto: {
+            externalId: string;
+            externalUrl?: string | null;
+            /** Format: int64 */
+            fetchedAt: number;
+            provider: string;
+        };
         Health: {
             status: string;
+        };
+        /**
+         * @description Body for the manual-link endpoint. Exactly one of:
+         *     - `seriesId`: link to an existing series row by internal id.
+         *     - `provider` + `externalId`: link via the named provider's external id;
+         *       the provider's `get` is called when no mapping exists yet.
+         */
+        LinkRequest: {
+            externalId?: string | null;
+            provider?: string | null;
+            /** Format: int32 */
+            seriesId?: number | null;
+        };
+        ManualPollResponse: {
+            /** @description `false` when a previous tick is still in flight; the request is a no-op. */
+            skipped: boolean;
+            source: string;
+            triggered: boolean;
+        };
+        ProviderCacheState: {
+            /** Format: int64 */
+            bytesDownloaded?: number | null;
+            cacheVersion?: string | null;
+            /** Format: int64 */
+            fetchedAt: number;
+            /** Format: int64 */
+            recordCount?: number | null;
+            sourceUrl?: string | null;
+        };
+        ProviderDto: {
+            active: boolean;
+            displayName: string;
+            id: string;
+            lastRefresh?: null | components["schemas"]["ProviderCacheState"];
+        };
+        ProviderList: {
+            items: components["schemas"]["ProviderDto"][];
+        };
+        RefreshResponse: {
+            provider: string;
+            /** @description `false` when a refresh is already in flight; the request is a no-op. */
+            skipped: boolean;
+            triggered: boolean;
+        };
+        ReleaseCounts: {
+            /** Format: int64 */
+            ambiguous: number;
+            /** Format: int64 */
+            rejected: number;
+            /** Format: int64 */
+            resolved: number;
+            /** Format: int64 */
+            reviewPending: number;
+            /** Format: int64 */
+            unresolved: number;
+        };
+        ReleaseDto: {
+            ddlUrl?: string | null;
+            externalId: string;
+            files: string[];
+            formats: string[];
+            id: string;
+            infoHash?: string | null;
+            /** Format: int64 */
+            lastResolveAttemptAt?: number | null;
+            link: string;
+            magnet?: string | null;
+            /** Format: int64 */
+            observedAt: number;
+            /** Format: int64 */
+            postedAt: number;
+            /** Format: int32 */
+            resolutionAttempts: number;
+            /** Format: double */
+            resolutionConfidence?: number | null;
+            resolutionPath?: string | null;
+            resolutionStatus: string;
+            /** Format: int32 */
+            seriesId?: number | null;
+            /** Format: int64 */
+            sizeBytes?: number | null;
+            sourceKind: string;
+            sourceName: string;
+            title: string;
+            torrentUrl?: string | null;
+        };
+        ReleasePage: {
+            items: components["schemas"]["ReleaseDto"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            pageSize: number;
+            /** Format: int64 */
+            total: number;
+        };
+        ReviewCandidateDto: {
+            reason?: string | null;
+            /** Format: double */
+            score: number;
+            seriesCoverUrl?: string | null;
+            /** Format: int32 */
+            seriesId: number;
+            seriesTitle: string;
+        };
+        SeriesDetail: {
+            alternateTitles: string[];
+            canonicalTitle: string;
+            coverUrl?: string | null;
+            externalIds: components["schemas"]["ExternalIdDto"][];
+            /** Format: int64 */
+            firstSeenAt: number;
+            genres: string[];
+            /** Format: double */
+            highestChapter?: number | null;
+            /** Format: double */
+            highestVolume?: number | null;
+            /** Format: int32 */
+            id: number;
+            kind?: string | null;
+            /** Format: int64 */
+            lastReleaseAt: number;
+            /** Format: int64 */
+            metadataFetchedAt: number;
+            metadataSource: string;
+            owned: boolean;
+            status?: string | null;
+            /** Format: int32 */
+            year?: number | null;
+        };
+        SeriesListItem: {
+            canonicalTitle: string;
+            coverUrl?: string | null;
+            /** Format: int64 */
+            firstSeenAt: number;
+            /** Format: int32 */
+            id: number;
+            kind?: string | null;
+            /** Format: int64 */
+            lastReleaseAt: number;
+            owned: boolean;
+            status?: string | null;
+            /** Format: int32 */
+            year?: number | null;
+        };
+        SeriesListPage: {
+            items: components["schemas"]["SeriesListItem"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            pageSize: number;
+            /** Format: int64 */
+            total: number;
+        };
+        SourceDto: {
+            kind: string;
+            lastError?: string | null;
+            /** Format: int64 */
+            lastPolledAt?: number | null;
+            /** Format: int64 */
+            lastSuccessAt?: number | null;
+            lastSummary?: string | null;
+            name: string;
+        };
+        SourceList: {
+            items: components["schemas"]["SourceDto"][];
+        };
+        StatsResponse: {
+            activeProvider: string;
+            releases: components["schemas"]["ReleaseCounts"];
+            /** Format: int64 */
+            series: number;
+            /** Format: int64 */
+            totalReleases: number;
+        };
+        UnresolvedPage: {
+            items: components["schemas"]["UnresolvedRelease"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            pageSize: number;
+            /** Format: int64 */
+            total: number;
+        };
+        UnresolvedRelease: components["schemas"]["ReleaseDto"] & {
+            candidates: components["schemas"]["ReviewCandidateDto"][];
         };
     };
     responses: never;
@@ -60,6 +507,367 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderList"];
+                };
+            };
+        };
+    };
+    refresh_cache: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Provider id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefreshResponse"];
+                };
+            };
+            /** @description No provider with that id registered */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: {
+                page?: number;
+                pageSize?: number;
+                /** @description Filter by resolution status (`resolved`, `unresolved`, `ambiguous`, `review_pending`). */
+                status?: string;
+                sourceKind?: string;
+                sourceName?: string;
+                seriesId?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleasePage"];
+                };
+            };
+        };
+    };
+    list_unresolved: {
+        parameters: {
+            query?: {
+                /** @description 1-indexed page number. */
+                page?: number;
+                /** @description Items per page (capped server-side at 200). */
+                pageSize?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnresolvedPage"];
+                };
+            };
+        };
+    };
+    link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseDto"];
+                };
+            };
+            /** @description Provider not registered or external_id unknown to provider */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Release or series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseDto"];
+                };
+            };
+            /** @description Release not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    retry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseDto"];
+                };
+            };
+            /** @description Release not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: {
+                page?: number;
+                pageSize?: number;
+                /** @description Filter by stored `series.type` (e.g. `manga`). */
+                kind?: string;
+                /** @description Filter by stored `series.status` (e.g. `ongoing`). */
+                status?: string;
+                /** @description Filter by ownership flag (true = owned by Codex, false = discoverable). */
+                owned?: boolean;
+                /** @description Sort field. Supports `last_release_at` (default) and `first_seen_at`. */
+                sort?: string;
+                /** @description `asc` or `desc` (default). */
+                order?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesListPage"];
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Internal series id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description No series with that id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    refresh_metadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Internal series id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Series or provider entry not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No mapping for the active provider on this series */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceList"];
+                };
+            };
+        };
+    };
+    poll: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Source instance name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManualPollResponse"];
+                };
+            };
+            /** @description No source with that name registered */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatsResponse"];
+                };
             };
         };
     };

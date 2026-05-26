@@ -1,8 +1,7 @@
 use std::path::Path;
 
+use td_api::ApiDoc;
 use utoipa::OpenApi;
-
-use crate::api::docs::ApiDoc;
 
 pub fn run(output: &Path) -> anyhow::Result<()> {
     let spec = ApiDoc::openapi();

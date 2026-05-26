@@ -1,4 +1,4 @@
-use std::sync::Arc;
+//! Liveness check.
 
 use axum::Json;
 use axum::extract::State;
@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use super::AppState;
+use crate::state::AppState;
 
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -14,14 +14,17 @@ pub struct Health {
     pub status: &'static str,
 }
 
-/// Liveness check. Pings the database and reports `ok`.
+/// Pings the database and reports `ok` when reachable.
 #[utoipa::path(
     get,
     path = "/api/v1/health",
-    tag = "tsundoku",
-    responses((status = 200, body = Health), (status = 503, description = "Database unreachable"))
+    tag = "system",
+    responses(
+        (status = 200, body = Health),
+        (status = 503, description = "Database unreachable")
+    )
 )]
-pub async fn health(State(state): State<Arc<AppState>>) -> Result<Json<Health>, StatusCode> {
+pub async fn health(State(state): State<AppState>) -> Result<Json<Health>, StatusCode> {
     state
         .db
         .ping()
