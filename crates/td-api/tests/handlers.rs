@@ -1178,6 +1178,135 @@ async fn unresolved_endpoint_surfaces_persisted_search_queries_and_rules() {
     assert!(rules.contains(&"strip_format".to_string()));
 }
 
+/// Seed a release into the queue with a chosen source_name, file (so a
+/// format is detected), and resolution status. Returns the release id.
+async fn seed_queue_release(
+    db: &sea_orm::DatabaseConnection,
+    external_id: &str,
+    source_name: &str,
+    title: &str,
+    file: &str,
+    status: &str,
+) -> String {
+    let mut r = sample_release(external_id, source_name, title);
+    r.files = vec![file.to_string()];
+    let id = releases_repo::persist_discovered(db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+    if status != "unresolved" {
+        releases_repo::set_resolution(db, &id, None, None, None, status, Utc::now().timestamp())
+            .await
+            .unwrap();
+    }
+    id
+}
+
+fn queue_app(db: sea_orm::DatabaseConnection) -> axum::Router {
+    build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    )
+}
+
+async fn queue_total(app: &axum::Router, query: &str) -> u64 {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/releases/unresolved?{query}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    body["total"].as_u64().unwrap()
+}
+
+#[tokio::test]
+async fn unresolved_endpoint_filters_by_source_name_format_and_title() {
+    let db = fresh_db().await;
+    seed_queue_release(
+        &db,
+        "1",
+        "trusted",
+        "Solo Leveling",
+        "vol.cbz",
+        "unresolved",
+    )
+    .await;
+    seed_queue_release(
+        &db,
+        "2",
+        "trusted",
+        "Berserk",
+        "book.epub",
+        "review_pending",
+    )
+    .await;
+    seed_queue_release(
+        &db,
+        "3",
+        "popular",
+        "Solo Leveling Side",
+        "vol.cbz",
+        "ambiguous",
+    )
+    .await;
+    let app = queue_app(db);
+
+    // No filters: all three queue rows.
+    assert_eq!(queue_total(&app, "").await, 3);
+    // Source name narrows to the two `trusted` rows.
+    assert_eq!(queue_total(&app, "sourceName=trusted").await, 2);
+    // Format narrows to the two cbz rows.
+    assert_eq!(queue_total(&app, "format=cbz").await, 2);
+    assert_eq!(queue_total(&app, "format=epub").await, 1);
+    // Title search is a substring match.
+    assert_eq!(queue_total(&app, "q=Solo").await, 2);
+    assert_eq!(queue_total(&app, "q=Berserk").await, 1);
+    // Filters compose (AND): trusted + cbz = release 1 only.
+    assert_eq!(queue_total(&app, "sourceName=trusted&format=cbz").await, 1);
+}
+
+#[tokio::test]
+async fn unresolved_endpoint_status_filter_clamps_to_queue_statuses() {
+    let db = fresh_db().await;
+    seed_queue_release(&db, "1", "feed", "A", "a.cbz", "unresolved").await;
+    seed_queue_release(&db, "2", "feed", "B", "b.cbz", "review_pending").await;
+    seed_queue_release(&db, "3", "feed", "C", "c.cbz", "ambiguous").await;
+    // A resolved row must never appear in the queue regardless of filters.
+    let sid = seed_series(&db, "D Series", "manga").await;
+    let resolved = seed_queue_release(&db, "4", "feed", "D", "d.cbz", "unresolved").await;
+    releases_repo::set_resolution(
+        &db,
+        &resolved,
+        Some(sid),
+        Some("manual".into()),
+        Some(1.0),
+        "resolved",
+        Utc::now().timestamp(),
+    )
+    .await
+    .unwrap();
+    let app = queue_app(db);
+
+    // Narrow to a single queue status.
+    assert_eq!(queue_total(&app, "status=review_pending").await, 1);
+    assert_eq!(queue_total(&app, "status=ambiguous").await, 1);
+    // An out-of-queue status falls back to the full three-status set, never
+    // surfacing the resolved row.
+    assert_eq!(queue_total(&app, "status=resolved").await, 3);
+    assert_eq!(queue_total(&app, "status=bogus").await, 3);
+}
+
 #[tokio::test]
 async fn series_list_filters_by_genre_and_tag_and_combines() {
     let db = fresh_db().await;

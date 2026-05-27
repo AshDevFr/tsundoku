@@ -3,9 +3,12 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use chrono::Utc;
-use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect};
+use sea_orm::sea_query::Query as SeaQuery;
+use sea_orm::{
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+};
 use serde::{Deserialize, Serialize};
-use td_db::entities::releases;
+use td_db::entities::{release_formats, releases};
 use td_db::repos::{releases_repo, review_repo, series_external_ids_repo};
 use td_metadata::SeriesMetadata;
 use td_resolution::{Resolver, persist};
@@ -176,6 +179,101 @@ impl ReleaseListQuery {
     }
 }
 
+/// The three statuses that make up the review queue. A release leaves the
+/// queue once it's `resolved` or `rejected`; the filtered list and the bulk
+/// actions are always scoped to this set so neither can touch a decided row.
+const QUEUE_STATUSES: [&str; 3] = ["unresolved", "ambiguous", "review_pending"];
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(default, rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct ReviewQueueQuery {
+    /// 1-indexed page number.
+    pub page: u32,
+    /// Items per page (capped server-side at 200).
+    pub page_size: u32,
+    /// Free-text title substring match (case-insensitive). Whitespace-only
+    /// is treated as absent.
+    pub q: Option<String>,
+    /// Restrict to a single source instance (`releases.source_name`).
+    pub source_name: Option<String>,
+    /// Restrict to releases carrying this file format (e.g. `cbz`, `epub`).
+    pub format: Option<String>,
+    /// Narrow to one queue status. Ignored unless it's one of
+    /// `unresolved` / `ambiguous` / `review_pending`.
+    pub status: Option<String>,
+}
+
+impl Default for ReviewQueueQuery {
+    fn default() -> Self {
+        Self {
+            page: 1,
+            page_size: 50,
+            q: None,
+            source_name: None,
+            format: None,
+            status: None,
+        }
+    }
+}
+
+impl ReviewQueueQuery {
+    fn pagination(&self) -> Pagination {
+        Pagination {
+            page: self.page,
+            page_size: self.page_size,
+        }
+    }
+}
+
+/// Build the base `Select` for the review queue from the optional filters.
+/// Shared by the list endpoint and the bulk actions so "what you see" and
+/// "what you act on" can never diverge.
+///
+/// - Always scoped to [`QUEUE_STATUSES`]; a `status` outside that set is
+///   ignored (falls back to the full three-status set) so the queue never
+///   surfaces a `resolved`/`rejected` row.
+/// - `q` is a `title LIKE '%q%'` substring match (SQLite ASCII LIKE is
+///   case-insensitive). Raw `%`/`_` act as wildcards — acceptable for a
+///   single-user title search.
+/// - `format` filters via the `release_formats` join table by subquery, since
+///   a release can carry several formats.
+fn review_queue_select(
+    q: Option<&str>,
+    source_name: Option<&str>,
+    format: Option<&str>,
+    status: Option<&str>,
+) -> Select<releases::Entity> {
+    fn trimmed(s: Option<&str>) -> Option<&str> {
+        s.map(str::trim).filter(|s| !s.is_empty())
+    }
+
+    let mut select = releases::Entity::find();
+    match trimmed(status) {
+        Some(s) if QUEUE_STATUSES.contains(&s) => {
+            select = select.filter(releases::Column::ResolutionStatus.eq(s));
+        }
+        _ => {
+            select = select.filter(releases::Column::ResolutionStatus.is_in(QUEUE_STATUSES));
+        }
+    }
+    if let Some(q) = trimmed(q) {
+        select = select.filter(releases::Column::Title.contains(q));
+    }
+    if let Some(name) = trimmed(source_name) {
+        select = select.filter(releases::Column::SourceName.eq(name));
+    }
+    if let Some(fmt) = trimmed(format) {
+        let sub = SeaQuery::select()
+            .column(release_formats::Column::ReleaseId)
+            .from(release_formats::Entity)
+            .and_where(release_formats::Column::Format.eq(fmt))
+            .to_owned();
+        select = select.filter(releases::Column::Id.in_subquery(sub));
+    }
+    select
+}
+
 /// List releases ordered by `observed_at` descending. Filters compose.
 #[utoipa::path(
     get,
@@ -237,18 +335,20 @@ pub async fn list(
     get,
     path = "/api/v1/releases/unresolved",
     tag = "releases",
-    params(Pagination),
+    params(ReviewQueueQuery),
     responses((status = 200, body = UnresolvedPage))
 )]
 pub async fn list_unresolved(
     State(state): State<AppState>,
-    Query(p): Query<Pagination>,
+    Query(query): Query<ReviewQueueQuery>,
 ) -> ApiResult<Json<UnresolvedPage>> {
-    let select = releases::Entity::find().filter(releases::Column::ResolutionStatus.is_in([
-        "unresolved",
-        "ambiguous",
-        "review_pending",
-    ]));
+    let p = query.pagination();
+    let select = review_queue_select(
+        query.q.as_deref(),
+        query.source_name.as_deref(),
+        query.format.as_deref(),
+        query.status.as_deref(),
+    );
     let total = select.clone().count(&state.db).await.map_err(anyhow_err)?;
     let rows = select
         .order_by_desc(releases::Column::ObservedAt)

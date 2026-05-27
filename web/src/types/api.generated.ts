@@ -1633,6 +1633,20 @@ export interface operations {
                 page?: number;
                 /** @description Items per page (capped server-side at 200). */
                 pageSize?: number;
+                /**
+                 * @description Free-text title substring match (case-insensitive). Whitespace-only
+                 *     is treated as absent.
+                 */
+                q?: string;
+                /** @description Restrict to a single source instance (`releases.source_name`). */
+                sourceName?: string;
+                /** @description Restrict to releases carrying this file format (e.g. `cbz`, `epub`). */
+                format?: string;
+                /**
+                 * @description Narrow to one queue status. Ignored unless it's one of
+                 *     `unresolved` / `ambiguous` / `review_pending`.
+                 */
+                status?: string;
             };
             header?: never;
             path?: never;

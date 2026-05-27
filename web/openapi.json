@@ -619,6 +619,42 @@
               "format": "int32",
               "minimum": 0
             }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Free-text title substring match (case-insensitive). Whitespace-only\nis treated as absent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sourceName",
+            "in": "query",
+            "description": "Restrict to a single source instance (`releases.source_name`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Restrict to releases carrying this file format (e.g. `cbz`, `epub`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Narrow to one queue status. Ignored unless it's one of\n`unresolved` / `ambiguous` / `review_pending`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
