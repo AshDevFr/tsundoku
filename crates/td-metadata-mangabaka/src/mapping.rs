@@ -43,6 +43,7 @@ pub fn series_to_canonical(series: MbSeries) -> SeriesMetadata {
         year: series.year,
         cover_url,
         external_url,
+        description: series.description.filter(|s| !s.is_empty()),
         genres: series.genres.unwrap_or_default(),
         tags: series.tags.unwrap_or_default(),
         foreign_ids,

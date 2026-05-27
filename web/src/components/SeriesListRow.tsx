@@ -16,13 +16,20 @@ import { formatRelative } from "@/api/utils";
 const COVER_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
 
+const MAX_GENRE_CHIPS = 4;
+const MAX_TAG_CHIPS = 4;
+
 /// Horizontal row variant of the series tile, used when the feed view
-/// toggle is set to `list`. Same data as `SeriesCard` but laid out for
-/// scanning: small cover thumbnail on the left, title + metadata
-/// stacked vertically, badges in a row. No synopsis yet — the list
-/// endpoint does not return one; the detail page is where the full
-/// description lives.
+/// toggle is set to `list`. Trades grid density for scannability: a
+/// larger cover on the left, title + badges on top, a clamped synopsis,
+/// then a row of genre and tag chips. The list endpoint now returns the
+/// description + the normalized genre/tag arrays so this stays a single
+/// query.
 export function SeriesListRow({ series }: { series: SeriesListItem }) {
+  const genres = series.genres ?? [];
+  const tags = series.tags ?? [];
+  const genreOverflow = Math.max(0, genres.length - MAX_GENRE_CHIPS);
+  const tagOverflow = Math.max(0, tags.length - MAX_TAG_CHIPS);
   return (
     <Link
       to="/series/$id"
@@ -30,9 +37,9 @@ export function SeriesListRow({ series }: { series: SeriesListItem }) {
       style={{ textDecoration: "none", color: "inherit" }}
       data-testid={`series-row-${series.id}`}
     >
-      <Paper withBorder radius="md" p="sm">
+      <Paper withBorder radius="md" p="md">
         <Group gap="md" wrap="nowrap" align="flex-start">
-          <Box w={72} style={{ flexShrink: 0 }}>
+          <Box w={120} style={{ flexShrink: 0 }}>
             <AspectRatio ratio={3 / 4}>
               <Image
                 src={series.coverUrl ?? COVER_PLACEHOLDER}
@@ -43,11 +50,16 @@ export function SeriesListRow({ series }: { series: SeriesListItem }) {
               />
             </AspectRatio>
           </Box>
-          <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
-            <Title order={5} lineClamp={1} title={series.canonicalTitle}>
-              {series.canonicalTitle}
-            </Title>
-            <Group gap={4} wrap="wrap">
+          <Stack gap={6} style={{ minWidth: 0, flex: 1 }}>
+            <Group gap="xs" align="baseline" wrap="wrap">
+              <Title
+                order={5}
+                lineClamp={1}
+                title={series.canonicalTitle}
+                style={{ minWidth: 0 }}
+              >
+                {series.canonicalTitle}
+              </Title>
               {series.kind && (
                 <Badge size="xs" variant="light" color="blue">
                   {series.kind}
@@ -69,6 +81,40 @@ export function SeriesListRow({ series }: { series: SeriesListItem }) {
                 </Badge>
               )}
             </Group>
+            {series.description && (
+              <Text size="sm" c="dimmed" lineClamp={3}>
+                {series.description}
+              </Text>
+            )}
+            {(genres.length > 0 || tags.length > 0) && (
+              <Group gap={4} wrap="wrap">
+                {genres.slice(0, MAX_GENRE_CHIPS).map((g) => (
+                  <Badge key={`g-${g}`} size="xs" variant="light" color="grape">
+                    {g}
+                  </Badge>
+                ))}
+                {genreOverflow > 0 && (
+                  <Badge size="xs" variant="light" color="grape">
+                    +{genreOverflow}
+                  </Badge>
+                )}
+                {tags.slice(0, MAX_TAG_CHIPS).map((t) => (
+                  <Badge
+                    key={`t-${t}`}
+                    size="xs"
+                    variant="outline"
+                    color="gray"
+                  >
+                    {t}
+                  </Badge>
+                ))}
+                {tagOverflow > 0 && (
+                  <Badge size="xs" variant="outline" color="gray">
+                    +{tagOverflow}
+                  </Badge>
+                )}
+              </Group>
+            )}
             <Text size="xs" c="dimmed">
               last release {formatRelative(series.lastReleaseAt)} • first seen{" "}
               {formatRelative(series.firstSeenAt)}

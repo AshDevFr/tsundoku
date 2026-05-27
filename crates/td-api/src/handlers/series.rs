@@ -30,6 +30,11 @@ pub struct SeriesListItem {
     pub kind: Option<String>,
     pub status: Option<String>,
     pub year: Option<i32>,
+    /// Short synopsis. The list UI clamps this to a few lines; the detail
+    /// page shows it in full.
+    pub description: Option<String>,
+    pub genres: Vec<String>,
+    pub tags: Vec<String>,
     pub last_release_at: i64,
     pub first_seen_at: i64,
     pub owned: bool,
@@ -63,6 +68,7 @@ pub struct SeriesDetail {
     pub kind: Option<String>,
     pub status: Option<String>,
     pub year: Option<i32>,
+    pub description: Option<String>,
     pub genres: Vec<String>,
     pub tags: Vec<String>,
     pub metadata_source: String,
@@ -187,13 +193,43 @@ pub async fn list(
         .await
         .map_err(anyhow_err)?;
 
-    let items: Vec<SeriesListItem> = rows.into_iter().map(model_to_list_item).collect();
+    let items = decorate_list_items(&state, rows).await?;
     Ok(Json(SeriesListPage {
         items,
         page: pagination.page(),
         page_size: pagination.page_size(),
         total,
     }))
+}
+
+/// Hydrate a page of series rows with their normalized genres + tags via
+/// a single SELECT per join table. Falls back to the legacy `genres_json`
+/// blob when the join table comes back empty (legacy rows the genre
+/// backfill couldn't lift); tags have no JSON fallback.
+async fn decorate_list_items(
+    state: &AppState,
+    rows: Vec<series::Model>,
+) -> ApiResult<Vec<SeriesListItem>> {
+    let ids: Vec<i32> = rows.iter().map(|m| m.id).collect();
+    let genres_map = tagging_repo::genres_by_series_ids(&state.db, &ids)
+        .await
+        .map_err(anyhow_err)?;
+    let tags_map = tagging_repo::tags_by_series_ids(&state.db, &ids)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(rows
+        .into_iter()
+        .map(|m| {
+            let genres = genres_map.get(&m.id).cloned().unwrap_or_else(|| {
+                m.genres_json
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                    .unwrap_or_default()
+            });
+            let tags = tags_map.get(&m.id).cloned().unwrap_or_default();
+            model_to_list_item(m, genres, tags)
+        })
+        .collect())
 }
 
 /// Apply the column-level and join-level filters shared by both the
@@ -335,7 +371,7 @@ async fn search_list(
     } else {
         final_rows[start..end].to_vec()
     };
-    let items: Vec<SeriesListItem> = page_rows.into_iter().map(model_to_list_item).collect();
+    let items = decorate_list_items(&state, page_rows).await?;
     Ok(Json(SeriesListPage {
         items,
         page: pagination.page(),
@@ -472,7 +508,7 @@ pub async fn refresh_metadata(
     )))
 }
 
-fn model_to_list_item(m: series::Model) -> SeriesListItem {
+fn model_to_list_item(m: series::Model, genres: Vec<String>, tags: Vec<String>) -> SeriesListItem {
     SeriesListItem {
         id: m.id,
         canonical_title: m.canonical_title,
@@ -480,6 +516,9 @@ fn model_to_list_item(m: series::Model) -> SeriesListItem {
         kind: m.kind,
         status: m.status,
         year: m.year,
+        description: m.description,
+        genres,
+        tags,
         last_release_at: m.last_release_at,
         first_seen_at: m.first_seen_at,
         owned: m.owned != 0,
@@ -515,6 +554,7 @@ fn model_to_detail(
         kind: m.kind,
         status: m.status,
         year: m.year,
+        description: m.description,
         genres,
         tags: join_tags,
         metadata_source: m.metadata_source,

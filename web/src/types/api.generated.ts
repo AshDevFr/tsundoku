@@ -936,6 +936,7 @@ export interface components {
             alternateTitles: string[];
             canonicalTitle: string;
             coverUrl?: string | null;
+            description?: string | null;
             externalIds: components["schemas"]["ExternalIdDto"][];
             /** Format: int64 */
             firstSeenAt: number;
@@ -961,8 +962,14 @@ export interface components {
         SeriesListItem: {
             canonicalTitle: string;
             coverUrl?: string | null;
+            /**
+             * @description Short synopsis. The list UI clamps this to a few lines; the detail
+             *     page shows it in full.
+             */
+            description?: string | null;
             /** Format: int64 */
             firstSeenAt: number;
+            genres: string[];
             /** Format: int32 */
             id: number;
             kind?: string | null;
@@ -970,6 +977,7 @@ export interface components {
             lastReleaseAt: number;
             owned: boolean;
             status?: string | null;
+            tags: string[];
             /** Format: int32 */
             year?: number | null;
         };

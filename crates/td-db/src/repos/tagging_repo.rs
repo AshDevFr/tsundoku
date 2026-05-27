@@ -158,6 +158,66 @@ pub async fn list_tags_for_series(db: &DatabaseConnection, series_id: i32) -> Re
     Ok(rows.into_iter().map(|r| r.name).collect())
 }
 
+#[derive(Debug, FromQueryResult)]
+struct SeriesIdName {
+    series_id: i32,
+    name: String,
+}
+
+/// Batch fetch the genres for every series id in `series_ids`, returned as
+/// a map keyed by series id. Series with no genres are omitted from the map.
+/// One SELECT, used by the list endpoint to avoid N+1.
+pub async fn genres_by_series_ids(
+    db: &DatabaseConnection,
+    series_ids: &[i32],
+) -> Result<std::collections::HashMap<i32, Vec<String>>> {
+    if series_ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let placeholders = vec!["?"; series_ids.len()].join(",");
+    let sql = format!(
+        "SELECT sg.series_id AS series_id, g.name AS name \
+         FROM series_genres sg JOIN genres g ON g.id = sg.genre_id \
+         WHERE sg.series_id IN ({placeholders}) \
+         ORDER BY sg.series_id, g.name ASC"
+    );
+    let backend = db.get_database_backend();
+    let values: Vec<sea_orm::Value> = series_ids.iter().map(|id| (*id as i64).into()).collect();
+    let stmt = Statement::from_sql_and_values(backend, &sql, values);
+    let rows = SeriesIdName::find_by_statement(stmt).all(db).await?;
+    let mut out: std::collections::HashMap<i32, Vec<String>> = std::collections::HashMap::new();
+    for r in rows {
+        out.entry(r.series_id).or_default().push(r.name);
+    }
+    Ok(out)
+}
+
+/// Mirror of `genres_by_series_ids` for tags.
+pub async fn tags_by_series_ids(
+    db: &DatabaseConnection,
+    series_ids: &[i32],
+) -> Result<std::collections::HashMap<i32, Vec<String>>> {
+    if series_ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let placeholders = vec!["?"; series_ids.len()].join(",");
+    let sql = format!(
+        "SELECT st.series_id AS series_id, t.name AS name \
+         FROM series_tags st JOIN tags t ON t.id = st.tag_id \
+         WHERE st.series_id IN ({placeholders}) \
+         ORDER BY st.series_id, t.name ASC"
+    );
+    let backend = db.get_database_backend();
+    let values: Vec<sea_orm::Value> = series_ids.iter().map(|id| (*id as i64).into()).collect();
+    let stmt = Statement::from_sql_and_values(backend, &sql, values);
+    let rows = SeriesIdName::find_by_statement(stmt).all(db).await?;
+    let mut out: std::collections::HashMap<i32, Vec<String>> = std::collections::HashMap::new();
+    for r in rows {
+        out.entry(r.series_id).or_default().push(r.name);
+    }
+    Ok(out)
+}
+
 fn normalize(names: &[String]) -> Vec<String> {
     let mut out: Vec<String> = names
         .iter()

@@ -13,6 +13,7 @@ pub struct Model {
     pub kind: Option<String>,
     pub status: Option<String>,
     pub year: Option<i32>,
+    pub description: Option<String>,
     pub genres_json: Option<String>,
     pub metadata_json: Option<String>,
     pub metadata_source: String,

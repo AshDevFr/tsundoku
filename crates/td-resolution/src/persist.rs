@@ -122,6 +122,7 @@ pub async fn upsert_series_from_metadata(
                     kind: Set(metadata.kind.as_ref().map(kind_to_db)),
                     status: Set(metadata.status.as_ref().map(status_to_db)),
                     year: Set(metadata.year),
+                    description: Set(metadata.description.clone()),
                     genres_json: Set(genres_json),
                     metadata_json: Set(Some(metadata_json)),
                     metadata_source: Set(METADATA_SOURCE_DEFAULT.into()),
@@ -147,6 +148,7 @@ pub async fn upsert_series_from_metadata(
                 kind: Set(metadata.kind.as_ref().map(kind_to_db)),
                 status: Set(metadata.status.as_ref().map(status_to_db)),
                 year: Set(metadata.year),
+                description: Set(metadata.description.clone()),
                 genres_json: Set(genres_json),
                 metadata_json: Set(Some(metadata_json)),
                 metadata_source: Set(METADATA_SOURCE_DEFAULT.into()),
@@ -431,6 +433,7 @@ mod tests {
             year: Some(2018),
             cover_url: Some("https://example.com/c.jpg".into()),
             external_url: Some("https://api.mangabaka.dev/v1/series/12345".into()),
+            description: Some("Denji is a teenage devil-hunter.".into()),
             genres: vec!["action".into(), "horror".into()],
             tags: vec!["devil hunter".into(), "gore".into()],
             foreign_ids: vec![

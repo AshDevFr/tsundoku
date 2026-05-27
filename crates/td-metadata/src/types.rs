@@ -22,6 +22,10 @@ pub struct SeriesMetadata {
     pub year: Option<i32>,
     pub cover_url: Option<String>,
     pub external_url: Option<String>,
+    /// Long-form synopsis as provided by the source. Surfaced in the
+    /// detail view and (clamped) in the list view; not used for matching.
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(default)]
     pub genres: Vec<String>,
     #[serde(default)]

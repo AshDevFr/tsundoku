@@ -30,6 +30,8 @@ const SERIES: (SeriesListItem & {
     status: "ongoing",
     year: 2018,
     owned: false,
+    description:
+      "Denji has a simple dream: to live a happy and peaceful life. After his father's death he is left with a hefty debt to the yakuza. With his pet devil Pochita at his side he hunts devils to scrape by.",
     genres: ["action", "horror"],
     tags: ["devil hunter", "gore"],
     alternateTitles: ["チェンソーマン"],
@@ -44,6 +46,8 @@ const SERIES: (SeriesListItem & {
     status: "ongoing",
     year: 2014,
     owned: true,
+    description:
+      "Suddenly transported to a fantasy world, Subaru discovers that any time he dies he returns to a fixed save point.",
     genres: ["isekai", "drama"],
     tags: ["time loop"],
     alternateTitles: ["リゼロ"],
@@ -58,6 +62,8 @@ const SERIES: (SeriesListItem & {
     status: "completed",
     year: 2018,
     owned: false,
+    description:
+      "The weakest hunter in the world levels up after a near-fatal dungeon raid and becomes the strongest.",
     genres: ["action", "fantasy"],
     tags: ["hunters", "leveling"],
     alternateTitles: [],
@@ -602,14 +608,7 @@ export const handlers = [
     const start = (page - 1) * pageSize;
     const items = filtered
       .slice(start, start + pageSize)
-      .map(
-        ({
-          genres: _g,
-          tags: _t,
-          alternateTitles: _a,
-          ...rest
-        }): SeriesListItem => rest,
-      );
+      .map(({ alternateTitles: _a, ...rest }): SeriesListItem => rest);
     const body: SeriesListPage = {
       items,
       page,
@@ -663,6 +662,7 @@ export const handlers = [
       kind: found.kind,
       status: found.status,
       year: found.year,
+      description: found.description,
       owned: found.owned,
       genres: found.genres,
       tags: found.tags,

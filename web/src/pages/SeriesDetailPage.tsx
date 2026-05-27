@@ -111,6 +111,12 @@ export function SeriesDetailPage() {
               </Group>
             )}
 
+            {s.description && (
+              <Text size="sm" style={{ whiteSpace: "pre-line" }}>
+                {s.description}
+              </Text>
+            )}
+
             <Box>
               <Text size="sm" c="dimmed">
                 First seen {formatRelative(s.firstSeenAt)} · last release{" "}

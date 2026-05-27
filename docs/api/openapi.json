@@ -2277,6 +2277,12 @@
               "null"
             ]
           },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "externalIds": {
             "type": "array",
             "items": {
@@ -2357,6 +2363,8 @@
         "required": [
           "id",
           "canonicalTitle",
+          "genres",
+          "tags",
           "lastReleaseAt",
           "firstSeenAt",
           "owned"
@@ -2371,9 +2379,22 @@
               "null"
             ]
           },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Short synopsis. The list UI clamps this to a few lines; the detail\npage shows it in full."
+          },
           "firstSeenAt": {
             "type": "integer",
             "format": "int64"
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "id": {
             "type": "integer",
@@ -2397,6 +2418,12 @@
               "string",
               "null"
             ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "year": {
             "type": [

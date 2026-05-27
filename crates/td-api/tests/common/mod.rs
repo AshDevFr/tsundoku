@@ -209,6 +209,7 @@ pub fn sample_metadata(provider: &str, id: &str, title: &str) -> SeriesMetadata 
         year: Some(2020),
         cover_url: None,
         external_url: None,
+        description: None,
         genres: vec![],
         tags: vec![],
         foreign_ids: vec![],

@@ -317,6 +317,7 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
     .expect("SerializedRow always serializes");
     let content_hash = crate::mapping::hash_value(&raw);
 
+    let description = row.description.filter(|s| !s.is_empty());
     SeriesMetadata {
         external_id,
         canonical_title: row.title,
@@ -326,6 +327,7 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
         year: row.year,
         cover_url,
         external_url,
+        description,
         genres: Vec::new(),
         tags: Vec::new(),
         foreign_ids,
