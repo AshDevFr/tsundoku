@@ -115,14 +115,28 @@ queue_low_confidence  = true
 # nyaa.si, api.mangabaka.dev, and www.mangaupdates.com — operators only
 # need to add entries here for new hosts or to tighten/relax limits.
 #
+# Retry behavior. On a 429 / 502 / 503 / 504 the limiter retries up to
+# `default_retry_max_attempts` additional times. For 429 it honors
+# `Retry-After: N` (seconds) capped at `default_retry_max_backoff_ms`;
+# for 5xx (and when 429 omits the header) it uses jittered exponential
+# backoff starting at `default_retry_initial_backoff_ms`. The permit
+# is held across retries so a queued caller cannot race past us into
+# the same rate-limited upstream. Set `_retry_max_attempts` to 0 to
+# disable retries entirely.
+#
 # [ingestion.http]
-# default_concurrency = 2
-# default_min_gap_ms  = 250
+# default_concurrency               = 2
+# default_min_gap_ms                = 250
+# default_retry_max_attempts        = 3
+# default_retry_initial_backoff_ms  = 500
+# default_retry_max_backoff_ms      = 30000
 #
 # [[ingestion.http.hosts]]
 # host        = "nyaa.si"
 # concurrency = 1
 # min_gap_ms  = 1000
+# # retry_* fields are optional per host; omit to inherit the
+# # default_retry_* settings above.
 #
 # [[ingestion.http.hosts]]
 # host        = "api.mangabaka.dev"

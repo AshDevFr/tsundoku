@@ -14,6 +14,9 @@ pub fn build(cfg: &HttpConfig) -> Arc<HttpLimiter> {
     let default_policy = HostPolicy {
         concurrency: cfg.default_concurrency.max(1) as usize,
         min_gap: Duration::from_millis(cfg.default_min_gap_ms),
+        retry_max_attempts: cfg.default_retry_max_attempts,
+        retry_initial_backoff: Duration::from_millis(cfg.default_retry_initial_backoff_ms),
+        retry_max_backoff: Duration::from_millis(cfg.default_retry_max_backoff_ms),
     };
     let mut overrides: HashMap<String, HostPolicy> = HashMap::with_capacity(cfg.hosts.len());
     for host in &cfg.hosts {
@@ -22,6 +25,17 @@ pub fn build(cfg: &HttpConfig) -> Arc<HttpLimiter> {
             HostPolicy {
                 concurrency: host.concurrency.max(1) as usize,
                 min_gap: Duration::from_millis(host.min_gap_ms),
+                retry_max_attempts: host
+                    .retry_max_attempts
+                    .unwrap_or(cfg.default_retry_max_attempts),
+                retry_initial_backoff: Duration::from_millis(
+                    host.retry_initial_backoff_ms
+                        .unwrap_or(cfg.default_retry_initial_backoff_ms),
+                ),
+                retry_max_backoff: Duration::from_millis(
+                    host.retry_max_backoff_ms
+                        .unwrap_or(cfg.default_retry_max_backoff_ms),
+                ),
             },
         );
     }

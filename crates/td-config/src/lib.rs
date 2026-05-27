@@ -347,8 +347,7 @@ pub struct IngestionConfig {
 
 /// Outbound-HTTP rate-limiting config. Lives in `td-config` as a pure
 /// figment shape; `td-http::HttpLimiter` consumes a converted form (the
-/// internal `HostPolicy`). Future fields for retry/backoff (Phase 3) land
-/// here too.
+/// internal `HostPolicy`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HttpConfig {
@@ -361,8 +360,23 @@ pub struct HttpConfig {
     /// acquisition; sleeping under the permit prevents a third caller
     /// from racing past the gate.
     pub default_min_gap_ms: u64,
+    /// Maximum number of *additional* attempts after the initial request
+    /// fails with a retryable status (429 / 502 / 503 / 504). Set to 0
+    /// to disable retries for the default host policy.
+    pub default_retry_max_attempts: u32,
+    /// Initial backoff window. Doubles on each retry, capped at
+    /// `default_retry_max_backoff_ms`. Used for 5xx responses and as
+    /// the fallback when a 429 omits `Retry-After`. Half of this value
+    /// is also added as random jitter to every backoff.
+    pub default_retry_initial_backoff_ms: u64,
+    /// Hard ceiling on any single backoff window, including a value
+    /// honored from a `Retry-After` header. An upstream returning
+    /// `Retry-After: 3600` does not pin the request loop for an hour.
+    pub default_retry_max_backoff_ms: u64,
     /// Per-host overrides. Host strings are matched case-insensitively
     /// against the request URL's host component (no scheme, no port).
+    /// Retry fields are optional per host; omitted values fall back to
+    /// the `default_retry_*` settings above.
     #[serde(default)]
     pub hosts: Vec<HostLimitConfig>,
 }
@@ -373,6 +387,14 @@ pub struct HostLimitConfig {
     pub host: String,
     pub concurrency: u32,
     pub min_gap_ms: u64,
+    /// Optional retry overrides. Omit any field to inherit the
+    /// corresponding `[ingestion.http].default_retry_*` value.
+    #[serde(default)]
+    pub retry_max_attempts: Option<u32>,
+    #[serde(default)]
+    pub retry_initial_backoff_ms: Option<u64>,
+    #[serde(default)]
+    pub retry_max_backoff_ms: Option<u64>,
 }
 
 impl Default for HttpConfig {
@@ -381,25 +403,38 @@ impl Default for HttpConfig {
         // `td_http::HostPolicy::default()`. nyaa.si is explicitly
         // pre-populated because the dev/prod config typically declares
         // many nyaa sources sharing one cron, and bare defaults would
-        // still let two of them fire concurrently.
+        // still let two of them fire concurrently. Retry knobs are
+        // shared across all hosts unless explicitly overridden.
         Self {
             default_concurrency: 2,
             default_min_gap_ms: 250,
+            default_retry_max_attempts: 3,
+            default_retry_initial_backoff_ms: 500,
+            default_retry_max_backoff_ms: 30_000,
             hosts: vec![
                 HostLimitConfig {
                     host: "nyaa.si".into(),
                     concurrency: 1,
                     min_gap_ms: 1000,
+                    retry_max_attempts: None,
+                    retry_initial_backoff_ms: None,
+                    retry_max_backoff_ms: None,
                 },
                 HostLimitConfig {
                     host: "api.mangabaka.dev".into(),
                     concurrency: 2,
                     min_gap_ms: 250,
+                    retry_max_attempts: None,
+                    retry_initial_backoff_ms: None,
+                    retry_max_backoff_ms: None,
                 },
                 HostLimitConfig {
                     host: "www.mangaupdates.com".into(),
                     concurrency: 1,
                     min_gap_ms: 1000,
+                    retry_max_attempts: None,
+                    retry_initial_backoff_ms: None,
+                    retry_max_backoff_ms: None,
                 },
             ],
         }
@@ -831,6 +866,67 @@ min_gap_ms = 500
             .expect("nyaa override present");
         assert_eq!(nyaa.concurrency, 1);
         assert_eq!(nyaa.min_gap_ms, 2000);
+    }
+
+    #[test]
+    fn http_retry_knobs_round_trip_with_per_host_overrides() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[storage]
+data_dir = "./data"
+
+[ingestion.http]
+default_retry_max_attempts       = 5
+default_retry_initial_backoff_ms = 750
+default_retry_max_backoff_ms     = 60000
+
+[[ingestion.http.hosts]]
+host                     = "nyaa.si"
+concurrency              = 1
+min_gap_ms               = 1000
+retry_max_attempts       = 2
+retry_initial_backoff_ms = 2000
+
+[[ingestion.http.hosts]]
+host        = "api.mangabaka.dev"
+concurrency = 2
+min_gap_ms  = 250
+            "#
+        )
+        .unwrap();
+
+        let cfg = load(&path).unwrap();
+        assert_eq!(cfg.ingestion.http.default_retry_max_attempts, 5);
+        assert_eq!(cfg.ingestion.http.default_retry_initial_backoff_ms, 750);
+        assert_eq!(cfg.ingestion.http.default_retry_max_backoff_ms, 60000);
+
+        let nyaa = cfg
+            .ingestion
+            .http
+            .hosts
+            .iter()
+            .find(|h| h.host == "nyaa.si")
+            .unwrap();
+        assert_eq!(nyaa.retry_max_attempts, Some(2));
+        assert_eq!(nyaa.retry_initial_backoff_ms, Some(2000));
+        assert_eq!(
+            nyaa.retry_max_backoff_ms, None,
+            "omitted per-host retry field stays None so the default_ value applies"
+        );
+
+        let mb = cfg
+            .ingestion
+            .http
+            .hosts
+            .iter()
+            .find(|h| h.host == "api.mangabaka.dev")
+            .unwrap();
+        assert_eq!(mb.retry_max_attempts, None);
     }
 
     #[test]

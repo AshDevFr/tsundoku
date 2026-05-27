@@ -47,19 +47,40 @@ pub struct HostPolicy {
     /// Enforced by sleeping after permit acquisition; the permit is held
     /// throughout the sleep so callers do not race past the gate.
     pub min_gap: Duration,
+    /// Maximum number of *additional* attempts after the initial request
+    /// fails with a retryable status (429 / 502 / 503 / 504). Set to 0 to
+    /// disable retries entirely. The first attempt is always made
+    /// regardless.
+    pub retry_max_attempts: u32,
+    /// Initial backoff window. Doubles on each retry, capped at
+    /// `retry_max_backoff`. Used for 502/503/504 and as the fallback when
+    /// a 429 response omits `Retry-After`. Half of this value is also
+    /// added as random jitter to every backoff to spread out retries from
+    /// callers that hit the same upstream at the same instant.
+    pub retry_initial_backoff: Duration,
+    /// Hard ceiling on any single backoff window, including a value
+    /// honored from a `Retry-After` header. An upstream returning
+    /// `Retry-After: 3600` does not get to pin our request loop for an
+    /// hour — we cap at this and try again sooner. The next retry's
+    /// response will tell us whether the upstream is actually ready.
+    pub retry_max_backoff: Duration,
 }
 
 impl HostPolicy {
     /// A no-op policy used by tests (and by [`HttpLimiter::no_limit`]):
-    /// effectively unbounded concurrency, no gap. The concurrency value
-    /// is capped well below `tokio::sync::Semaphore::MAX_PERMITS` (which
-    /// is `(1 << 61) - 1`); the semaphore panics on construction past
-    /// that limit and there is no scenario where 1024 in-flight requests
-    /// to one host is "not enough".
+    /// effectively unbounded concurrency, no gap, no retries. The
+    /// concurrency value is capped well below
+    /// `tokio::sync::Semaphore::MAX_PERMITS` (which is `(1 << 61) - 1`);
+    /// the semaphore panics on construction past that limit and there is
+    /// no scenario where 1024 in-flight requests to one host is "not
+    /// enough".
     pub fn unlimited() -> Self {
         Self {
             concurrency: 1024,
             min_gap: Duration::ZERO,
+            retry_max_attempts: 0,
+            retry_initial_backoff: Duration::ZERO,
+            retry_max_backoff: Duration::ZERO,
         }
     }
 }
@@ -72,6 +93,9 @@ impl Default for HostPolicy {
         Self {
             concurrency: 2,
             min_gap: Duration::from_millis(250),
+            retry_max_attempts: 3,
+            retry_initial_backoff: Duration::from_millis(500),
+            retry_max_backoff: Duration::from_secs(30),
         }
     }
 }
@@ -239,12 +263,20 @@ impl LimitedRequestBuilder {
     }
 
     /// Send the request. Acquires the per-host permit, enforces the
-    /// `min_gap`, then executes the request. Releases the permit when
-    /// the response headers are in (not when the body is drained).
+    /// `min_gap`, then executes the request. Retries on `429`, `502`,
+    /// `503`, and `504` according to the host's `HostPolicy`:
+    /// `Retry-After` (in seconds) is honored if present, otherwise an
+    /// exponentially-growing jittered backoff is used. The permit is
+    /// held across all retry attempts — releasing between attempts
+    /// would let a queued caller race past us into the same upstream
+    /// that just told us to back off, defeating the rate-limit signal.
+    /// Released when send returns (response headers in), not when the
+    /// body is drained.
     pub async fn send(self) -> Result<Response, reqwest::Error> {
         let url = self.url_or_err?;
 
-        // Disabled limiter: straight pass-through, no acquisition.
+        // Disabled limiter: straight pass-through, no acquisition, no
+        // retries. Tests and shutdown paths use this.
         if self.limiter.disabled {
             return self.inner.send().await;
         }
@@ -280,8 +312,137 @@ impl LimitedRequestBuilder {
             *last = Some(Instant::now());
         }
 
-        self.inner.send().await
+        let policy = &state.policy;
+        let inner = self.inner;
+        let max_attempts = policy.retry_max_attempts;
+
+        // Clone the request up front so retries can re-issue the same
+        // headers/body. `try_clone` returns `None` for streaming bodies;
+        // there are no streaming request bodies in this codebase, but if
+        // one ever appears we degrade gracefully to a single attempt
+        // rather than silently dropping the retry budget.
+        let cloneable = inner.try_clone();
+        let can_retry = cloneable.is_some() && max_attempts > 0;
+        if max_attempts > 0 && cloneable.is_none() {
+            tracing::warn!(
+                host = %host,
+                "request body is not cloneable; retries disabled for this call"
+            );
+        }
+
+        // Attempt 0 = the initial request; attempts 1..=max_attempts are
+        // retries. Loop exits early on a non-retryable status.
+        let mut last_response = inner.send().await?;
+        if !can_retry {
+            return Ok(last_response);
+        }
+        let cloneable = cloneable.expect("verified Some above");
+
+        for attempt in 1..=max_attempts {
+            let status = last_response.status();
+            let Some(reason) = RetryReason::from_status(status) else {
+                return Ok(last_response);
+            };
+
+            let backoff = match reason {
+                RetryReason::TooManyRequests => retry_after_or_backoff(
+                    &last_response,
+                    attempt,
+                    policy.retry_initial_backoff,
+                    policy.retry_max_backoff,
+                ),
+                RetryReason::TransientServerError => jittered_backoff(
+                    attempt,
+                    policy.retry_initial_backoff,
+                    policy.retry_max_backoff,
+                ),
+            };
+
+            tracing::warn!(
+                host = %host,
+                attempt,
+                max_attempts,
+                status = status.as_u16(),
+                backoff_ms = backoff.as_millis() as u64,
+                "retrying after upstream rate-limit / transient error"
+            );
+
+            tokio::time::sleep(backoff).await;
+
+            let retry_req = cloneable
+                .try_clone()
+                .expect("body was verified cloneable above");
+            last_response = retry_req.send().await?;
+        }
+
+        // Exhausted: return whatever the last attempt produced. Callers
+        // see the original status code (typically 429 or 503) and can
+        // decide how to surface it — same shape as no-retry behavior.
+        Ok(last_response)
     }
+}
+
+/// Why a response triggered a retry. Kept private to the crate; callers
+/// don't need to disambiguate.
+enum RetryReason {
+    /// 429. Prefer `Retry-After` over computed backoff.
+    TooManyRequests,
+    /// 502 / 503 / 504. Compute backoff from policy.
+    TransientServerError,
+}
+
+impl RetryReason {
+    fn from_status(status: reqwest::StatusCode) -> Option<Self> {
+        match status.as_u16() {
+            429 => Some(Self::TooManyRequests),
+            502..=504 => Some(Self::TransientServerError),
+            _ => None,
+        }
+    }
+}
+
+/// Read `Retry-After` from a response. Only the seconds form is
+/// supported — the HTTP-date form is rare for rate-limited APIs and
+/// would pull in an extra dep for marginal value. Returns `None` if the
+/// header is missing or unparseable; callers fall back to the computed
+/// backoff in that case.
+fn parse_retry_after_seconds(resp: &Response) -> Option<Duration> {
+    resp.headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
+}
+
+/// Resolve the backoff to use for a 429: honor `Retry-After` (capped at
+/// `max_backoff`) if present, otherwise fall back to the same
+/// jittered exponential backoff used for 5xx.
+fn retry_after_or_backoff(
+    resp: &Response,
+    attempt: u32,
+    initial: Duration,
+    max: Duration,
+) -> Duration {
+    match parse_retry_after_seconds(resp) {
+        Some(d) => d.min(max),
+        None => jittered_backoff(attempt, initial, max),
+    }
+}
+
+/// Exponential backoff with random jitter:
+/// `initial * 2^(attempt-1) + rand(0..=initial/2)`, capped at `max`.
+/// `attempt` is 1-indexed (the first retry is attempt 1).
+fn jittered_backoff(attempt: u32, initial: Duration, max: Duration) -> Duration {
+    use rand::RngExt;
+    let multiplier = 1u32 << (attempt - 1).min(31);
+    let base = initial.saturating_mul(multiplier).min(max);
+    let jitter_ceiling = (initial / 2).as_millis() as u64;
+    let jitter_ms = if jitter_ceiling == 0 {
+        0
+    } else {
+        rand::rng().random_range(0..=jitter_ceiling)
+    };
+    (base + Duration::from_millis(jitter_ms)).min(max)
 }
 
 #[cfg(test)]
@@ -299,6 +460,7 @@ mod tests {
             HostPolicy {
                 concurrency: 1,
                 min_gap: Duration::from_millis(min_gap_ms),
+                ..HostPolicy::unlimited()
             },
         );
         Arc::new(HttpLimiter::new(HostPolicy::unlimited(), overrides))
@@ -350,6 +512,7 @@ mod tests {
             HostPolicy {
                 concurrency: 1,
                 min_gap: Duration::ZERO,
+                ..HostPolicy::unlimited()
             },
         );
         overrides.insert(
@@ -357,6 +520,7 @@ mod tests {
             HostPolicy {
                 concurrency: 1,
                 min_gap: Duration::ZERO,
+                ..HostPolicy::unlimited()
             },
         );
         let limiter = Arc::new(HttpLimiter::new(HostPolicy::unlimited(), overrides));
@@ -420,5 +584,180 @@ mod tests {
             state.policy.concurrency,
             HostPolicy::unlimited().concurrency
         );
+    }
+
+    // ---- Retry layer (Phase 3) ----------------------------------------
+    //
+    // These tests drive a tiny canned TCP server on a real port so we
+    // exercise the actual reqwest send path, including header
+    // preservation across retries. The pattern mirrors the existing
+    // canned server in `td-resolution::mangaupdates_redirect::tests`.
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener as StdListener;
+    use std::thread;
+    use std::time::Instant as StdInstant;
+
+    /// Bind a TCP listener that, for each connection, responds with one
+    /// of the supplied canned responses in order. The captured request
+    /// bytes go into `requests` so tests can assert what the client
+    /// actually sent.
+    fn spawn_canned_server(
+        responses: Vec<&'static [u8]>,
+    ) -> (String, Arc<std::sync::Mutex<Vec<Vec<u8>>>>) {
+        let listener = StdListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}");
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Vec<u8>>::new()));
+        let captured = requests.clone();
+        thread::spawn(move || {
+            for (idx, stream) in listener.incoming().enumerate() {
+                let Ok(mut stream) = stream else { return };
+                let mut buf = [0u8; 8192];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                captured.lock().unwrap().push(buf[..n].to_vec());
+                if idx >= responses.len() {
+                    return;
+                }
+                let _ = stream.write_all(responses[idx]);
+                let _ = stream.flush();
+            }
+        });
+        (url, requests)
+    }
+
+    /// Build a limiter that retries up to `max_attempts` with short
+    /// backoffs (test-time friendly) against `host`.
+    fn retrying_limiter(host: &str, max_attempts: u32) -> Arc<HttpLimiter> {
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            host.to_string(),
+            HostPolicy {
+                concurrency: 4,
+                min_gap: Duration::ZERO,
+                retry_max_attempts: max_attempts,
+                retry_initial_backoff: Duration::from_millis(50),
+                retry_max_backoff: Duration::from_millis(200),
+            },
+        );
+        Arc::new(HttpLimiter::new(HostPolicy::unlimited(), overrides))
+    }
+
+    /// A 429 with `Retry-After: 1` must delay the retry by ~1 second
+    /// and then return the successful 200 from the second attempt.
+    /// Uses a large `retry_max_backoff` so the cap doesn't shorten the
+    /// 1-second value — the separate cap test below covers that path.
+    #[tokio::test]
+    async fn retry_honors_retry_after_then_returns_success() {
+        let r1 = b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n";
+        let r2 = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+        let (base, _captured) = spawn_canned_server(vec![r1, r2]);
+        let url = reqwest::Url::parse(&base).unwrap();
+        let host = url.host_str().unwrap().to_string();
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            host,
+            HostPolicy {
+                concurrency: 4,
+                min_gap: Duration::ZERO,
+                retry_max_attempts: 3,
+                retry_initial_backoff: Duration::from_millis(50),
+                retry_max_backoff: Duration::from_secs(5),
+            },
+        );
+        let limiter = Arc::new(HttpLimiter::new(HostPolicy::unlimited(), overrides));
+        let client = limiter.client(reqwest::Client::new());
+
+        let start = StdInstant::now();
+        let resp = client.get(&base).send().await.unwrap();
+        let elapsed = start.elapsed();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert!(
+            elapsed >= Duration::from_millis(900),
+            "expected Retry-After: 1 to delay >= 900ms, got {elapsed:?}"
+        );
+    }
+
+    /// `retry_max_backoff` must cap an over-eager `Retry-After` value.
+    /// An upstream returning `Retry-After: 60` does not get to pin us
+    /// for a minute when our cap is 200ms.
+    #[tokio::test]
+    async fn retry_max_backoff_caps_retry_after() {
+        let r1 = b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\nContent-Length: 0\r\n\r\n";
+        let r2 = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+        let (base, _captured) = spawn_canned_server(vec![r1, r2]);
+        let url = reqwest::Url::parse(&base).unwrap();
+        let host = url.host_str().unwrap();
+        let limiter = retrying_limiter(host, 3); // max_backoff = 200ms
+        let client = limiter.client(reqwest::Client::new());
+
+        let start = StdInstant::now();
+        let resp = client.get(&base).send().await.unwrap();
+        let elapsed = start.elapsed();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "expected Retry-After: 60 to be capped to ~200ms, got {elapsed:?}"
+        );
+    }
+
+    /// When every attempt fails with 429, the limiter must give up
+    /// after `retry_max_attempts` retries and return the final 429
+    /// response (not a synthesized error). Caller decides how to
+    /// surface the failure.
+    #[tokio::test]
+    async fn retry_exhaustion_returns_final_response() {
+        // Server responds 429 + Retry-After: 0 to keep backoff small.
+        // 1 initial + 3 retries = 4 responses needed.
+        let bad = b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\nContent-Length: 0\r\n\r\n";
+        let (base, captured) = spawn_canned_server(vec![bad, bad, bad, bad]);
+        let url = reqwest::Url::parse(&base).unwrap();
+        let host = url.host_str().unwrap();
+        let limiter = retrying_limiter(host, 3);
+        let client = limiter.client(reqwest::Client::new());
+
+        let resp = client.get(&base).send().await.unwrap();
+        assert_eq!(
+            resp.status().as_u16(),
+            429,
+            "exhausted retries must surface the upstream's final status"
+        );
+        // 1 initial attempt + 3 retries = 4 total connections.
+        assert_eq!(
+            captured.lock().unwrap().len(),
+            4,
+            "expected 4 attempts (1 initial + 3 retries)"
+        );
+    }
+
+    /// Headers set on the initial request must be sent on every retry
+    /// too. Regression guard against forgetting `try_clone()`.
+    #[tokio::test]
+    async fn retry_preserves_request_headers() {
+        let r1 = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n";
+        let r2 = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+        let (base, captured) = spawn_canned_server(vec![r1, r2]);
+        let url = reqwest::Url::parse(&base).unwrap();
+        let host = url.host_str().unwrap();
+        let limiter = retrying_limiter(host, 2);
+        let client = limiter.client(reqwest::Client::new());
+
+        let resp = client
+            .get(&base)
+            .header("x-marker", "preserved-value")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+
+        let reqs = captured.lock().unwrap();
+        assert_eq!(reqs.len(), 2, "expected one retry");
+        for (i, raw) in reqs.iter().enumerate() {
+            let text = String::from_utf8_lossy(raw);
+            assert!(
+                text.to_lowercase().contains("x-marker: preserved-value"),
+                "request {i} missing the x-marker header; raw:\n{text}"
+            );
+        }
     }
 }
