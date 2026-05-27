@@ -165,12 +165,28 @@ pub async fn run_tick(
         }
     };
 
+    // Persist + resolve per release. Each iteration commits to SQLite
+    // before moving on, so a mid-loop crash leaves the work done so far
+    // visible in the UI; the next tick re-fetches (the ETag is only
+    // advanced after the whole walk) and re-persisting is idempotent on
+    // `(source_kind, external_id)`. A resolver Err is logged and counted
+    // as a `failed` outcome so the breakdown ties out against the
+    // persisted release count.
+    let mut resolver =
+        Resolver::new(db.clone(), metadata, ingestion).with_query_builder(query_builder);
+    if let Some(r) = mangaupdates_redirector {
+        resolver = resolver.with_mangaupdates_redirector(r);
+    }
+
     let fetched = outcome.releases.len();
-    let mut persisted_ids = Vec::with_capacity(fetched);
+    let mut persisted = 0usize;
     let mut persist_errors = 0usize;
+    let mut resolve_errors = 0usize;
+    let mut breakdown = OutcomeBreakdown::default();
     for release in &outcome.releases {
-        match releases_repo::persist_discovered(&db, release, started_at.timestamp()).await {
-            Ok(id) => persisted_ids.push(id),
+        let id = match releases_repo::persist_discovered(&db, release, started_at.timestamp()).await
+        {
+            Ok(id) => id,
             Err(e) => {
                 tracing::error!(
                     error = ?e,
@@ -179,22 +195,11 @@ pub async fn run_tick(
                     "failed to persist release"
                 );
                 persist_errors += 1;
+                continue;
             }
-        }
-    }
-
-    // Walk the resolver per release and accumulate one counter per
-    // ResolutionOutcome variant. A resolver Err counts as `Failed` so the
-    // breakdown ties out against the persisted release count.
-    let mut resolver =
-        Resolver::new(db.clone(), metadata, ingestion).with_query_builder(query_builder);
-    if let Some(r) = mangaupdates_redirector {
-        resolver = resolver.with_mangaupdates_redirector(r);
-    }
-    let mut resolve_errors = 0usize;
-    let mut breakdown = OutcomeBreakdown::default();
-    for id in &persisted_ids {
-        match resolver.resolve_one(id).await {
+        };
+        persisted += 1;
+        match resolver.resolve_one(&id).await {
             Ok(o) => breakdown.record(&o),
             Err(e) => {
                 tracing::warn!(error = ?e, release_id = %id, "resolver failed; leaving release unresolved");
@@ -206,7 +211,7 @@ pub async fn run_tick(
 
     let summary = build_summary(
         fetched,
-        persisted_ids.len(),
+        persisted,
         persist_errors,
         resolve_errors,
         outcome.not_modified,
@@ -216,8 +221,8 @@ pub async fn run_tick(
 
     let counts = PollRunCounts {
         fetched: Some(fetched as i32),
-        new: Some(persisted_ids.len() as i32),
-        resolved: Some(persisted_ids.len().saturating_sub(resolve_errors) as i32),
+        new: Some(persisted as i32),
+        resolved: Some(persisted.saturating_sub(resolve_errors) as i32),
         fetch_duration_ms: Some(fetch_duration_ms),
         outcome_known_id: Some(breakdown.known_id),
         outcome_foreign_id: Some(breakdown.foreign_id),
