@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use td_config::MangabakaProviderConfig;
+use td_http::{HttpLimiter, LimitedClient};
 use td_metadata::{
     MetadataError, MetadataProvider, MetadataResult, RefreshStatus, RefreshSummary, SearchHit,
     SeriesMetadata,
@@ -48,7 +49,7 @@ pub struct MangabakaProvider {
     /// `None` disables refresh entirely (refresh_cache returns NotSupported).
     dump_url: Option<String>,
     negative_cache: NegativeCache,
-    http_for_refresh: reqwest::Client,
+    http_for_refresh: LimitedClient,
 }
 
 impl MangabakaProvider {
@@ -61,6 +62,7 @@ impl MangabakaProvider {
     pub async fn from_config(
         cfg: &MangabakaProviderConfig,
         cache_dir: PathBuf,
+        limiter: Arc<HttpLimiter>,
     ) -> Result<Self, MetadataError> {
         if cfg.api_fallback && cfg.api_key.is_none() {
             return Err(MetadataError::NotConfigured {
@@ -71,8 +73,13 @@ impl MangabakaProvider {
             });
         }
         let timeout = Duration::from_secs(cfg.timeout_seconds.max(1) as u64);
-        let client = MangabakaClient::new(cfg.api_base_url.clone(), cfg.api_key.clone(), timeout)
-            .map_err(|e| MetadataError::NotConfigured {
+        let client = MangabakaClient::new(
+            cfg.api_base_url.clone(),
+            cfg.api_key.clone(),
+            timeout,
+            limiter.clone(),
+        )
+        .map_err(|e| MetadataError::NotConfigured {
             provider: PROVIDER_ID.into(),
             message: format!("building http client: {e}"),
         })?;
@@ -97,7 +104,7 @@ impl MangabakaProvider {
 
         // Use a longer timeout for the refresh client; downloading the
         // dump can take several minutes on a slow link.
-        let http_for_refresh = reqwest::Client::builder()
+        let refresh_inner = reqwest::Client::builder()
             .user_agent(concat!("tsundoku/", env!("CARGO_PKG_VERSION")))
             .timeout(Duration::from_secs(60 * 30))
             .build()
@@ -105,6 +112,7 @@ impl MangabakaProvider {
                 provider: PROVIDER_ID.into(),
                 message: format!("building refresh http client: {e}"),
             })?;
+        let http_for_refresh = limiter.client(refresh_inner);
 
         Ok(Self {
             client,
@@ -249,7 +257,7 @@ impl MetadataProvider for MangabakaProvider {
         }
 
         let mut summary = offline::refresh(
-            &self.http_for_refresh,
+            self.http_for_refresh.clone(),
             dump_url,
             &self.cache_dir,
             Duration::from_secs(60 * 30),
@@ -305,7 +313,13 @@ mod tests {
             api_fallback: true,
             ..Default::default()
         };
-        match MangabakaProvider::from_config(&cfg, PathBuf::from("/tmp/td-test-1")).await {
+        match MangabakaProvider::from_config(
+            &cfg,
+            PathBuf::from("/tmp/td-test-1"),
+            HttpLimiter::no_limit(),
+        )
+        .await
+        {
             Err(MetadataError::NotConfigured { provider, .. }) => {
                 assert_eq!(provider, "mangabaka");
             }
@@ -321,9 +335,13 @@ mod tests {
             api_fallback: false,
             ..Default::default()
         };
-        let provider = MangabakaProvider::from_config(&cfg, PathBuf::from("/tmp/td-test-2"))
-            .await
-            .unwrap();
+        let provider = MangabakaProvider::from_config(
+            &cfg,
+            PathBuf::from("/tmp/td-test-2"),
+            HttpLimiter::no_limit(),
+        )
+        .await
+        .unwrap();
         assert_eq!(provider.id(), "mangabaka");
     }
 
@@ -333,9 +351,13 @@ mod tests {
             offline_dump_url: Some(String::new()), // overridden below
             ..Default::default()
         };
-        let provider = MangabakaProvider::from_config(&cfg, PathBuf::from("/tmp/td-test-3"))
-            .await
-            .unwrap();
+        let provider = MangabakaProvider::from_config(
+            &cfg,
+            PathBuf::from("/tmp/td-test-3"),
+            HttpLimiter::no_limit(),
+        )
+        .await
+        .unwrap();
         // Force-disable the dump url to exercise the NotSupported branch.
         // (We can't reach private fields directly; mutate a fresh instance
         // by recreating with `offline_dump_url = None`. The default impl
@@ -353,10 +375,13 @@ mod tests {
             api_fallback: false,
             ..Default::default()
         };
-        let provider =
-            MangabakaProvider::from_config(&cfg, PathBuf::from("/tmp/td-test-offline-loaded"))
-                .await
-                .unwrap();
+        let provider = MangabakaProvider::from_config(
+            &cfg,
+            PathBuf::from("/tmp/td-test-offline-loaded"),
+            HttpLimiter::no_limit(),
+        )
+        .await
+        .unwrap();
         assert!(!provider.offline_cache_loaded().await);
     }
 

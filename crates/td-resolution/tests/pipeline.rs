@@ -837,10 +837,11 @@ mod legacy_mu {
     }
 
     fn build_redirector(base_url: String) -> Arc<MangaUpdatesRedirector> {
-        let client = Client::builder()
+        let inner = Client::builder()
             .redirect(redirect::Policy::none())
             .build()
             .unwrap();
+        let client = td_http::HttpLimiter::no_limit().client(inner);
         Arc::new(MangaUpdatesRedirector::with_client(client, base_url))
     }
 

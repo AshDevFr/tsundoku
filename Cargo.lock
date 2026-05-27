@@ -3812,6 +3812,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "td-http"
+version = "0.1.0"
+dependencies = [
+ "dashmap",
+ "reqwest",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "td-metadata"
 version = "0.1.0"
 dependencies = [
@@ -3843,6 +3854,7 @@ dependencies = [
  "sha2 0.11.0",
  "tar",
  "td-config",
+ "td-http",
  "td-metadata",
  "tempfile",
  "thiserror",
@@ -3865,6 +3877,7 @@ dependencies = [
  "serde_json",
  "td-config",
  "td-db",
+ "td-http",
  "td-metadata",
  "td-source",
  "tempfile",
@@ -3922,6 +3935,7 @@ dependencies = [
  "reqwest",
  "scraper",
  "serde",
+ "td-http",
  "td-source",
  "thiserror",
  "tokio",
@@ -4334,6 +4348,7 @@ dependencies = [
  "td-api",
  "td-config",
  "td-db",
+ "td-http",
  "td-metadata",
  "td-metadata-mangabaka",
  "td-resolution",

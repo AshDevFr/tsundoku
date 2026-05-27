@@ -18,8 +18,16 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     let db = td_db::connect(&cfg).await?;
     td_db::run_migrations(&db).await?;
 
-    let sources = Arc::new(crate::source_registry::build_registry(&cfg)?);
-    let metadata = Arc::new(crate::metadata::build_registry(&cfg).await?);
+    // Build the process-wide outbound-HTTP limiter first; every component
+    // that makes external requests routes through it so per-host
+    // serialization and min-gap are enforced uniformly.
+    let limiter = crate::http_limiter::build(&cfg.ingestion.http);
+
+    let sources = Arc::new(crate::source_registry::build_registry(
+        &cfg,
+        limiter.clone(),
+    )?);
+    let metadata = Arc::new(crate::metadata::build_registry(&cfg, limiter.clone()).await?);
     let locks = Arc::new(JobLocks::default());
     // One shared MangaUpdates redirector for the whole process: scheduler
     // ticks and the API retry handler both go through the same throttle.
@@ -28,7 +36,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION"),
         " (+https://github.com/skewb1k/tsundoku)"
     );
-    let mu_redirector = match MangaUpdatesRedirector::new(user_agent) {
+    let mu_redirector = match MangaUpdatesRedirector::new(user_agent, limiter.clone()) {
         Ok(r) => Some(Arc::new(r)),
         Err(e) => {
             tracing::warn!(error = ?e, "failed to build mangaupdates redirector; legacy MU URLs will be dropped");

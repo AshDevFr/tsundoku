@@ -1,12 +1,14 @@
 //! Conditional GET fetcher for the Nyaa RSS feed and per-post detail pages.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use reqwest::{Client, StatusCode};
+use td_http::{HttpLimiter, LimitedClient};
 
 pub struct Fetcher {
-    http: Client,
+    http: LimitedClient,
 }
 
 /// Outcome of a conditional feed fetch.
@@ -19,12 +21,14 @@ pub enum FetcherResult {
 }
 
 impl Fetcher {
-    pub fn new(timeout: Duration) -> Result<Self> {
-        let http = Client::builder()
+    pub fn new(timeout: Duration, limiter: Arc<HttpLimiter>) -> Result<Self> {
+        let inner = Client::builder()
             .timeout(timeout)
             .user_agent(concat!("tsundoku/", env!("CARGO_PKG_VERSION")))
             .build()?;
-        Ok(Self { http })
+        Ok(Self {
+            http: limiter.client(inner),
+        })
     }
 
     pub async fn fetch_feed(

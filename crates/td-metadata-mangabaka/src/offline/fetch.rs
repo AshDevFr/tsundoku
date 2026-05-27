@@ -26,7 +26,7 @@ pub struct DownloadOutcome {
 /// computed SHA-1 hex. Creates the parent directory if needed. Any
 /// existing file at `target_path` is overwritten.
 pub async fn download(
-    http: &reqwest::Client,
+    http: &td_http::LimitedClient,
     url: &str,
     target_path: impl AsRef<Path>,
 ) -> anyhow::Result<DownloadOutcome> {
@@ -72,7 +72,10 @@ pub async fn download(
 /// Fetch the `.sha1` sidecar published next to the dump and return the
 /// expected hex digest. The sidecar is whitespace-delimited:
 /// `<hex>  <filename>`; we accept either format.
-pub async fn fetch_expected_sha1(http: &reqwest::Client, url: &str) -> anyhow::Result<String> {
+pub async fn fetch_expected_sha1(
+    http: &td_http::LimitedClient,
+    url: &str,
+) -> anyhow::Result<String> {
     let body = http
         .get(url)
         .send()

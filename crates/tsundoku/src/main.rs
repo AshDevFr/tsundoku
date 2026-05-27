@@ -1,4 +1,5 @@
 mod commands;
+mod http_limiter;
 mod metadata;
 mod source_registry;
 

@@ -26,7 +26,8 @@ pub async fn run(config_path: PathBuf, source_name: Option<String>) -> Result<()
 
     let db = td_db::connect(&cfg).await?;
     td_db::run_migrations(&db).await?;
-    let registry = crate::source_registry::build_registry(&cfg)?;
+    let limiter = crate::http_limiter::build(&cfg.ingestion.http);
+    let registry = crate::source_registry::build_registry(&cfg, limiter)?;
 
     if registry.is_empty() {
         anyhow::bail!(

@@ -334,6 +334,76 @@ pub struct IngestionConfig {
     /// Title-cleaning knobs consumed by `td_resolution::query_builder`.
     #[serde(default)]
     pub cleanup: CleanupConfig,
+    /// Outbound-HTTP policy: per-host concurrency cap + minimum-gap
+    /// between successive requests, applied by `td_http::HttpLimiter` to
+    /// every request made by the source crates, the metadata-provider
+    /// crates, and the MangaUpdates redirect resolver. Conservative
+    /// defaults keep an unconfigured deployment polite without further
+    /// tuning; nyaa-style hosts that need stricter limits should be
+    /// listed under `[[ingestion.http.hosts]]`.
+    #[serde(default)]
+    pub http: HttpConfig,
+}
+
+/// Outbound-HTTP rate-limiting config. Lives in `td-config` as a pure
+/// figment shape; `td-http::HttpLimiter` consumes a converted form (the
+/// internal `HostPolicy`). Future fields for retry/backoff (Phase 3) land
+/// here too.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HttpConfig {
+    /// Maximum number of in-flight requests to any one host that is not
+    /// listed in `hosts`. Conservative default; raise only if you've
+    /// confirmed the upstream tolerates more.
+    pub default_concurrency: u32,
+    /// Minimum milliseconds between successive request starts to any
+    /// one host that is not listed in `hosts`. Applied after permit
+    /// acquisition; sleeping under the permit prevents a third caller
+    /// from racing past the gate.
+    pub default_min_gap_ms: u64,
+    /// Per-host overrides. Host strings are matched case-insensitively
+    /// against the request URL's host component (no scheme, no port).
+    #[serde(default)]
+    pub hosts: Vec<HostLimitConfig>,
+}
+
+/// One per-host override entry under `[[ingestion.http.hosts]]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostLimitConfig {
+    pub host: String,
+    pub concurrency: u32,
+    pub min_gap_ms: u64,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        // Conservative-but-functional defaults that match
+        // `td_http::HostPolicy::default()`. nyaa.si is explicitly
+        // pre-populated because the dev/prod config typically declares
+        // many nyaa sources sharing one cron, and bare defaults would
+        // still let two of them fire concurrently.
+        Self {
+            default_concurrency: 2,
+            default_min_gap_ms: 250,
+            hosts: vec![
+                HostLimitConfig {
+                    host: "nyaa.si".into(),
+                    concurrency: 1,
+                    min_gap_ms: 1000,
+                },
+                HostLimitConfig {
+                    host: "api.mangabaka.dev".into(),
+                    concurrency: 2,
+                    min_gap_ms: 250,
+                },
+                HostLimitConfig {
+                    host: "www.mangaupdates.com".into(),
+                    concurrency: 1,
+                    min_gap_ms: 1000,
+                },
+            ],
+        }
+    }
 }
 
 /// Operator-extension surface for the title cleaner. Additive only: the
@@ -372,6 +442,7 @@ impl Default for IngestionConfig {
             queue_low_confidence: true,
             format_type_rules: Vec::new(),
             cleanup: CleanupConfig::default(),
+            http: HttpConfig::default(),
         }
     }
 }
@@ -716,6 +787,65 @@ extra_format_keywords = ["Remastered", "DigitalUncen"]
             cfg.ingestion.cleanup.extra_format_keywords,
             vec!["Remastered".to_string(), "DigitalUncen".into()]
         );
+    }
+
+    #[test]
+    fn http_block_overrides_defaults_per_host() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[storage]
+data_dir = "./data"
+
+[ingestion.http]
+default_concurrency = 4
+default_min_gap_ms = 100
+
+[[ingestion.http.hosts]]
+host = "nyaa.si"
+concurrency = 1
+min_gap_ms = 2000
+
+[[ingestion.http.hosts]]
+host = "api.mangabaka.dev"
+concurrency = 3
+min_gap_ms = 500
+            "#
+        )
+        .unwrap();
+
+        let cfg = load(&path).unwrap();
+        assert_eq!(cfg.ingestion.http.default_concurrency, 4);
+        assert_eq!(cfg.ingestion.http.default_min_gap_ms, 100);
+        assert_eq!(cfg.ingestion.http.hosts.len(), 2);
+        let nyaa = cfg
+            .ingestion
+            .http
+            .hosts
+            .iter()
+            .find(|h| h.host == "nyaa.si")
+            .expect("nyaa override present");
+        assert_eq!(nyaa.concurrency, 1);
+        assert_eq!(nyaa.min_gap_ms, 2000);
+    }
+
+    #[test]
+    fn http_defaults_pre_populate_known_hosts() {
+        let cfg = AppConfig::default();
+        let hosts: Vec<&str> = cfg
+            .ingestion
+            .http
+            .hosts
+            .iter()
+            .map(|h| h.host.as_str())
+            .collect();
+        assert!(hosts.contains(&"nyaa.si"));
+        assert!(hosts.contains(&"api.mangabaka.dev"));
+        assert!(hosts.contains(&"www.mangaupdates.com"));
     }
 
     #[test]

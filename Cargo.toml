@@ -4,6 +4,7 @@ members = [
     "crates/td-api",
     "crates/td-config",
     "crates/td-db",
+    "crates/td-http",
     "crates/td-metadata",
     "crates/td-metadata-mangabaka",
     "crates/td-resolution",

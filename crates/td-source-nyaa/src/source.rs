@@ -1,8 +1,10 @@
 //! `DiscoverySource` impl for Nyaa.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use td_http::HttpLimiter;
 use td_source::{DiscoverySource, PollContext, PollOutcome, SourceError, SourceResult};
 
 use crate::SOURCE_KIND;
@@ -45,12 +47,16 @@ pub struct NyaaSource {
 }
 
 impl NyaaSource {
-    pub fn from_config(cfg: NyaaSourceConfig) -> Result<Self, SourceError> {
-        let fetcher = Fetcher::new(cfg.timeout).map_err(|e| SourceError::NotConfigured {
-            source_kind: SOURCE_KIND.into(),
-            source_name: cfg.name.clone(),
-            message: format!("building http client: {e}"),
-        })?;
+    pub fn from_config(
+        cfg: NyaaSourceConfig,
+        limiter: Arc<HttpLimiter>,
+    ) -> Result<Self, SourceError> {
+        let fetcher =
+            Fetcher::new(cfg.timeout, limiter).map_err(|e| SourceError::NotConfigured {
+                source_kind: SOURCE_KIND.into(),
+                source_name: cfg.name.clone(),
+                message: format!("building http client: {e}"),
+            })?;
         Ok(Self { cfg, fetcher })
     }
 

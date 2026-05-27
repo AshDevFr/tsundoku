@@ -58,13 +58,13 @@ pub fn tmp_dir(cache_dir: impl AsRef<Path>) -> PathBuf {
 /// this — extraction writes to a temp path, but the final rename will fail
 /// on Windows (and confuse macOS) if the destination is open.
 pub async fn refresh(
-    http: &reqwest::Client,
+    http: td_http::LimitedClient,
     dump_url: &str,
     cache_dir: impl AsRef<Path>,
     timeout: Duration,
 ) -> Result<RefreshSummary, MetadataError> {
     let started_at = Utc::now();
-    let summary = match refresh_inner(http, dump_url, cache_dir.as_ref(), timeout).await {
+    let summary = match refresh_inner(&http, dump_url, cache_dir.as_ref(), timeout).await {
         Ok(s) => s,
         Err(e) => {
             return Err(MetadataError::Unavailable {
@@ -88,7 +88,7 @@ struct InnerSummary {
 }
 
 async fn refresh_inner(
-    http: &reqwest::Client,
+    http: &td_http::LimitedClient,
     dump_url: &str,
     cache_dir: &Path,
     _timeout: Duration,

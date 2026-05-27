@@ -27,7 +27,8 @@ pub async fn run(config_path: PathBuf, retry_unresolved: bool) -> Result<()> {
 
     let db = td_db::connect(&cfg).await?;
     td_db::run_migrations(&db).await?;
-    let registry = Arc::new(crate::metadata::build_registry(&cfg).await?);
+    let limiter = crate::http_limiter::build(&cfg.ingestion.http);
+    let registry = Arc::new(crate::metadata::build_registry(&cfg, limiter.clone()).await?);
 
     let user_agent = concat!(
         "tsundoku/",
@@ -40,7 +41,7 @@ pub async fn run(config_path: PathBuf, retry_unresolved: bool) -> Result<()> {
     );
     let mut resolver = Resolver::new(db.clone(), registry, cfg.ingestion.clone())
         .with_query_builder(query_builder);
-    match MangaUpdatesRedirector::new(user_agent) {
+    match MangaUpdatesRedirector::new(user_agent, limiter.clone()) {
         Ok(r) => resolver = resolver.with_mangaupdates_redirector(Arc::new(r)),
         Err(e) => tracing::warn!(error = ?e, "skipping mangaupdates redirector"),
     }

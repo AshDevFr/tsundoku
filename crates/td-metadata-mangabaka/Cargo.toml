@@ -8,6 +8,7 @@ description = "MangaBaka MetadataProvider implementation for tsundoku"
 
 [dependencies]
 td-config = { path = "../td-config" }
+td-http = { path = "../td-http" }
 td-metadata = { path = "../td-metadata" }
 
 async-trait.workspace = true

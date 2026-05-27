@@ -8,6 +8,7 @@ description = "Nyaa.si DiscoverySource implementation for tsundoku"
 
 [dependencies]
 td-source = { path = "../td-source" }
+td-http = { path = "../td-http" }
 
 async-trait.workspace = true
 serde.workspace = true

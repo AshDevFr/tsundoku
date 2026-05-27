@@ -9,6 +9,7 @@ description = "Release-to-series resolution pipeline for tsundoku"
 [dependencies]
 td-config = { path = "../td-config" }
 td-db = { path = "../td-db" }
+td-http = { path = "../td-http" }
 td-metadata = { path = "../td-metadata" }
 td-source = { path = "../td-source" }
 

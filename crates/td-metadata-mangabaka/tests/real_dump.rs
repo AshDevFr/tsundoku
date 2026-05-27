@@ -110,10 +110,13 @@ async fn provider_loads_existing_dump_at_startup() {
         api_fallback: false, // force offline-only so any miss returns Ok(None)
         ..Default::default()
     };
-    let provider =
-        td_metadata_mangabaka::MangabakaProvider::from_config(&cfg, dir.path().to_path_buf())
-            .await
-            .unwrap();
+    let provider = td_metadata_mangabaka::MangabakaProvider::from_config(
+        &cfg,
+        dir.path().to_path_buf(),
+        td_http::HttpLimiter::no_limit(),
+    )
+    .await
+    .unwrap();
     let hit = provider.get("1677").await.unwrap();
     let hit = hit.expect("provider.get(1677) should hit the offline store");
     assert_eq!(hit.canonical_title, "Chainsaw Man");
@@ -137,10 +140,13 @@ async fn provider_returns_none_for_missing_id_without_api() {
         api_fallback: false,
         ..Default::default()
     };
-    let provider =
-        td_metadata_mangabaka::MangabakaProvider::from_config(&cfg, dir.path().to_path_buf())
-            .await
-            .unwrap();
+    let provider = td_metadata_mangabaka::MangabakaProvider::from_config(
+        &cfg,
+        dir.path().to_path_buf(),
+        td_http::HttpLimiter::no_limit(),
+    )
+    .await
+    .unwrap();
     let hit = provider.get("999999999").await.unwrap();
     assert!(
         hit.is_none(),

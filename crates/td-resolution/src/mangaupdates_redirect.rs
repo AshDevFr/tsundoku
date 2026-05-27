@@ -28,6 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reqwest::{Client, StatusCode, redirect};
+use td_http::{HttpLimiter, LimitedClient};
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
@@ -65,8 +66,14 @@ pub enum ResolveError {
 
 /// Wraps an HTTP client with the per-host throttle + 429 backoff state.
 /// One instance per process is enough; clone the `Arc` to share it.
+///
+/// The redirector keeps its own backoff/throttle on top of the global
+/// [`HttpLimiter`]: the limiter handles process-wide per-host
+/// serialization, while this struct's `ThrottleState` carries the
+/// MU-specific 429-driven exponential backoff (which has stricter
+/// semantics than a flat min-gap).
 pub struct MangaUpdatesRedirector {
-    client: Client,
+    client: LimitedClient,
     base_url: String,
     throttle: Arc<Mutex<ThrottleState>>,
 }
@@ -80,17 +87,20 @@ impl MangaUpdatesRedirector {
     /// Build a redirector against the live MangaUpdates host. Uses
     /// `redirect::Policy::none()` so we can read the `Location` header
     /// instead of transparently following the redirect.
-    pub fn new(user_agent: &str) -> reqwest::Result<Self> {
-        let client = Client::builder()
+    pub fn new(user_agent: &str, limiter: Arc<HttpLimiter>) -> reqwest::Result<Self> {
+        let inner = Client::builder()
             .redirect(redirect::Policy::none())
             .user_agent(user_agent)
             .build()?;
-        Ok(Self::with_client(client, MANGAUPDATES_BASE_URL))
+        Ok(Self::with_client(
+            limiter.client(inner),
+            MANGAUPDATES_BASE_URL,
+        ))
     }
 
     /// Build a redirector that targets a custom base URL. Used by the
     /// crate's own tests against a local listener.
-    pub fn with_client(client: Client, base_url: impl Into<String>) -> Self {
+    pub fn with_client(client: LimitedClient, base_url: impl Into<String>) -> Self {
         Self {
             client,
             base_url: base_url.into(),
@@ -278,10 +288,11 @@ mod tests {
     }
 
     fn build_redirector(base_url: String) -> MangaUpdatesRedirector {
-        let client = Client::builder()
+        let inner = Client::builder()
             .redirect(redirect::Policy::none())
             .build()
             .unwrap();
+        let client = HttpLimiter::no_limit().client(inner);
         MangaUpdatesRedirector::with_client(client, base_url)
     }
 

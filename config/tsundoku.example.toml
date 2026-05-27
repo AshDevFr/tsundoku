@@ -104,6 +104,31 @@ queue_low_confidence  = true
 # [ingestion.cleanup]
 # extra_format_keywords = ["Remastered", "DigitalUncen"]
 
+# Outbound-HTTP rate limiting. Every request made by the source crates,
+# the metadata providers, and the MangaUpdates redirect resolver routes
+# through the shared limiter so a cron tick with many sources cannot
+# burst against one host (the original cause of nyaa.si 429s).
+#
+# `default_*` apply to any host not listed in `[[ingestion.http.hosts]]`.
+# Per-host overrides match case-insensitively on the URL's host
+# component (no scheme, no port). The shipped defaults already cover
+# nyaa.si, api.mangabaka.dev, and www.mangaupdates.com — operators only
+# need to add entries here for new hosts or to tighten/relax limits.
+#
+# [ingestion.http]
+# default_concurrency = 2
+# default_min_gap_ms  = 250
+#
+# [[ingestion.http.hosts]]
+# host        = "nyaa.si"
+# concurrency = 1
+# min_gap_ms  = 1000
+#
+# [[ingestion.http.hosts]]
+# host        = "api.mangabaka.dev"
+# concurrency = 2
+# min_gap_ms  = 250
+
 # Discovery sources. Each entry is one polled instance. The `kind` field
 # picks the implementation; per-kind options live in the matching nested
 # block (e.g. [sources.nyaa]). v1 only ships kind = "nyaa".

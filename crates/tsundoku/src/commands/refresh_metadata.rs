@@ -22,7 +22,8 @@ pub async fn run(config_path: PathBuf, provider_id: Option<String>) -> anyhow::R
 
     let db = td_db::connect(&cfg).await?;
     td_db::run_migrations(&db).await?;
-    let registry = crate::metadata::build_registry(&cfg).await?;
+    let limiter = crate::http_limiter::build(&cfg.ingestion.http);
+    let registry = crate::metadata::build_registry(&cfg, limiter).await?;
 
     let providers: Vec<&Arc<dyn MetadataProvider>> = match provider_id.as_deref() {
         Some(id) => {

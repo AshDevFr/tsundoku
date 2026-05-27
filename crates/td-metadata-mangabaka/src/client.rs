@@ -5,11 +5,13 @@
 //! mapping to canonical [`td_metadata::SeriesMetadata`] happens in
 //! [`crate::mapping`].
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
+use td_http::{HttpLimiter, LimitedClient};
 use td_metadata::MetadataError;
 
 use crate::PROVIDER_ID;
@@ -115,7 +117,7 @@ pub struct MbScaledImage {
 /// Thin HTTP client around the MangaBaka v1 REST API. Stateless apart from
 /// the API key and HTTP client.
 pub struct MangabakaClient {
-    http: Client,
+    http: LimitedClient,
     base_url: String,
     api_key: Option<String>,
 }
@@ -125,13 +127,14 @@ impl MangabakaClient {
         base_url: impl Into<String>,
         api_key: Option<String>,
         timeout: Duration,
+        limiter: Arc<HttpLimiter>,
     ) -> anyhow::Result<Self> {
-        let http = Client::builder()
+        let inner = Client::builder()
             .timeout(timeout)
             .user_agent(concat!("tsundoku/", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(Self {
-            http,
+            http: limiter.client(inner),
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key,
         })
