@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use td_http::HttpLimiter;
-use td_source::{DiscoverySource, PollContext, PollOutcome, SourceError, SourceResult};
+use td_source::{
+    DiscoveredRelease, DiscoverySource, PollContext, PollOutcome, SourceError, SourceResult,
+};
 
 use crate::SOURCE_KIND;
 use crate::fetcher::{Fetcher, FetcherResult};
@@ -106,7 +108,7 @@ impl DiscoverySource for NyaaSource {
 
         let (body, new_etag) = match first {
             FetcherResult::NotModified { etag } => {
-                tracing::debug!(
+                tracing::info!(
                     source = %self.cfg.name,
                     "nyaa feed returned 304 Not Modified"
                 );
@@ -121,6 +123,12 @@ impl DiscoverySource for NyaaSource {
         };
 
         let mut survivors = self.parse_and_filter(&body, &ctx.recently_seen)?;
+        tracing::info!(
+            source = %self.cfg.name,
+            page = 1,
+            new = survivors.len(),
+            "parsed nyaa feed page"
+        );
 
         let max_pages = self.cfg.max_pages.max(1);
         for page in 2..=max_pages {
@@ -143,7 +151,15 @@ impl DiscoverySource for NyaaSource {
                 }
             };
             match self.parse_and_filter(&fetched, &ctx.recently_seen) {
-                Ok(mut page_survivors) => survivors.append(&mut page_survivors),
+                Ok(mut page_survivors) => {
+                    tracing::info!(
+                        source = %self.cfg.name,
+                        page,
+                        new = page_survivors.len(),
+                        "parsed nyaa feed page"
+                    );
+                    survivors.append(&mut page_survivors);
+                }
                 Err(e) => {
                     tracing::warn!(
                         source = %self.cfg.name,
@@ -156,58 +172,61 @@ impl DiscoverySource for NyaaSource {
             }
         }
 
-        if self.cfg.fetch_details {
-            for release in survivors.iter_mut() {
-                match self
-                    .fetcher
-                    .fetch_detail(&release.link)
-                    .await
-                    .map(|html| crate::detail::parse_detail(&html, &self.cfg.site_base_url))
-                {
-                    Ok(Ok(detail)) => {
-                        if !detail.files.is_empty() {
-                            release.files = detail.files;
-                        }
-                        if !detail.external_links.is_empty() {
-                            release.external_links = detail.external_links;
-                        }
-                        if release.magnet.is_none() {
-                            release.magnet = detail.magnet;
-                        }
-                        // RSS gives us a short anchor + size + category +
-                        // hash; the detail page has the uploader's actual
-                        // body (markdown). Prefer the latter when present —
-                        // it's what the review UI surfaces to the operator.
-                        if let Some(desc) = detail.description_html {
-                            release.description_html = Some(desc);
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        tracing::warn!(
-                            source = %self.cfg.name,
-                            link = %release.link,
-                            error = %e,
-                            "failed to parse nyaa detail page; keeping rss-only data"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            source = %self.cfg.name,
-                            link = %release.link,
-                            error = ?e,
-                            "failed to fetch nyaa detail page; keeping rss-only data"
-                        );
-                    }
-                }
-            }
-        }
-
         Ok(PollOutcome {
             releases: survivors,
             new_etag,
             new_cursor: None,
             not_modified: false,
         })
+    }
+
+    async fn enrich(&self, release: &mut DiscoveredRelease) -> SourceResult<()> {
+        if !self.cfg.fetch_details {
+            return Ok(());
+        }
+        // Failures are non-fatal by trait contract: log and return Ok so the
+        // scheduler still persists + resolves with whatever RSS-only data
+        // we already have. A flaky detail-page host shouldn't sink a poll.
+        let html = match self.fetcher.fetch_detail(&release.link).await {
+            Ok(html) => html,
+            Err(e) => {
+                tracing::warn!(
+                    source = %self.cfg.name,
+                    link = %release.link,
+                    error = ?e,
+                    "failed to fetch nyaa detail page; keeping rss-only data"
+                );
+                return Ok(());
+            }
+        };
+        let detail = match crate::detail::parse_detail(&html, &self.cfg.site_base_url) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!(
+                    source = %self.cfg.name,
+                    link = %release.link,
+                    error = %e,
+                    "failed to parse nyaa detail page; keeping rss-only data"
+                );
+                return Ok(());
+            }
+        };
+        if !detail.files.is_empty() {
+            release.files = detail.files;
+        }
+        if !detail.external_links.is_empty() {
+            release.external_links = detail.external_links;
+        }
+        if release.magnet.is_none() {
+            release.magnet = detail.magnet;
+        }
+        // RSS gives us a short anchor + size + category + hash; the detail
+        // page has the uploader's actual body (markdown). Prefer the latter
+        // when present — it's what the review UI surfaces to the operator.
+        if let Some(desc) = detail.description_html {
+            release.description_html = Some(desc);
+        }
+        Ok(())
     }
 }
 

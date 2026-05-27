@@ -96,6 +96,7 @@ pub async fn run_tick(
     let name = source.name().to_string();
     let started_at = Utc::now();
     let started_at_ts = started_at.timestamp();
+    tracing::info!(source = %name, kind = %kind, trigger = %trigger, "poll tick started");
 
     let lock = locks.source_lock(&name);
     let Ok(_guard) = lock.try_lock() else {
@@ -132,7 +133,7 @@ pub async fn run_tick(
     let fetch_started = Instant::now();
     let poll_result = source.poll(&ctx).await;
     let fetch_duration_ms = fetch_started.elapsed().as_millis() as i64;
-    let outcome = match poll_result {
+    let mut outcome = match poll_result {
         Ok(o) => o,
         Err(e) => {
             let err: anyhow::Error = anyhow::Error::new(e).context(format!("poll {name} failed"));
@@ -165,25 +166,46 @@ pub async fn run_tick(
         }
     };
 
-    // Persist + resolve per release. Each iteration commits to SQLite
-    // before moving on, so a mid-loop crash leaves the work done so far
-    // visible in the UI; the next tick re-fetches (the ETag is only
-    // advanced after the whole walk) and re-persisting is idempotent on
-    // `(source_kind, external_id)`. A resolver Err is logged and counted
-    // as a `failed` outcome so the breakdown ties out against the
-    // persisted release count.
+    let fetched = outcome.releases.len();
+    tracing::info!(
+        source = %name,
+        fetched,
+        fetch_duration_ms,
+        not_modified = outcome.not_modified,
+        "feed parsed; starting enrich + persist + resolve"
+    );
+
+    // Enrich + persist + resolve per release. Each iteration commits to
+    // SQLite before moving on, so a mid-loop crash leaves the work done
+    // so far visible in the UI; the next tick re-fetches (the ETag is
+    // only advanced after the whole walk) and re-persisting is
+    // idempotent on `(source_kind, external_id)`. Enrich errors are
+    // logged but non-fatal by trait contract — we persist with the
+    // RSS-only data. A resolver Err is logged and counted as a `failed`
+    // outcome so the breakdown ties out against the persisted release
+    // count.
     let mut resolver =
         Resolver::new(db.clone(), metadata, ingestion).with_query_builder(query_builder);
     if let Some(r) = mangaupdates_redirector {
         resolver = resolver.with_mangaupdates_redirector(r);
     }
 
-    let fetched = outcome.releases.len();
+    const PROGRESS_EVERY: usize = 25;
     let mut persisted = 0usize;
     let mut persist_errors = 0usize;
+    let mut enrich_errors = 0usize;
     let mut resolve_errors = 0usize;
     let mut breakdown = OutcomeBreakdown::default();
-    for release in &outcome.releases {
+    for (idx, release) in outcome.releases.iter_mut().enumerate() {
+        if let Err(e) = source.enrich(release).await {
+            tracing::warn!(
+                error = ?e,
+                source = %name,
+                external_id = %release.external_id,
+                "enrich failed; persisting with rss-only data"
+            );
+            enrich_errors += 1;
+        }
         let id = match releases_repo::persist_discovered(&db, release, started_at.timestamp()).await
         {
             Ok(id) => id,
@@ -207,12 +229,22 @@ pub async fn run_tick(
                 breakdown.failed += 1;
             }
         }
+        let processed = idx + 1;
+        if processed % PROGRESS_EVERY == 0 && processed < fetched {
+            tracing::info!(
+                source = %name,
+                processed,
+                total = fetched,
+                "poll tick progress"
+            );
+        }
     }
 
     let summary = build_summary(
         fetched,
         persisted,
         persist_errors,
+        enrich_errors,
         resolve_errors,
         outcome.not_modified,
     );
@@ -412,6 +444,7 @@ fn build_summary(
     fetched: usize,
     persisted: usize,
     persist_errors: usize,
+    enrich_errors: usize,
     resolve_errors: usize,
     not_modified: bool,
 ) -> String {
@@ -421,6 +454,9 @@ fn build_summary(
     let mut s = format!("ok: {fetched} fetched, {persisted} persisted");
     if persist_errors > 0 {
         s.push_str(&format!(", {persist_errors} persist_errors"));
+    }
+    if enrich_errors > 0 {
+        s.push_str(&format!(", {enrich_errors} enrich_errors"));
     }
     if resolve_errors > 0 {
         s.push_str(&format!(", {resolve_errors} resolve_errors"));
