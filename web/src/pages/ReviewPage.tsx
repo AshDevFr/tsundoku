@@ -45,14 +45,88 @@ import {
   useProviderSearch,
   useProviders,
   useSeriesList,
+  useSources,
   useUnresolvedReleases,
 } from "@/api/queries";
 import { formatAbsolute, formatRelative, providerUrl } from "@/api/utils";
 
+/// Canonical file formats the detector can tag a release with. Hardcoded
+/// rather than derived from the queue so the dropdown is stable; an option
+/// with no current matches simply yields an empty result.
+const REVIEW_FORMATS = [
+  "cbz",
+  "cbr",
+  "cb7",
+  "cbt",
+  "zip",
+  "rar",
+  "7z",
+  "tar",
+  "epub",
+  "pdf",
+  "mobi",
+  "azw3",
+];
+
+const REVIEW_STATUSES = [
+  { value: "unresolved", label: "Unresolved" },
+  { value: "ambiguous", label: "Ambiguous" },
+  { value: "review_pending", label: "Review pending" },
+];
+
 export function ReviewPage() {
   const [page, setPage] = useState(1);
-  const queue = useUnresolvedReleases(page);
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+  const [sourceName, setSourceName] = useState<string | null>(null);
+  const [format, setFormat] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+
+  // Debounce the search box so each keystroke doesn't fire a request. A
+  // settled query also restarts pagination: a narrower result set could
+  // otherwise leave the operator stranded on a now-empty page.
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedQ(searchInput);
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [searchInput]);
+
+  const queue = useUnresolvedReleases({
+    page,
+    q: debouncedQ,
+    sourceName: sourceName ?? undefined,
+    format: format ?? undefined,
+    status: status ?? undefined,
+  });
   const retryAll = useRetryAllReleases();
+
+  const hasFilters = Boolean(
+    debouncedQ.trim() || sourceName || format || status,
+  );
+  // The select filters reset pagination synchronously on change (the search
+  // box does so via its debounce effect above).
+  const changeSource = (v: string | null) => {
+    setSourceName(v);
+    setPage(1);
+  };
+  const changeFormat = (v: string | null) => {
+    setFormat(v);
+    setPage(1);
+  };
+  const changeStatus = (v: string | null) => {
+    setStatus(v);
+    setPage(1);
+  };
+  const clearFilters = () => {
+    setSearchInput("");
+    setDebouncedQ("");
+    setSourceName(null);
+    setFormat(null);
+    setStatus(null);
+    setPage(1);
+  };
 
   const total = queue.data?.total ?? 0;
   const pageSize = queue.data?.pageSize ?? 20;
@@ -107,6 +181,19 @@ export function ReviewPage() {
         </Tooltip>
       </Group>
 
+      <ReviewFilterBar
+        search={searchInput}
+        onSearch={setSearchInput}
+        sourceName={sourceName}
+        onSourceName={changeSource}
+        format={format}
+        onFormat={changeFormat}
+        status={status}
+        onStatus={changeStatus}
+        hasFilters={hasFilters}
+        onClear={clearFilters}
+      />
+
       {queue.isError && (
         <Alert color="red" title="Failed to load review queue">
           {(queue.error as Error)?.message ?? "Unknown error"}
@@ -119,7 +206,17 @@ export function ReviewPage() {
         </Center>
       )}
 
-      {queue.data && queue.data.items.length === 0 && (
+      {queue.data && queue.data.items.length === 0 && hasFilters && (
+        <Alert color="blue" title="No matches">
+          No releases match the current filters.{" "}
+          <Anchor component="button" type="button" onClick={clearFilters}>
+            Clear filters
+          </Anchor>{" "}
+          to see the whole queue.
+        </Alert>
+      )}
+
+      {queue.data && queue.data.items.length === 0 && !hasFilters && (
         <Alert color="green" title="Inbox zero">
           Nothing waiting for review. New unresolved releases will land here as
           the scheduler runs.
@@ -145,6 +242,98 @@ export function ReviewPage() {
         </Center>
       )}
     </Stack>
+  );
+}
+
+/// Filter controls for the review queue: free-text title search, source
+/// instance, file format, and queue status. Source options come from the
+/// configured discovery sources; format options are the canonical detector
+/// set. Controlled by the parent so the query and pagination react to changes.
+function ReviewFilterBar({
+  search,
+  onSearch,
+  sourceName,
+  onSourceName,
+  format,
+  onFormat,
+  status,
+  onStatus,
+  hasFilters,
+  onClear,
+}: {
+  search: string;
+  onSearch: (v: string) => void;
+  sourceName: string | null;
+  onSourceName: (v: string | null) => void;
+  format: string | null;
+  onFormat: (v: string | null) => void;
+  status: string | null;
+  onStatus: (v: string | null) => void;
+  hasFilters: boolean;
+  onClear: () => void;
+}) {
+  const sources = useSources();
+  const sourceOptions =
+    sources.data?.items.map((s) => ({ value: s.name, label: s.name })) ?? [];
+
+  return (
+    <Group
+      gap="sm"
+      wrap="wrap"
+      align="flex-end"
+      data-testid="review-filter-bar"
+    >
+      <TextInput
+        label="Search"
+        placeholder="Title contains…"
+        value={search}
+        onChange={(e) => onSearch(e.currentTarget.value)}
+        style={{ flex: "1 1 220px", minWidth: 180 }}
+        data-testid="review-search"
+      />
+      <Select
+        label="Source"
+        placeholder="Any source"
+        data={sourceOptions}
+        value={sourceName}
+        onChange={onSourceName}
+        clearable
+        searchable={sourceOptions.length > 5}
+        style={{ width: 200 }}
+        data-testid="review-source-filter"
+      />
+      <Select
+        label="Format"
+        placeholder="Any format"
+        data={REVIEW_FORMATS}
+        value={format}
+        onChange={onFormat}
+        clearable
+        style={{ width: 140 }}
+        data-testid="review-format-filter"
+      />
+      <Select
+        label="Status"
+        placeholder="Any status"
+        data={REVIEW_STATUSES}
+        value={status}
+        onChange={onStatus}
+        clearable
+        style={{ width: 170 }}
+        data-testid="review-status-filter"
+      />
+      {hasFilters && (
+        <Button
+          variant="subtle"
+          color="gray"
+          size="sm"
+          onClick={onClear}
+          data-testid="review-clear-filters"
+        >
+          Clear
+        </Button>
+      )}
+    </Group>
   );
 }
 

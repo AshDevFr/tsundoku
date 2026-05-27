@@ -260,6 +260,54 @@ describe("ReviewPage", () => {
     expect(trail.textContent).toContain("strip_parens");
   });
 
+  it("filters the queue by title search", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+    // Both cards present before filtering.
+    expect(screen.getByTestId("review-card-nyaa:9002")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId("review-search"), {
+      target: { value: "Unknown" },
+    });
+
+    // The non-matching card drops out (debounced + refetched).
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByTestId("review-card-nyaa:9001"),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+    expect(screen.getByTestId("review-card-nyaa:9002")).toBeInTheDocument();
+  });
+
+  it("clears filters to restore the full queue", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+    fireEvent.change(screen.getByTestId("review-search"), {
+      target: { value: "Unknown" },
+    });
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByTestId("review-card-nyaa:9001"),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+
+    fireEvent.click(screen.getByTestId("review-clear-filters"));
+    await waitFor(
+      () => {
+        expect(screen.getByTestId("review-card-nyaa:9001")).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+  });
+
   it("shows every search query when the cleaner produced more than one", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderReview();

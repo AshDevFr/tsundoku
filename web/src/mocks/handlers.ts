@@ -842,13 +842,28 @@ export const handlers = [
     const url = new URL(request.url);
     const page = Number(url.searchParams.get("page") ?? "1");
     const pageSize = Number(url.searchParams.get("pageSize") ?? "20");
+    const q = url.searchParams.get("q")?.trim().toLowerCase();
+    const sourceName = url.searchParams.get("sourceName");
+    const format = url.searchParams.get("format");
+    const status = url.searchParams.get("status");
+    const QUEUE_STATUSES = ["unresolved", "ambiguous", "review_pending"];
+    const filtered = queue.filter((r) => {
+      if (q && !r.title.toLowerCase().includes(q)) return false;
+      if (sourceName && r.sourceName !== sourceName) return false;
+      if (format && !r.formats.includes(format)) return false;
+      // Mirror the server clamp: an out-of-queue status is ignored.
+      if (status && QUEUE_STATUSES.includes(status)) {
+        if (r.resolutionStatus !== status) return false;
+      }
+      return true;
+    });
     const start = (page - 1) * pageSize;
-    const items = queue.slice(start, start + pageSize);
+    const items = filtered.slice(start, start + pageSize);
     const body: UnresolvedPage = {
       items,
       page,
       pageSize,
-      total: queue.length,
+      total: filtered.length,
     };
     return HttpResponse.json(body);
   }),

@@ -348,15 +348,33 @@ export function useIdMapMetrics() {
   });
 }
 
-export function useUnresolvedReleases(
-  page = 1,
-  pageSize = DEFAULT_REVIEW_PAGE_SIZE,
-) {
+export interface ReviewFilters {
+  page?: number;
+  pageSize?: number;
+  /// Free-text title search. Whitespace-only is treated as absent.
+  q?: string;
+  sourceName?: string;
+  format?: string;
+  /// One of the queue statuses (`unresolved` / `ambiguous` /
+  /// `review_pending`); anything else is clamped server-side.
+  status?: string;
+}
+
+export function useUnresolvedReleases(filters: ReviewFilters = {}) {
+  const trimmedQ = filters.q?.trim();
+  const query = {
+    page: filters.page ?? 1,
+    pageSize: filters.pageSize ?? DEFAULT_REVIEW_PAGE_SIZE,
+    q: trimmedQ || undefined,
+    sourceName: filters.sourceName || undefined,
+    format: filters.format || undefined,
+    status: filters.status || undefined,
+  };
   return useQuery({
-    queryKey: ["releases-unresolved", page, pageSize],
+    queryKey: ["releases-unresolved", query],
     queryFn: async () => {
       const { data, error } = await api.GET("/api/v1/releases/unresolved", {
-        params: { query: { page, pageSize } },
+        params: { query },
       });
       if (error) throw new Error("failed to load review queue");
       return data;
