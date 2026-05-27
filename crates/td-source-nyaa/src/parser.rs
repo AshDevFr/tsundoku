@@ -8,7 +8,7 @@
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use quick_xml::Reader;
-use quick_xml::escape::unescape;
+use quick_xml::escape::{resolve_predefined_entity, unescape};
 use quick_xml::events::Event;
 use quick_xml::name::QName;
 use td_source::DiscoveredRelease;
@@ -23,7 +23,14 @@ use crate::links::extract_external_links;
 /// the `guid` link) is used as `external_id`.
 pub fn parse_feed(body: &str, source_name: &str) -> Result<Vec<DiscoveredRelease>> {
     let mut reader = Reader::from_str(body);
-    reader.config_mut().trim_text(true);
+    // Don't ask quick_xml to trim text segments. When an element contains
+    // an entity reference (`<title>Foo &amp; Bar</title>`), quick_xml
+    // splits it into Text("Foo ") + GeneralRef("amp") + Text(" Bar") and
+    // trims each Text individually — the spaces adjacent to the entity
+    // collapse and we get "Foo&Bar". Every field this parser cares about
+    // is explicitly trimmed in `build`, so leaving inner whitespace alone
+    // is harmless.
+    reader.config_mut().trim_text(false);
 
     let mut releases = Vec::new();
     let mut depth: u32 = 0;
@@ -90,6 +97,31 @@ pub fn parse_feed(body: &str, source_name: &str) -> Result<Vec<DiscoveredRelease
                         .map_err(|e| anyhow!("non-utf8 cdata: {e}"))?
                         .to_string();
                     item.apply(field, &s);
+                }
+            }
+            // quick_xml emits entity references (`&amp;`, `&#39;`, ...) as a
+            // separate event instead of inlining them into the surrounding
+            // Text. Without this arm they'd fall into the wildcard below and
+            // get silently dropped — Nyaa post titles routinely encode `'`
+            // as `&#39;`, so we'd be losing characters mid-word.
+            Ok(Event::GeneralRef(e)) => {
+                if let Some(field) = current_field.as_ref() {
+                    let resolved: Option<String> = if e.is_char_ref() {
+                        e.resolve_char_ref()
+                            .map_err(|err| anyhow!("resolve char ref: {err}"))?
+                            .map(|ch| ch.to_string())
+                    } else {
+                        let name = e.decode().map_err(|err| anyhow!("decode entity: {err}"))?;
+                        resolve_predefined_entity(&name).map(|s| s.to_string())
+                    };
+                    if let Some(s) = resolved {
+                        item.apply(field, &s);
+                    } else {
+                        tracing::debug!(
+                            entity = ?e.decode().ok(),
+                            "dropping unresolvable XML entity reference in nyaa feed"
+                        );
+                    }
                 }
             }
             Ok(Event::Eof) => break,
@@ -208,10 +240,13 @@ impl ItemBuilder {
         };
         let magnet = info_hash.as_ref().map(|h| build_magnet(h, &title));
         let size_bytes = parse_size(self.size.trim());
-        let description_html = if self.description.is_empty() {
-            None
-        } else {
-            Some(self.description.clone())
+        let description_html = {
+            let trimmed = self.description.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
         };
         let external_links = description_html
             .as_deref()
@@ -393,6 +428,55 @@ mod tests {
             assert_eq!(x.title, y.title);
             assert_eq!(x.info_hash, y.info_hash);
         }
+    }
+
+    #[test]
+    fn numeric_entity_in_title_is_resolved_inline() {
+        // Nyaa encodes apostrophes as `&#39;` in `<title>` (the CDATA
+        // description gets the same treatment). quick_xml emits entity
+        // refs as `Event::GeneralRef`, separate from the surrounding text;
+        // if the parser doesn't resolve them, the character is dropped
+        // mid-word and the title silently loses punctuation.
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:nyaa="https://nyaa.si/xmlns/nyaa">
+<channel>
+<title>Nyaa</title>
+<item>
+<title>The Skull Dragon&#39;s Precious Daughter v05-06 (2025-2026) (Digital) (Ushi)</title>
+<link>https://nyaa.si/download/2104023.torrent</link>
+<guid isPermaLink="true">https://nyaa.si/view/2104023</guid>
+<pubDate>Wed, 29 Apr 2026 02:51:07 -0000</pubDate>
+<nyaa:size>543.7 MiB</nyaa:size>
+<nyaa:infoHash>5b7b9f287c30bfe097f0621cffcb7e3e2e8638b3</nyaa:infoHash>
+</item>
+</channel>
+</rss>"#;
+        let releases = parse_feed(xml, "test").unwrap();
+        assert_eq!(
+            releases[0].title,
+            "The Skull Dragon's Precious Daughter v05-06 (2025-2026) (Digital) (Ushi)"
+        );
+    }
+
+    #[test]
+    fn predefined_named_entities_in_title_are_resolved() {
+        // The five XML-predefined entities. `&amp;` is the realistic one
+        // (titles like "Foo &amp; Bar"); the others round-trip safely.
+        let xml = r#"<?xml version="1.0"?>
+<rss version="2.0" xmlns:nyaa="https://nyaa.si/xmlns/nyaa">
+<channel>
+<item>
+<title>Foo &amp; Bar &lt;v1&gt; &quot;Special&quot; &apos;Edition&apos;</title>
+<link>https://nyaa.si/download/1.torrent</link>
+<guid isPermaLink="true">https://nyaa.si/view/1</guid>
+<pubDate>Mon, 18 May 2026 23:34:56 -0000</pubDate>
+<nyaa:infoHash>aaaa</nyaa:infoHash>
+<nyaa:size>1.0 MiB</nyaa:size>
+</item>
+</channel>
+</rss>"#;
+        let releases = parse_feed(xml, "test").unwrap();
+        assert_eq!(releases[0].title, "Foo & Bar <v1> \"Special\" 'Edition'");
     }
 
     #[test]
