@@ -93,7 +93,7 @@ impl OfflineStore {
         // decode them as Option<String> uniformly.
         let sql = format!(
             "SELECT id, title, native_title, romanized_title, \
-            titles, type AS kind, status, year, description, state, \
+            titles, type AS kind, status, year, description, state, genres, tags, \
             cover_x350_x2, cover_x350_x1, cover_x250_x2, cover_x250_x1, cover_raw_url, \
             CAST(source_anilist_id AS TEXT) AS source_anilist_id, \
             CAST(source_my_anime_list_id AS TEXT) AS source_my_anime_list_id, \
@@ -193,7 +193,7 @@ impl OfflineStore {
 // `Option<String>` uniformly. `type` is aliased to `kind` because
 // `FromQueryResult` does not honor `#[sea_orm(column_name = ...)]`.
 const SELECT_BY_ID: &str = "SELECT id, title, native_title, romanized_title, \
-        titles, type AS kind, status, year, description, state, \
+        titles, type AS kind, status, year, description, state, genres, tags, \
         cover_x350_x2, cover_x350_x1, cover_x250_x2, cover_x250_x1, cover_raw_url, \
         CAST(source_anilist_id AS TEXT) AS source_anilist_id, \
         CAST(source_my_anime_list_id AS TEXT) AS source_my_anime_list_id, \
@@ -205,7 +205,7 @@ const SELECT_BY_ID: &str = "SELECT id, title, native_title, romanized_title, \
         FROM series WHERE id = ?1 LIMIT 1";
 
 const SELECT_FTS: &str = "SELECT s.id, s.title, s.native_title, s.romanized_title, \
-        s.titles, s.type AS kind, s.status, s.year, s.description, s.state, \
+        s.titles, s.type AS kind, s.status, s.year, s.description, s.state, s.genres, s.tags, \
         s.cover_x350_x2, s.cover_x350_x1, s.cover_x250_x2, s.cover_x250_x1, s.cover_raw_url, \
         CAST(s.source_anilist_id AS TEXT) AS source_anilist_id, \
         CAST(s.source_my_anime_list_id AS TEXT) AS source_my_anime_list_id, \
@@ -266,6 +266,11 @@ struct RawRow {
     year: Option<i32>,
     description: Option<String>,
     state: Option<String>,
+    /// JSON array of genre names (e.g. `["Action", "Comedy"]`). The HTTP
+    /// API uses the same shape; we parse it back into `Vec<String>` so the
+    /// offline and live paths land on the same canonical metadata.
+    genres: Option<String>,
+    tags: Option<String>,
     cover_x350_x2: Option<String>,
     cover_x350_x1: Option<String>,
     cover_x250_x2: Option<String>,
@@ -297,6 +302,8 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
     let cover_url = pick_cover_from_row(&row);
     let kind = row.kind.as_deref().map(parse_kind);
     let status = row.status.as_deref().map(parse_status);
+    let genres = parse_string_array(row.genres.as_deref());
+    let tags = parse_string_array(row.tags.as_deref());
     // Build a deterministic blob from the dump row so the resolver can
     // hash + dedupe writes. The dump itself doesn't expose a per-row
     // version; the SHA stays stable as long as the row stays stable.
@@ -312,6 +319,8 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
         cover_url: cover_url.clone(),
         alternate_titles: alternate_titles.clone(),
         foreign_ids: foreign_ids.clone(),
+        genres: genres.clone(),
+        tags: tags.clone(),
     })
     .expect("SerializedRow always serializes");
     let content_hash = crate::mapping::hash_value(&raw);
@@ -326,12 +335,22 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
         year: row.year,
         cover_url,
         description,
-        genres: Vec::new(),
-        tags: Vec::new(),
+        genres,
+        tags,
         foreign_ids,
         raw,
         content_hash,
     }
+}
+
+/// Decode a SQLite TEXT cell holding a JSON array of strings. Malformed or
+/// missing payloads degrade to an empty list rather than failing the lookup:
+/// the catalog row is still useful without genres/tags.
+fn parse_string_array(raw: Option<&str>) -> Vec<String> {
+    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
 }
 
 #[derive(serde::Serialize)]
@@ -347,6 +366,8 @@ struct SerializedRow {
     cover_url: Option<String>,
     alternate_titles: Vec<String>,
     foreign_ids: Vec<ForeignId>,
+    genres: Vec<String>,
+    tags: Vec<String>,
 }
 
 fn collect_alternates(row: &RawRow) -> Vec<String> {
@@ -453,6 +474,8 @@ mod tests {
                 year INTEGER,
                 description TEXT,
                 state TEXT,
+                genres TEXT,
+                tags TEXT,
                 cover_x350_x2 TEXT,
                 cover_x350_x1 TEXT,
                 cover_x250_x2 TEXT,
@@ -475,12 +498,14 @@ mod tests {
             backend,
             "INSERT INTO series (
                 id, title, native_title, romanized_title, titles, type, status, year, state,
+                genres, tags,
                 cover_x350_x2, source_anilist_id, source_my_anime_list_id,
                 source_manga_updates_id, source_kitsu_id, source_anime_planet_id
             ) VALUES (
                 1677, 'Chainsaw Man', 'チェンソーマン', 'Chainsaw Man',
                 '[{\"title\":\"Chainsaw-Man\",\"language\":\"en\"},{\"title\":\"CSM\",\"language\":\"en\"}]',
                 'manga', 'releasing', 2018, 'active',
+                '[\"Action\", \"Horror\"]', '[\"Chainsaws\", \"Devils\"]',
                 'https://mb/350@2x.jpg', 105778, 116778,
                 'ylx5wzn', 54139, 'chainsaw-man'
             )"
@@ -545,6 +570,20 @@ mod tests {
         assert!(
             m.alternate_titles.contains(&"CSM".to_string()),
             "expected JSON-array alternates to be merged in"
+        );
+        assert_eq!(m.genres, vec!["Action".to_string(), "Horror".to_string()]);
+        assert_eq!(m.tags, vec!["Chainsaws".to_string(), "Devils".to_string()]);
+    }
+
+    #[test]
+    fn parse_string_array_handles_malformed_payloads() {
+        assert!(parse_string_array(None).is_empty());
+        assert!(parse_string_array(Some("")).is_empty());
+        assert!(parse_string_array(Some("   ")).is_empty());
+        assert!(parse_string_array(Some("not-json")).is_empty());
+        assert_eq!(
+            parse_string_array(Some(r#"["A","B"]"#)),
+            vec!["A".to_string(), "B".to_string()],
         );
     }
 
