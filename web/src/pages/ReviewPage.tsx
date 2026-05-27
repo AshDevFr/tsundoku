@@ -536,9 +536,38 @@ function CandidateList({
                   />
                 </Box>
                 <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
-                  <Text size="sm" fw={500} lineClamp={1} title={c.seriesTitle}>
-                    {c.seriesTitle}
-                  </Text>
+                  <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+                    <Text
+                      size="sm"
+                      fw={500}
+                      lineClamp={1}
+                      title={c.seriesTitle}
+                      style={{ minWidth: 0, flex: 1 }}
+                    >
+                      {c.seriesTitle}
+                    </Text>
+                    {c.externalUrl && (
+                      <Anchor
+                        href={c.externalUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        size="xs"
+                        title="Open on provider"
+                      >
+                        view ↗
+                      </Anchor>
+                    )}
+                  </Group>
+                  {c.alternateTitles.length > 0 && (
+                    <Text
+                      size="xs"
+                      c="dimmed"
+                      lineClamp={1}
+                      title={c.alternateTitles.join(" / ")}
+                    >
+                      {c.alternateTitles.join(" / ")}
+                    </Text>
+                  )}
                   <Group gap={6}>
                     <Badge size="xs" variant="default">
                       score {c.score.toFixed(2)}
@@ -772,9 +801,28 @@ function SearchResults({
                   />
                 </Box>
                 <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
-                  <Text size="sm" fw={500} lineClamp={1} title={h.title}>
-                    {h.title}
-                  </Text>
+                  <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+                    <Text
+                      size="sm"
+                      fw={500}
+                      lineClamp={1}
+                      title={h.title}
+                      style={{ minWidth: 0, flex: 1 }}
+                    >
+                      {h.title}
+                    </Text>
+                    {h.externalUrl && (
+                      <Anchor
+                        href={h.externalUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        size="xs"
+                        title="Open on provider"
+                      >
+                        view ↗
+                      </Anchor>
+                    )}
+                  </Group>
                   {h.nativeTitle && (
                     <Text size="xs" c="dimmed" lineClamp={1}>
                       {h.nativeTitle}

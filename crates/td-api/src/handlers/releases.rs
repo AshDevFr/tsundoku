@@ -6,7 +6,7 @@ use chrono::Utc;
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
 use td_db::entities::releases;
-use td_db::repos::{releases_repo, review_repo};
+use td_db::repos::{releases_repo, review_repo, series_external_ids_repo};
 use td_metadata::SeriesMetadata;
 use td_resolution::{Resolver, persist};
 use utoipa::{IntoParams, ToSchema};
@@ -58,6 +58,15 @@ pub struct ReviewCandidateDto {
     pub series_cover_url: Option<String>,
     pub score: f64,
     pub reason: Option<String>,
+    /// Active provider's URL for this series (e.g. the MangaBaka page),
+    /// when known. Pulled from `series_external_ids.external_url` for
+    /// `(active_provider, series_id)`; falls back to any other provider's
+    /// URL so the operator always has a way to inspect the candidate.
+    pub external_url: Option<String>,
+    /// Alternate / native titles persisted on the series row. Surfaced
+    /// in the review UI so romaji / Japanese / publisher variants are
+    /// visible without opening the provider page.
+    pub alternate_titles: Vec<String>,
 }
 
 /// External provider links scraped from a release's description. Mirrors
@@ -247,6 +256,7 @@ pub async fn list_unresolved(
         .await
         .map_err(anyhow_err)?;
 
+    let active_provider = state.metadata.active_id().to_string();
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
         let formats = releases_repo::list_formats(&state.db, &row.id)
@@ -260,6 +270,23 @@ pub async fn list_unresolved(
             let series = td_db::repos::series_repo::find_by_id(&state.db, c.series_id)
                 .await
                 .map_err(anyhow_err)?;
+            let alternate_titles = series
+                .as_ref()
+                .and_then(|s| s.alternate_titles_json.as_deref())
+                .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
+                .unwrap_or_default();
+            // Prefer the active provider's URL (almost always present
+            // since the candidate came from that provider's resolver);
+            // fall back to any other mapping so we never leave the
+            // operator without a way to inspect the series.
+            let mappings = series_external_ids_repo::list_for_series(&state.db, c.series_id)
+                .await
+                .map_err(anyhow_err)?;
+            let external_url = mappings
+                .iter()
+                .find(|m| m.provider == active_provider)
+                .and_then(|m| m.external_url.clone())
+                .or_else(|| mappings.iter().find_map(|m| m.external_url.clone()));
             candidates.push(ReviewCandidateDto {
                 series_id: c.series_id,
                 series_title: series
@@ -269,6 +296,8 @@ pub async fn list_unresolved(
                 series_cover_url: series.and_then(|s| s.cover_url),
                 score: c.score,
                 reason: c.reason,
+                external_url,
+                alternate_titles,
             });
         }
         let search_queries: Vec<String> = row

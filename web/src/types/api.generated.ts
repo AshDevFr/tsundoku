@@ -880,6 +880,19 @@ export interface components {
             triggered: boolean;
         };
         ReviewCandidateDto: {
+            /**
+             * @description Alternate / native titles persisted on the series row. Surfaced
+             *     in the review UI so romaji / Japanese / publisher variants are
+             *     visible without opening the provider page.
+             */
+            alternateTitles: string[];
+            /**
+             * @description Active provider's URL for this series (e.g. the MangaBaka page),
+             *     when known. Pulled from `series_external_ids.external_url` for
+             *     `(active_provider, series_id)`; falls back to any other provider's
+             *     URL so the operator always has a way to inspect the candidate.
+             */
+            externalUrl?: string | null;
             reason?: string | null;
             /** Format: double */
             score: number;

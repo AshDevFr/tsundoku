@@ -96,6 +96,8 @@ const INITIAL_QUEUE: UnresolvedRelease[] = [
         seriesCoverUrl: null,
         score: 0.72,
         reason: "fuzzy title (0.72)",
+        externalUrl: "https://mangabaka.dev/series/1",
+        alternateTitles: ["チェンソーマン", "Chensō Man"],
       },
       {
         seriesId: 3,
@@ -103,6 +105,8 @@ const INITIAL_QUEUE: UnresolvedRelease[] = [
         seriesCoverUrl: null,
         score: 0.61,
         reason: "fuzzy title (0.61)",
+        externalUrl: "https://mangabaka.dev/series/3",
+        alternateTitles: [],
       },
     ],
     searchQueries: ["Mystery Series"],
@@ -117,6 +121,8 @@ const INITIAL_QUEUE: UnresolvedRelease[] = [
       seriesCoverUrl: null,
       score: 0.72,
       reason: "fuzzy title (0.72)",
+      externalUrl: "https://mangabaka.dev/series/1",
+      alternateTitles: ["チェンソーマン", "Chensō Man"],
     },
   },
   {
