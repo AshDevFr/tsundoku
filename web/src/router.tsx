@@ -14,6 +14,7 @@ import { AdminProvidersListPage } from "@/pages/admin/ProvidersList";
 import { AdminSourceDetailPage } from "@/pages/admin/SourceDetail";
 import { AdminSourcesListPage } from "@/pages/admin/SourcesList";
 import { FeedPage } from "@/pages/FeedPage";
+import { KeptPage } from "@/pages/KeptPage";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { SeriesDetailPage } from "@/pages/SeriesDetailPage";
 import type { FilterSearch } from "@/stores/filters";
@@ -80,6 +81,12 @@ export const adminReviewRoute = createRoute({
   component: ReviewPage,
 });
 
+export const adminKeptRoute = createRoute({
+  getParentRoute: () => adminLayoutRoute,
+  path: "kept",
+  component: KeptPage,
+});
+
 export const adminSourcesListRoute = createRoute({
   getParentRoute: () => adminLayoutRoute,
   path: "sources",
@@ -122,6 +129,7 @@ const routeTree = rootRoute.addChildren([
   adminLayoutRoute.addChildren([
     adminOverviewRoute,
     adminReviewRoute,
+    adminKeptRoute,
     adminSourcesListRoute,
     adminSourceDetailRoute,
     adminProvidersListRoute,

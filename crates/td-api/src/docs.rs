@@ -53,6 +53,7 @@ use crate::state::{JobEvent, JobKind, JobPhase, JobResult};
         releases::list_unresolved,
         releases::link,
         releases::reject,
+        releases::keep,
         releases::retry,
         releases::retry_all,
         sources::list,

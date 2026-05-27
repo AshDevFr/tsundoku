@@ -172,11 +172,42 @@ let queue: UnresolvedRelease[] = INITIAL_QUEUE.map((r) => ({
   candidates: r.candidates.map((c) => ({ ...c })),
 }));
 
+// Releases the operator marked `standalone`. The Kept browse view reads
+// these via `GET /releases?status=standalone`; the `keep` handler appends.
+const INITIAL_KEPT: ReleaseDto[] = [
+  {
+    id: "nyaa:7001",
+    sourceKind: "nyaa",
+    sourceName: "english-manga-trusted",
+    externalId: "7001",
+    title: "The Shonen Jump Guide to Making Manga (2022) (Digital) (LuCaZ)",
+    link: "https://nyaa.si/view/7001",
+    magnet: "magnet:?xt=urn:btih:dummy7001",
+    torrentUrl: null,
+    ddlUrl: null,
+    infoHash: null,
+    sizeBytes: 333_000_000,
+    files: ["shonen_jump_guide_to_making_manga.cbz"],
+    formats: ["cbz"],
+    postedAt: NOW - 86_400,
+    observedAt: NOW - 80_000,
+    seriesId: null,
+    resolutionPath: "standalone",
+    resolutionConfidence: null,
+    resolutionStatus: "standalone",
+    resolutionAttempts: 2,
+    lastResolveAttemptAt: NOW - 80_000,
+  },
+];
+
+let kept: ReleaseDto[] = INITIAL_KEPT.map((r) => ({ ...r }));
+
 export function resetReviewQueue() {
   queue = INITIAL_QUEUE.map((r) => ({
     ...r,
     candidates: r.candidates.map((c) => ({ ...c })),
   }));
+  kept = INITIAL_KEPT.map((r) => ({ ...r }));
 }
 
 function requireAdmin(request: Request): Response | null {
@@ -702,6 +733,15 @@ export const handlers = [
 
   http.get("/api/v1/releases", ({ request }) => {
     const url = new URL(request.url);
+    const status = url.searchParams.get("status");
+    if (status === "standalone") {
+      const page = Number(url.searchParams.get("page") ?? "1");
+      const pageSize = Number(url.searchParams.get("pageSize") ?? "20");
+      const start = (page - 1) * pageSize;
+      const items = kept.slice(start, start + pageSize);
+      const body: ReleasePage = { items, page, pageSize, total: kept.length };
+      return HttpResponse.json(body);
+    }
     const seriesId = Number(url.searchParams.get("seriesId"));
     const all: ReleaseDto[] = [
       {
@@ -816,7 +856,7 @@ export const handlers = [
     return HttpResponse.json(updated);
   }),
 
-  http.post("/api/v1/releases/:id/retry", ({ request, params }) => {
+  http.post("/api/v1/releases/:id/keep", ({ request, params }) => {
     const denied = requireAdmin(request);
     if (denied) return denied;
     const id = String(params.id);
@@ -827,12 +867,50 @@ export const handlers = [
         JSON.stringify({ error: "not_found", message: `release ${id}` }),
         { status: 404, headers: { "content-type": "application/json" } },
       );
+    queue.splice(idx, 1);
     const updated: ReleaseDto = {
       ...release,
+      seriesId: null,
+      resolutionStatus: "standalone",
+      resolutionPath: "standalone",
+      resolutionConfidence: null,
       resolutionAttempts: release.resolutionAttempts + 1,
       lastResolveAttemptAt: NOW,
     };
-    queue[idx] = { ...release, ...updated };
+    kept.unshift(updated);
     return HttpResponse.json(updated);
+  }),
+
+  http.post("/api/v1/releases/:id/retry", ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const id = String(params.id);
+    const queueIdx = queue.findIndex((r) => r.id === id);
+    if (queueIdx >= 0) {
+      const release = queue[queueIdx];
+      const updated: ReleaseDto = {
+        ...release,
+        resolutionAttempts: release.resolutionAttempts + 1,
+        lastResolveAttemptAt: NOW,
+      };
+      queue[queueIdx] = { ...release, ...updated };
+      return HttpResponse.json(updated);
+    }
+    // A kept (standalone) release can be pulled back into the pipeline.
+    const keptIdx = kept.findIndex((r) => r.id === id);
+    if (keptIdx >= 0) {
+      const release = kept[keptIdx];
+      const updated: ReleaseDto = {
+        ...release,
+        resolutionAttempts: release.resolutionAttempts + 1,
+        lastResolveAttemptAt: NOW,
+      };
+      kept[keptIdx] = { ...release, ...updated };
+      return HttpResponse.json(updated);
+    }
+    return new HttpResponse(
+      JSON.stringify({ error: "not_found", message: `release ${id}` }),
+      { status: 404, headers: { "content-type": "application/json" } },
+    );
   }),
 ];

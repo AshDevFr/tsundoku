@@ -452,6 +452,116 @@ async fn release_reject_sets_rejected_status() {
 }
 
 #[tokio::test]
+async fn release_keep_sets_standalone_status() {
+    let db = fresh_db().await;
+    let r = sample_release("1", "feed", "The Shonen Jump Guide to Making Manga");
+    let rid = releases_repo::persist_discovered(&db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db.clone(),
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/releases/{rid}/keep"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["resolutionStatus"], "standalone");
+    assert_eq!(body["resolutionPath"], "standalone");
+    // No series gets minted for a kept one-shot.
+    assert!(body["seriesId"].is_null());
+
+    let row = releases::Entity::find_by_id(rid.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.resolution_status, "standalone");
+}
+
+#[tokio::test]
+async fn kept_release_drops_out_of_review_queue_and_is_listable_by_status() {
+    let db = fresh_db().await;
+    let r = sample_release("1", "feed", "Making Manga Guidebook");
+    let rid = releases_repo::persist_discovered(&db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db.clone(),
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    // Keep it.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/releases/{rid}/keep"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // It must not appear in the review queue any more.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/releases/unresolved")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 0, "kept release must leave the review queue");
+
+    // But it is browsable via the standalone status filter.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/releases?status=standalone")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["id"], rid);
+    assert_eq!(body["items"][0]["resolutionStatus"], "standalone");
+}
+
+#[tokio::test]
 async fn stats_reports_counts() {
     let db = fresh_db().await;
     let _ = seed_series(&db, "A", "manga").await;

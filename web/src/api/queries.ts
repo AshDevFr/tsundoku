@@ -364,3 +364,20 @@ export function useUnresolvedReleases(
     placeholderData: (prev) => prev,
   });
 }
+
+/// Releases the operator marked `standalone` — worthwhile one-shots (a
+/// guidebook, an artbook) that are deliberately not tracked as a series.
+/// Backed by the generic release list filtered to `status=standalone`.
+export function useKeptReleases(page = 1, pageSize = DEFAULT_REVIEW_PAGE_SIZE) {
+  return useQuery({
+    queryKey: ["releases-kept", page, pageSize],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/releases", {
+        params: { query: { status: "standalone", page, pageSize } },
+      });
+      if (error) throw new Error("failed to load kept releases");
+      return data;
+    },
+    placeholderData: (prev) => prev,
+  });
+}

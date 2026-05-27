@@ -517,7 +517,7 @@
           {
             "name": "status",
             "in": "query",
-            "description": "Filter by resolution status (`resolved`, `unresolved`, `ambiguous`, `review_pending`).",
+            "description": "Filter by resolution status (`resolved`, `unresolved`, `ambiguous`,\n`review_pending`, `rejected`, `standalone`).",
             "required": false,
             "schema": {
               "type": "string"
@@ -633,6 +633,46 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/releases/{id}/keep": {
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Mark a release as a worthwhile standalone item that is not (and will\nnever be) a tracked series: a guidebook, an artbook, a one-shot. Drops\ncandidates and pins the status to `standalone` so the resolver leaves it\nalone; unlike `rejected`, these stay browsable in the \"Kept\" view.\nRe-run `retry` to pull one back into the resolution pipeline.",
+        "operationId": "keep",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Release id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Release not found"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
       }
     },
     "/api/v1/releases/{id}/link": {

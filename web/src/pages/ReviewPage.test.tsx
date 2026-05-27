@@ -124,6 +124,26 @@ describe("ReviewPage", () => {
     );
   });
 
+  it("keeps a release via the keep button and drops it from the queue", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+    const card = screen.getByTestId("review-card-nyaa:9001");
+    const keepBtn = Array.from(card.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === "Keep",
+    );
+    if (!keepBtn) throw new Error("keep button not rendered");
+    fireEvent.click(keepBtn);
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByTestId("review-card-nyaa:9001"),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+  });
+
   it("opens the search modal, pastes an external ID, and links the release", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderReview();

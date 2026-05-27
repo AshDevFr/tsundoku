@@ -323,6 +323,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/releases/{id}/keep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a release as a worthwhile standalone item that is not (and will
+         *     never be) a tracked series: a guidebook, an artbook, a one-shot. Drops
+         *     candidates and pins the status to `standalone` so the resolver leaves it
+         *     alone; unlike `rejected`, these stay browsable in the "Kept" view.
+         *     Re-run `retry` to pull one back into the resolution pipeline.
+         */
+        post: operations["keep"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/releases/{id}/link": {
         parameters: {
             query?: never;
@@ -1531,7 +1554,10 @@ export interface operations {
             query?: {
                 page?: number;
                 pageSize?: number;
-                /** @description Filter by resolution status (`resolved`, `unresolved`, `ambiguous`, `review_pending`). */
+                /**
+                 * @description Filter by resolution status (`resolved`, `unresolved`, `ambiguous`,
+                 *     `review_pending`, `rejected`, `standalone`).
+                 */
                 status?: string;
                 sourceKind?: string;
                 sourceName?: string;
@@ -1593,6 +1619,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["UnresolvedPage"];
                 };
+            };
+        };
+    };
+    keep: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseDto"];
+                };
+            };
+            /** @description Release not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

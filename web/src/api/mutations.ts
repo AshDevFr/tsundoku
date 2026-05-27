@@ -18,6 +18,7 @@ function describeError(error: unknown, fallback: string): string {
 
 function invalidateReleaseQueries(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["releases-unresolved"] });
+  qc.invalidateQueries({ queryKey: ["releases-kept"] });
   qc.invalidateQueries({ queryKey: ["stats"] });
   qc.invalidateQueries({ queryKey: ["series-list"] });
 }
@@ -47,6 +48,21 @@ export function useRejectRelease() {
       });
       if (error)
         throw new Error(describeError(error, "failed to reject release"));
+      return data;
+    },
+    onSuccess: () => invalidateReleaseQueries(qc),
+  });
+}
+
+export function useKeepRelease() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (releaseId: string) => {
+      const { data, error } = await api.POST("/api/v1/releases/{id}/keep", {
+        params: { path: { id: releaseId } },
+      });
+      if (error)
+        throw new Error(describeError(error, "failed to keep release"));
       return data;
     },
     onSuccess: () => invalidateReleaseQueries(qc),

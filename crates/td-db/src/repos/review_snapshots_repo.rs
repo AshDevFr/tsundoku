@@ -154,6 +154,48 @@ mod tests {
         db
     }
 
+    async fn seed_release(db: &DatabaseConnection, id: &str, status: &str) {
+        use sea_orm::Set;
+        let model = releases::ActiveModel {
+            id: Set(id.into()),
+            source_kind: Set("test".into()),
+            source_name: Set("feed".into()),
+            external_id: Set(id.into()),
+            title: Set("title".into()),
+            link: Set(format!("https://example.com/{id}")),
+            posted_at: Set(1_700_000_000),
+            observed_at: Set(1_700_000_000),
+            resolution_status: Set(status.into()),
+            resolution_attempts: Set(0),
+            ..Default::default()
+        };
+        releases::Entity::insert(model).exec(db).await.unwrap();
+    }
+
+    /// `standalone` (and `rejected`/`resolved`) are terminal dispositions:
+    /// the operator has made a decision, so they must not be counted toward
+    /// the pending review-queue depth or they'd nag forever.
+    #[tokio::test]
+    async fn pending_breakdown_excludes_terminal_dispositions() {
+        let db = fresh_db().await;
+        seed_release(&db, "u1", "unresolved").await;
+        seed_release(&db, "a1", "ambiguous").await;
+        seed_release(&db, "rp1", "review_pending").await;
+        seed_release(&db, "s1", "standalone").await;
+        seed_release(&db, "rej1", "rejected").await;
+        seed_release(&db, "res1", "resolved").await;
+
+        let breakdown = pending_breakdown(&db).await.unwrap();
+        assert_eq!(breakdown.unresolved, 1);
+        assert_eq!(breakdown.ambiguous, 1);
+        assert_eq!(breakdown.review_pending, 1);
+        assert_eq!(
+            breakdown.total(),
+            3,
+            "standalone/rejected/resolved must not count as pending"
+        );
+    }
+
     #[tokio::test]
     async fn snapshot_insert_and_read_back() {
         let db = fresh_db().await;

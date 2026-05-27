@@ -146,7 +146,8 @@ const RETRY_ALL_BATCH_LIMIT: u64 = 1000;
 pub struct ReleaseListQuery {
     pub page: u32,
     pub page_size: u32,
-    /// Filter by resolution status (`resolved`, `unresolved`, `ambiguous`, `review_pending`).
+    /// Filter by resolution status (`resolved`, `unresolved`, `ambiguous`,
+    /// `review_pending`, `rejected`, `standalone`).
     pub status: Option<String>,
     pub source_kind: Option<String>,
     pub source_name: Option<String>,
@@ -442,6 +443,56 @@ pub async fn reject(
         Some("rejected"),
         None,
         "rejected",
+        now,
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+
+    let row = releases_repo::find_by_id(&state.db, &id)
+        .await
+        .map_err(anyhow_err)?
+        .ok_or_else(|| ApiError::NotFound(format!("release {id:?}")))?;
+    let formats = releases_repo::list_formats(&state.db, &row.id)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(model_to_release(row, formats)))
+}
+
+/// Mark a release as a worthwhile standalone item that is not (and will
+/// never be) a tracked series: a guidebook, an artbook, a one-shot. Drops
+/// candidates and pins the status to `standalone` so the resolver leaves it
+/// alone; unlike `rejected`, these stay browsable in the "Kept" view.
+/// Re-run `retry` to pull one back into the resolution pipeline.
+#[utoipa::path(
+    post,
+    path = "/api/v1/releases/{id}/keep",
+    tag = "releases",
+    params(("id" = String, Path, description = "Release id")),
+    responses(
+        (status = 200, body = ReleaseDto),
+        (status = 404, description = "Release not found")
+    ),
+    security(("admin" = []))
+)]
+pub async fn keep(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ReleaseDto>> {
+    let _ = releases_repo::find_by_id(&state.db, &id)
+        .await
+        .map_err(anyhow_err)?
+        .ok_or_else(|| ApiError::NotFound(format!("release {id:?}")))?;
+    review_repo::replace_for_release(&state.db, &id, Vec::new())
+        .await
+        .map_err(anyhow_err)?;
+    let now = Utc::now().timestamp();
+    persist::link_release(
+        &state.db,
+        &id,
+        None,
+        Some("standalone"),
+        None,
+        "standalone",
         now,
     )
     .await

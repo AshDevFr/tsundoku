@@ -31,6 +31,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         )
         .route("/releases/{id}/link", post(releases::link))
         .route("/releases/{id}/reject", post(releases::reject))
+        .route("/releases/{id}/keep", post(releases::keep))
         .route("/releases/{id}/retry", post(releases::retry))
         .route("/releases/retry-all", post(releases::retry_all))
         .route("/sources/{name}/poll", post(sources::poll))

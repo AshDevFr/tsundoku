@@ -28,6 +28,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import {
+  useKeepRelease,
   useLinkRelease,
   useRejectRelease,
   useRetryAllReleases,
@@ -146,11 +147,13 @@ export function ReviewPage() {
 function ReviewCard({ item }: { item: UnresolvedRelease }) {
   const link = useLinkRelease();
   const reject = useRejectRelease();
+  const keep = useKeepRelease();
   const retry = useRetryRelease();
   const [manualOpen, { open: openManual, close: closeManual }] =
     useDisclosure(false);
 
-  const busy = link.isPending || reject.isPending || retry.isPending;
+  const busy =
+    link.isPending || reject.isPending || keep.isPending || retry.isPending;
 
   const handleLinkCandidate = (candidate: ReviewCandidateDto) => {
     link.mutate(
@@ -181,6 +184,19 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
         notifications.show({
           color: "red",
           title: "Reject failed",
+          message: (e as Error).message,
+        }),
+    });
+  };
+
+  const handleKeep = () => {
+    keep.mutate(item.id, {
+      onSuccess: () =>
+        notifications.show({ color: "teal", message: "Kept as standalone" }),
+      onError: (e) =>
+        notifications.show({
+          color: "red",
+          title: "Keep failed",
           message: (e as Error).message,
         }),
     });
@@ -232,17 +248,29 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
               size="xs"
               onClick={handleRetry}
               loading={retry.isPending}
-              disabled={link.isPending || reject.isPending}
+              disabled={link.isPending || reject.isPending || keep.isPending}
             >
               Retry
             </Button>
+            <Tooltip label="Keep as a standalone item (a guidebook, artbook, one-shot) — not a tracked series. Stays in the Kept list.">
+              <Button
+                variant="subtle"
+                color="teal"
+                size="xs"
+                onClick={handleKeep}
+                loading={keep.isPending}
+                disabled={link.isPending || reject.isPending || retry.isPending}
+              >
+                Keep
+              </Button>
+            </Tooltip>
             <Button
               variant="subtle"
               color="red"
               size="xs"
               onClick={handleReject}
               loading={reject.isPending}
-              disabled={link.isPending || retry.isPending}
+              disabled={link.isPending || retry.isPending || keep.isPending}
             >
               Reject
             </Button>
