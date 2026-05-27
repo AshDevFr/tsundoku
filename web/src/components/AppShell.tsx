@@ -40,7 +40,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               )}
               <Badge
                 component={Link}
-                to="/review"
+                to="/admin/review"
                 color={(reviewCount > 0 ? "orange" : "gray") as MantineColor}
                 variant={reviewCount > 0 ? "light" : "default"}
                 radius="sm"

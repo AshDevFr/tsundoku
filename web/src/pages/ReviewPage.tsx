@@ -7,7 +7,6 @@ import {
   Card,
   Center,
   Collapse,
-  Container,
   Group,
   Image,
   Loader,
@@ -44,21 +43,10 @@ import {
   useUnresolvedReleases,
 } from "@/api/queries";
 import { formatAbsolute, formatRelative } from "@/api/utils";
-import { AdminAuthGate } from "@/components/AdminAuthGate";
-import { useAdminAuth } from "@/stores/auth";
 
 export function ReviewPage() {
-  return (
-    <AdminAuthGate>
-      <ReviewQueue />
-    </AdminAuthGate>
-  );
-}
-
-function ReviewQueue() {
   const [page, setPage] = useState(1);
   const queue = useUnresolvedReleases(page);
-  const clearToken = useAdminAuth((s) => s.clear);
   const retryAll = useRetryAllReleases();
 
   const total = queue.data?.total ?? 0;
@@ -90,82 +78,68 @@ function ReviewQueue() {
   };
 
   return (
-    <Container size="lg" py="lg">
-      <Stack gap="lg">
-        <Group justify="space-between" align="baseline">
-          <Stack gap={2}>
-            <Title order={2}>Review queue</Title>
-            <Text size="sm" c="dimmed">
-              {queue.isLoading
-                ? "loading…"
-                : `${total.toLocaleString()} release${total === 1 ? "" : "s"} awaiting a decision`}
-            </Text>
-          </Stack>
-          <Group gap="xs">
-            <Tooltip label="Re-run the resolver against every release currently in this queue">
-              <Button
-                variant="light"
-                size="xs"
-                onClick={handleRetryAll}
-                loading={retryAll.isPending}
-                disabled={total === 0}
-                data-testid="retry-all-button"
-              >
-                Retry all
-              </Button>
-            </Tooltip>
-            <Tooltip label="Forget the admin token in this browser">
-              <Button
-                variant="subtle"
-                size="xs"
-                color="gray"
-                onClick={() => clearToken()}
-              >
-                Sign out
-              </Button>
-            </Tooltip>
-          </Group>
-        </Group>
+    <Stack gap="md">
+      <Group justify="space-between" align="baseline" wrap="wrap">
+        <Stack gap={2}>
+          <Title order={3}>Review queue</Title>
+          <Text size="sm" c="dimmed">
+            {queue.isLoading
+              ? "loading…"
+              : `${total.toLocaleString()} release${total === 1 ? "" : "s"} awaiting a decision`}
+          </Text>
+        </Stack>
+        <Tooltip label="Re-run the resolver against every release currently in this queue">
+          <Button
+            variant="light"
+            size="xs"
+            onClick={handleRetryAll}
+            loading={retryAll.isPending}
+            disabled={total === 0}
+            data-testid="retry-all-button"
+          >
+            Retry all
+          </Button>
+        </Tooltip>
+      </Group>
 
-        {queue.isError && (
-          <Alert color="red" title="Failed to load review queue">
-            {(queue.error as Error)?.message ?? "Unknown error"}
-          </Alert>
-        )}
+      {queue.isError && (
+        <Alert color="red" title="Failed to load review queue">
+          {(queue.error as Error)?.message ?? "Unknown error"}
+        </Alert>
+      )}
 
-        {queue.isLoading && !queue.data && (
-          <Center py="xl">
-            <Loader />
-          </Center>
-        )}
+      {queue.isLoading && !queue.data && (
+        <Center py="xl">
+          <Loader />
+        </Center>
+      )}
 
-        {queue.data && queue.data.items.length === 0 && (
-          <Alert color="green" title="Inbox zero">
-            Nothing waiting for review. New unresolved releases will land here
-            as the scheduler runs.
-          </Alert>
-        )}
+      {queue.data && queue.data.items.length === 0 && (
+        <Alert color="green" title="Inbox zero">
+          Nothing waiting for review. New unresolved releases will land here as
+          the scheduler runs.
+        </Alert>
+      )}
 
-        {queue.data && queue.data.items.length > 0 && (
-          <Stack gap="md">
-            {queue.data.items.map((item) => (
-              <ReviewCard key={item.id} item={item} />
-            ))}
-          </Stack>
-        )}
+      {queue.data && queue.data.items.length > 0 && (
+        <Stack gap="md">
+          {queue.data.items.map((item) => (
+            <ReviewCard key={item.id} item={item} />
+          ))}
+        </Stack>
+      )}
 
-        {totalPages > 1 && (
-          <Center>
-            <Pagination
-              value={page}
-              onChange={setPage}
-              total={totalPages}
-              size="sm"
-            />
-          </Center>
-        )}
-      </Stack>
-    </Container>
+      {totalPages > 1 && (
+        <Center>
+          <Pagination
+            value={page}
+            onChange={setPage}
+            total={totalPages}
+            size="sm"
+          />
+        </Center>
+      )}
+    </Stack>
   );
 }
 

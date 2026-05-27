@@ -11,20 +11,26 @@ import {
 } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AdminShell } from "@/components/admin/AdminShell";
 import { ADMIN_TEST_TOKEN, resetReviewQueue } from "@/mocks/handlers";
 import { useAdminAuth } from "@/stores/auth";
 import { ReviewPage } from "./ReviewPage";
 
 function makeRouter() {
   const root = createRootRoute({ component: Outlet });
-  const review = createRoute({
+  const admin = createRoute({
     getParentRoute: () => root,
-    path: "/review",
+    path: "/admin",
+    component: AdminShell,
+  });
+  const review = createRoute({
+    getParentRoute: () => admin,
+    path: "review",
     component: ReviewPage,
   });
   return createRouter({
-    routeTree: root.addChildren([review]),
-    history: createMemoryHistory({ initialEntries: ["/review"] }),
+    routeTree: root.addChildren([admin.addChildren([review])]),
+    history: createMemoryHistory({ initialEntries: ["/admin/review"] }),
   });
 }
 

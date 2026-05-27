@@ -1,5 +1,4 @@
 import {
-  Anchor,
   Badge,
   Box,
   Button,
@@ -26,6 +25,7 @@ interface NavEntry {
 
 const NAV: NavEntry[] = [
   { label: "Overview", to: "/admin" },
+  { label: "Review", to: "/admin/review" },
   { label: "Sources", to: "/admin/sources", matchPrefix: "/admin/sources" },
   {
     label: "Providers",
@@ -66,21 +66,16 @@ function AdminLayout() {
               Inspect runtime state and force-trigger scheduler work.
             </Text>
           </Stack>
-          <Group gap="sm">
-            <Anchor component={Link} to="/review" size="sm">
-              Review queue →
-            </Anchor>
-            <Tooltip label="Forget the admin token in this browser">
-              <Button
-                variant="subtle"
-                size="xs"
-                color="gray"
-                onClick={() => clearToken()}
-              >
-                Sign out
-              </Button>
-            </Tooltip>
-          </Group>
+          <Tooltip label="Forget the admin token in this browser">
+            <Button
+              variant="subtle"
+              size="xs"
+              color="gray"
+              onClick={() => clearToken()}
+            >
+              Sign out
+            </Button>
+          </Tooltip>
         </Group>
 
         <Group align="flex-start" wrap="nowrap" gap="lg">
@@ -97,6 +92,7 @@ function AdminLayout() {
                   label={entry.label}
                   component={Link}
                   to={entry.to}
+                  activeOptions={{ exact: true }}
                   active={isActive(entry, location.pathname)}
                   data-testid={`admin-nav-${slug(entry.label)}`}
                 />
@@ -122,6 +118,7 @@ function MobileNav({ location }: { location: string }) {
             key={entry.to}
             component={Link}
             to={entry.to}
+            activeOptions={{ exact: true }}
             size="xs"
             variant={isActive(entry, location) ? "filled" : "default"}
             data-testid={`admin-nav-mobile-${slug(entry.label)}`}

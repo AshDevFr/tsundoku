@@ -58,12 +58,6 @@ export const seriesDetailRoute = createRoute({
   component: SeriesDetailPage,
 });
 
-export const reviewRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/review",
-  component: ReviewPage,
-});
-
 // `/admin` is a layout route: the AdminShell hosts the auth gate, the
 // nav rail, and an <Outlet /> that renders one of the child pages.
 // Children declared as relative paths under this layout, so URLs are
@@ -78,6 +72,12 @@ export const adminOverviewRoute = createRoute({
   getParentRoute: () => adminLayoutRoute,
   path: "/",
   component: AdminOverviewPage,
+});
+
+export const adminReviewRoute = createRoute({
+  getParentRoute: () => adminLayoutRoute,
+  path: "review",
+  component: ReviewPage,
 });
 
 export const adminSourcesListRoute = createRoute({
@@ -119,9 +119,9 @@ export const adminIdMapsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   feedRoute,
   seriesDetailRoute,
-  reviewRoute,
   adminLayoutRoute.addChildren([
     adminOverviewRoute,
+    adminReviewRoute,
     adminSourcesListRoute,
     adminSourceDetailRoute,
     adminProvidersListRoute,

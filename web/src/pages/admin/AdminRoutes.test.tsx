@@ -13,6 +13,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { ADMIN_TEST_TOKEN } from "@/mocks/handlers";
+import { ReviewPage } from "@/pages/ReviewPage";
 import { useAdminAuth } from "@/stores/auth";
 import { AdminIdMapsPage } from "./IdMaps";
 import { AdminMetricsPage } from "./Metrics";
@@ -33,6 +34,11 @@ function makeRouter(initial: string) {
     getParentRoute: () => layout,
     path: "/",
     component: AdminOverviewPage,
+  });
+  const review = createRoute({
+    getParentRoute: () => layout,
+    path: "review",
+    component: ReviewPage,
   });
   const sourcesList = createRoute({
     getParentRoute: () => layout,
@@ -64,13 +70,8 @@ function makeRouter(initial: string) {
     path: "id-maps",
     component: AdminIdMapsPage,
   });
-  // /review and / are referenced from the admin shell + overview; provide
-  // stub routes so the router does not blow up resolving Link `to`s.
-  const review = createRoute({
-    getParentRoute: () => root,
-    path: "/review",
-    component: () => null,
-  });
+  // / is referenced from the overview page; provide a stub route so the
+  // router does not blow up resolving Link `to`s.
   const home = createRoute({
     getParentRoute: () => root,
     path: "/",
@@ -79,9 +80,9 @@ function makeRouter(initial: string) {
   return createRouter({
     routeTree: root.addChildren([
       home,
-      review,
       layout.addChildren([
         overview,
+        review,
         sourcesList,
         sourceDetail,
         providersList,
