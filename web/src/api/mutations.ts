@@ -3,6 +3,7 @@ import { api } from "@/api/client";
 import type { components } from "@/types/api.generated";
 
 type LinkRequest = components["schemas"]["LinkRequest"];
+type CreateSeriesRequest = components["schemas"]["CreateSeriesRequest"];
 
 // Extract a useful error message from an openapi-fetch error payload, falling
 // back to a sentence the user can act on. The backend serializes errors as
@@ -51,6 +52,25 @@ export function useRejectRelease() {
       return data;
     },
     onSuccess: () => invalidateReleaseQueries(qc),
+  });
+}
+
+/// Create a manual (provider-less) series. Used from the review queue when
+/// MangaBaka lacks a series the operator wants to link a release to. The
+/// caller then links the release via `useLinkRelease({ seriesId })`.
+export function useCreateSeries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: CreateSeriesRequest) => {
+      const { data, error } = await api.POST("/api/v1/series", { body });
+      if (error)
+        throw new Error(describeError(error, "failed to create series"));
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["series-list"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+    },
   });
 }
 

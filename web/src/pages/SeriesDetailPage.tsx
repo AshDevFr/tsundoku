@@ -99,6 +99,11 @@ export function SeriesDetailPage() {
                   owned
                 </Badge>
               )}
+              {s.metadataSource === "manual" && (
+                <Badge variant="light" color="grape">
+                  manual
+                </Badge>
+              )}
             </Group>
 
             {s.genres.length > 0 && (

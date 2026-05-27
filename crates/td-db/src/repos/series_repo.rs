@@ -37,6 +37,16 @@ pub async fn upsert(db: &DatabaseConnection, model: series::ActiveModel) -> Resu
     Ok(inserted)
 }
 
+/// Insert a brand-new series row, returning the persisted model (with its
+/// auto-assigned `id`). Unlike [`upsert`], this never updates an existing
+/// row: the caller is creating a fresh series (e.g. an operator-authored
+/// manual series with no provider mapping), so `id` must be left unset.
+pub async fn create(db: &DatabaseConnection, model: series::ActiveModel) -> Result<series::Model> {
+    Ok(series::Entity::insert(model)
+        .exec_with_returning(db)
+        .await?)
+}
+
 pub async fn find_by_id(db: &DatabaseConnection, id: i32) -> Result<Option<Model>> {
     Ok(series::Entity::find_by_id(id).one(db).await?)
 }

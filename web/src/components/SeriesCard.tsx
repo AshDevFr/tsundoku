@@ -62,6 +62,11 @@ export function SeriesCard({ series }: { series: SeriesListItem }) {
                 owned
               </Badge>
             )}
+            {series.metadataSource === "manual" && (
+              <Badge size="xs" variant="light" color="grape">
+                manual
+              </Badge>
+            )}
           </Group>
         </Stack>
       </Card>

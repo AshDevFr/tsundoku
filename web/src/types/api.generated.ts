@@ -421,7 +421,15 @@ export interface paths {
         /** List series ordered by last release timestamp (most recent first by default). */
         get: operations["list_series"];
         put?: never;
-        post?: never;
+        /**
+         * Create a manual series: a provider-less catalog entry for a real series
+         *     the active provider lacks. The operator then links releases to it via
+         *     `POST /releases/{id}/link` with `{ "seriesId": N }`.
+         * @description No `series_external_ids` row is created, so this series never
+         *     participates in auto-resolution (the fuzzy resolver searches the
+         *     provider, not the local catalog) and is skipped by metadata refresh.
+         */
+        post: operations["create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -585,6 +593,20 @@ export interface components {
         ApiErrorBody: {
             error: string;
             message: string;
+        };
+        /**
+         * @description Body for creating a manual series. Only `canonicalTitle` is required;
+         *     the rest are optional descriptive fields. No provider mapping is created
+         *     (that's the whole point), so the series is provider-agnostic and
+         *     `metadataSource` is pinned to `manual`.
+         */
+        CreateSeriesRequest: {
+            canonicalTitle: string;
+            coverUrl?: string | null;
+            description?: string | null;
+            kind?: string | null;
+            /** Format: int32 */
+            year?: number | null;
         };
         ErrorKindBucket: {
             /** Format: int64 */
@@ -1035,6 +1057,12 @@ export interface components {
             kind?: string | null;
             /** Format: int64 */
             lastReleaseAt: number;
+            /**
+             * @description Provenance of the row's metadata (`offline_cache`, `api`, or `manual`).
+             *     The browse UI flags `manual` series so they read differently from
+             *     provider-backed ones (no cover/metadata is expected).
+             */
+            metadataSource: string;
             owned: boolean;
             status?: string | null;
             tags: string[];
@@ -1791,6 +1819,36 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SeriesListPage"];
                 };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSeriesRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description canonicalTitle is empty */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

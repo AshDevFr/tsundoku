@@ -25,6 +25,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
     let auth = state.auth.clone();
 
     let writes = Router::new()
+        .route("/series", post(series::create))
         .route(
             "/series/{id}/refresh-metadata",
             post(series::refresh_metadata),

@@ -452,6 +452,152 @@ async fn release_reject_sets_rejected_status() {
 }
 
 #[tokio::test]
+async fn create_manual_series_persists_manual_row() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db.clone(),
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let body = serde_json::json!({
+        "canonicalTitle": "Some Doujin Circle Artbook",
+        "kind": "manga",
+        "year": 2022
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp).await;
+    let sid = body["id"].as_i64().unwrap();
+    assert!(sid > 0);
+    assert_eq!(body["canonicalTitle"], "Some Doujin Circle Artbook");
+    assert_eq!(body["metadataSource"], "manual");
+    assert_eq!(body["kind"], "manga");
+    assert_eq!(body["year"], 2022);
+    // A manual series carries no provider mappings.
+    assert_eq!(body["externalIds"].as_array().unwrap().len(), 0);
+
+    let row = series::Entity::find_by_id(sid as i32)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.metadata_source, "manual");
+    assert_eq!(row.owned, 0);
+}
+
+#[tokio::test]
+async fn create_manual_series_rejects_empty_title() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let body = serde_json::json!({ "canonicalTitle": "   " });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn create_manual_series_then_link_release_resolves_to_it() {
+    let db = fresh_db().await;
+    let r = sample_release("1", "feed", "Obscure Series MangaBaka Lacks v01");
+    let rid = releases_repo::persist_discovered(&db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db.clone(),
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    // Create the manual series.
+    let body = serde_json::json!({ "canonicalTitle": "Obscure Series" });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let sid = body_json(resp).await["id"].as_i64().unwrap() as i32;
+
+    // Link the release to it via the existing link endpoint.
+    let link_body = serde_json::json!({ "seriesId": sid });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/releases/{rid}/link"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&link_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["seriesId"], sid);
+    assert_eq!(body["resolutionStatus"], "resolved");
+
+    // The series remains manual after linking.
+    let row = series::Entity::find_by_id(sid)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.metadata_source, "manual");
+}
+
+#[tokio::test]
 async fn release_keep_sets_standalone_status() {
     let db = fresh_db().await;
     let r = sample_release("1", "feed", "The Shonen Jump Guide to Making Manga");

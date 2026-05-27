@@ -11,6 +11,7 @@ import {
   Image,
   Loader,
   Modal,
+  NumberInput,
   Pagination,
   Paper,
   Select,
@@ -28,6 +29,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import {
+  useCreateSeries,
   useKeepRelease,
   useLinkRelease,
   useRejectRelease,
@@ -151,6 +153,8 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
   const retry = useRetryRelease();
   const [manualOpen, { open: openManual, close: closeManual }] =
     useDisclosure(false);
+  const [createOpen, { open: openCreate, close: closeCreate }] =
+    useDisclosure(false);
 
   const busy =
     link.isPending || reject.isPending || keep.isPending || retry.isPending;
@@ -240,6 +244,17 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
             >
               Search provider
             </Button>
+            <Tooltip label="Create a manual series for something MangaBaka lacks, then link this release to it.">
+              <Button
+                variant="light"
+                color="grape"
+                size="xs"
+                onClick={openCreate}
+                disabled={busy}
+              >
+                Create series
+              </Button>
+            </Tooltip>
           </Group>
           <Group gap="xs">
             <Button
@@ -284,7 +299,128 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
         releaseId={item.id}
         seedQuery={item.searchQueries[0] ?? item.title}
       />
+      <CreateSeriesModal
+        opened={createOpen}
+        onClose={closeCreate}
+        releaseId={item.id}
+        seedTitle={item.searchQueries[0] ?? item.title}
+      />
     </Paper>
+  );
+}
+
+/// Create a provider-less "manual" series and link the current release to
+/// it in one step. For real series MangaBaka lacks; the resulting series is
+/// flagged `manual` in browse and never auto-resolves future releases.
+function CreateSeriesModal({
+  opened,
+  onClose,
+  releaseId,
+  seedTitle,
+}: {
+  opened: boolean;
+  onClose: () => void;
+  releaseId: string;
+  seedTitle: string;
+}) {
+  const createSeries = useCreateSeries();
+  const link = useLinkRelease();
+  const [title, setTitle] = useState(seedTitle);
+  const [kind, setKind] = useState<string | null>(null);
+  const [year, setYear] = useState<number | "">("");
+
+  useEffect(() => {
+    if (opened) {
+      setTitle(seedTitle);
+      setKind(null);
+      setYear("");
+    }
+  }, [opened, seedTitle]);
+
+  const busy = createSeries.isPending || link.isPending;
+  const canSubmit = title.trim().length > 0 && !busy;
+
+  const handleCreate = async () => {
+    try {
+      const created = await createSeries.mutateAsync({
+        canonicalTitle: title.trim(),
+        kind: kind ?? undefined,
+        year: typeof year === "number" ? year : undefined,
+      });
+      if (!created) throw new Error("series create returned no body");
+      await link.mutateAsync({
+        releaseId,
+        body: { seriesId: created.id },
+      });
+      notifications.show({
+        color: "green",
+        message: `Created “${created.canonicalTitle}” and linked the release`,
+      });
+      onClose();
+    } catch (e) {
+      notifications.show({
+        color: "red",
+        title: "Create series failed",
+        message: (e as Error).message,
+      });
+    }
+  };
+
+  return (
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="Create manual series"
+      centered
+    >
+      <Stack gap="md">
+        <Text size="xs" c="dimmed">
+          For a real series MangaBaka doesn’t have. It won’t auto-resolve future
+          releases, so you’ll link those by hand too.
+        </Text>
+        <TextInput
+          label="Title"
+          required
+          value={title}
+          onChange={(e) => setTitle(e.currentTarget.value)}
+          data-testid="create-series-title"
+        />
+        <Select
+          label="Kind"
+          placeholder="(optional)"
+          data={["manga", "manhwa", "manhua", "novel", "other"]}
+          value={kind}
+          onChange={setKind}
+          clearable
+          data-testid="create-series-kind"
+        />
+        <NumberInput
+          label="Year"
+          placeholder="(optional)"
+          value={year}
+          onChange={(v) =>
+            setYear(typeof v === "number" ? v : v === "" ? "" : Number(v) || "")
+          }
+          min={1900}
+          max={2999}
+          allowDecimal={false}
+          data-testid="create-series-year"
+        />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleCreate}
+            loading={busy}
+            disabled={!canSubmit}
+            data-testid="create-series-submit"
+          >
+            Create &amp; link
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
   );
 }
 

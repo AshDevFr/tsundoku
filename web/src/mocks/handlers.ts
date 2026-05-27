@@ -10,6 +10,7 @@ type StatsResponse = components["schemas"]["StatsResponse"];
 type UnresolvedRelease = components["schemas"]["UnresolvedRelease"];
 type UnresolvedPage = components["schemas"]["UnresolvedPage"];
 type LinkRequest = components["schemas"]["LinkRequest"];
+type CreateSeriesRequest = components["schemas"]["CreateSeriesRequest"];
 type TagList = components["schemas"]["TagList"];
 
 const NOW = Math.floor(Date.now() / 1000);
@@ -35,6 +36,7 @@ const SERIES: (SeriesListItem & {
     genres: ["action", "horror"],
     tags: ["devil hunter", "gore"],
     alternateTitles: ["チェンソーマン"],
+    metadataSource: "offline_cache",
   },
   {
     id: 2,
@@ -51,6 +53,7 @@ const SERIES: (SeriesListItem & {
     genres: ["isekai", "drama"],
     tags: ["time loop"],
     alternateTitles: ["リゼロ"],
+    metadataSource: "offline_cache",
   },
   {
     id: 3,
@@ -67,6 +70,7 @@ const SERIES: (SeriesListItem & {
     genres: ["action", "fantasy"],
     tags: ["hunters", "leveling"],
     alternateTitles: [],
+    metadataSource: "offline_cache",
   },
 ];
 
@@ -613,6 +617,60 @@ export const handlers = [
     }),
   ),
 
+  http.post("/api/v1/series", async ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const body = (await request.json()) as CreateSeriesRequest;
+    const title = (body.canonicalTitle ?? "").trim();
+    if (!title) {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "bad_request",
+          message: "canonicalTitle must not be empty",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    const id = Math.max(0, ...SERIES.map((s) => s.id)) + 1;
+    SERIES.push({
+      id,
+      canonicalTitle: title,
+      coverUrl: body.coverUrl ?? null,
+      firstSeenAt: NOW,
+      lastReleaseAt: NOW,
+      kind: body.kind ?? null,
+      status: null,
+      year: body.year ?? null,
+      owned: false,
+      description: body.description ?? null,
+      genres: [],
+      tags: [],
+      alternateTitles: [],
+      metadataSource: "manual",
+    });
+    const detail: SeriesDetail = {
+      id,
+      canonicalTitle: title,
+      alternateTitles: [],
+      coverUrl: body.coverUrl ?? null,
+      kind: body.kind ?? null,
+      status: null,
+      year: body.year ?? null,
+      description: body.description ?? null,
+      owned: false,
+      genres: [],
+      tags: [],
+      externalIds: [],
+      firstSeenAt: NOW,
+      lastReleaseAt: NOW,
+      metadataFetchedAt: NOW,
+      metadataSource: "manual",
+      highestVolume: null,
+      highestChapter: null,
+    };
+    return HttpResponse.json(detail, { status: 201 });
+  }),
+
   http.get("/api/v1/series", ({ request }) => {
     const url = new URL(request.url);
     const kind = url.searchParams.get("kind");
@@ -724,7 +782,7 @@ export const handlers = [
       firstSeenAt: found.firstSeenAt,
       lastReleaseAt: found.lastReleaseAt,
       metadataFetchedAt: NOW - 60,
-      metadataSource: "offline_cache",
+      metadataSource: found.metadataSource,
       highestVolume: null,
       highestChapter: null,
     };

@@ -922,6 +922,44 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Create a manual series: a provider-less catalog entry for a real series\nthe active provider lacks. The operator then links releases to it via\n`POST /releases/{id}/link` with `{ \"seriesId\": N }`.",
+        "description": "No `series_external_ids` row is created, so this series never\nparticipates in auto-resolution (the fuzzy resolver searches the\nprovider, not the local catalog) and is skipped by metadata refresh.",
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSeriesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "canonicalTitle is empty"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
       }
     },
     "/api/v1/series/{id}": {
@@ -1202,6 +1240,43 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "CreateSeriesRequest": {
+        "type": "object",
+        "description": "Body for creating a manual series. Only `canonicalTitle` is required;\nthe rest are optional descriptive fields. No provider mapping is created\n(that's the whole point), so the series is provider-agnostic and\n`metadataSource` is pinned to `manual`.",
+        "required": [
+          "canonicalTitle"
+        ],
+        "properties": {
+          "canonicalTitle": {
+            "type": "string"
+          },
+          "coverUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           }
         }
       },
@@ -2480,6 +2555,7 @@
           "canonicalTitle",
           "genres",
           "tags",
+          "metadataSource",
           "lastReleaseAt",
           "firstSeenAt",
           "owned"
@@ -2524,6 +2600,10 @@
           "lastReleaseAt": {
             "type": "integer",
             "format": "int64"
+          },
+          "metadataSource": {
+            "type": "string",
+            "description": "Provenance of the row's metadata (`offline_cache`, `api`, or `manual`).\nThe browse UI flags `manual` series so they read differently from\nprovider-backed ones (no cover/metadata is expected)."
           },
           "owned": {
             "type": "boolean"

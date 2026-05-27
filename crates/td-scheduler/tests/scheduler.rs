@@ -369,6 +369,67 @@ async fn refresh_tick_appends_provider_cache_state_on_refreshed_status() {
 }
 
 #[tokio::test]
+async fn refresh_tick_leaves_manual_series_untouched() {
+    use sea_orm::{ActiveModelTrait, Set};
+    use td_db::entities::series;
+
+    let db = fresh_db().await;
+
+    // Operator-authored manual series: no provider mapping, metadata_source="manual".
+    let created = series::ActiveModel {
+        canonical_title: Set("Hand-Entered Series".into()),
+        alternate_titles_json: Set(None),
+        cover_url: Set(None),
+        kind: Set(Some("manga".into())),
+        status: Set(None),
+        year: Set(Some(2021)),
+        description: Set(None),
+        metadata_json: Set(None),
+        metadata_source: Set("manual".into()),
+        metadata_hash: Set(None),
+        metadata_fetched_at: Set(1_700_000_000),
+        first_seen_at: Set(1_700_000_000),
+        last_release_at: Set(1_700_000_000),
+        highest_volume: Set(None),
+        highest_chapter: Set(None),
+        owned: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    // A full cache refresh (the riskiest job for clobbering catalog rows).
+    let provider = Arc::new(FakeProvider::new(
+        "mangabaka",
+        RefreshStatus::Refreshed {
+            records: 999,
+            version: Some("v2".into()),
+        },
+    ));
+    let locks = Arc::new(JobLocks::default());
+    jobs::refresh_provider_cache::run_tick(
+        provider as Arc<dyn MetadataProvider>,
+        db.clone(),
+        locks,
+        "cron",
+    )
+    .await;
+
+    // The manual series row must be byte-for-byte what we inserted: the
+    // refresh job only touches the provider dump + provider_cache_state.
+    let after = series::Entity::find_by_id(created.id)
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("manual series should still exist after a refresh");
+    assert_eq!(
+        after, created,
+        "refresh must not mutate a manual series row"
+    );
+}
+
+#[tokio::test]
 async fn refresh_tick_skips_persistence_for_not_supported() {
     let db = fresh_db().await;
     let provider = Arc::new(FakeProvider::new("mangabaka", RefreshStatus::NotSupported));

@@ -178,6 +178,38 @@ describe("ReviewPage", () => {
     );
   });
 
+  it("creates a manual series and links the release in one step", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Unknown Title v05/, undefined, { timeout: 3000 });
+    const card = screen.getByTestId("review-card-nyaa:9002");
+    const createBtn = Array.from(card.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === "Create series",
+    );
+    if (!createBtn) throw new Error("Create series button not rendered");
+    fireEvent.click(createBtn);
+
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = await waitFor(() => {
+      const el = dialog.querySelector<HTMLInputElement>(
+        '[data-testid="create-series-title"]',
+      );
+      if (!el) throw new Error("create-series-title input not rendered");
+      return el;
+    });
+    fireEvent.change(titleInput, { target: { value: "Hand Made Series" } });
+    fireEvent.click(screen.getByTestId("create-series-submit"));
+
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByTestId("review-card-nyaa:9002"),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+  });
+
   it("renders the cleanup trail (cleaned query + rule chips) on each card", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderReview();

@@ -4,10 +4,11 @@ use std::collections::HashSet;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use chrono::Utc;
 use sea_orm::{
     ColumnTrait, EntityTrait, JoinType, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
-    RelationTrait,
+    RelationTrait, Set,
 };
 use serde::{Deserialize, Serialize};
 use td_db::entities::{genres, series, series_external_ids, series_genres, series_tags, tags};
@@ -35,6 +36,10 @@ pub struct SeriesListItem {
     pub description: Option<String>,
     pub genres: Vec<String>,
     pub tags: Vec<String>,
+    /// Provenance of the row's metadata (`offline_cache`, `api`, or `manual`).
+    /// The browse UI flags `manual` series so they read differently from
+    /// provider-backed ones (no cover/metadata is expected).
+    pub metadata_source: String,
     pub last_release_at: i64,
     pub first_seen_at: i64,
     pub owned: bool,
@@ -428,6 +433,83 @@ pub async fn get(
     )))
 }
 
+/// Body for creating a manual series. Only `canonicalTitle` is required;
+/// the rest are optional descriptive fields. No provider mapping is created
+/// (that's the whole point), so the series is provider-agnostic and
+/// `metadataSource` is pinned to `manual`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSeriesRequest {
+    pub canonical_title: String,
+    pub kind: Option<String>,
+    pub year: Option<i32>,
+    pub cover_url: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Provenance marker for operator-authored series with no provider behind
+/// them. Distinct from the resolver's `api` / `offline_cache` values so the
+/// UI and any future per-series refresh can tell manual rows apart.
+const MANUAL_METADATA_SOURCE: &str = "manual";
+
+/// Create a manual series: a provider-less catalog entry for a real series
+/// the active provider lacks. The operator then links releases to it via
+/// `POST /releases/{id}/link` with `{ "seriesId": N }`.
+///
+/// No `series_external_ids` row is created, so this series never
+/// participates in auto-resolution (the fuzzy resolver searches the
+/// provider, not the local catalog) and is skipped by metadata refresh.
+#[utoipa::path(
+    post,
+    path = "/api/v1/series",
+    tag = "series",
+    request_body = CreateSeriesRequest,
+    responses(
+        (status = 201, body = SeriesDetail),
+        (status = 400, description = "canonicalTitle is empty")
+    ),
+    security(("admin" = []))
+)]
+pub async fn create(
+    State(state): State<AppState>,
+    Json(req): Json<CreateSeriesRequest>,
+) -> ApiResult<(StatusCode, Json<SeriesDetail>)> {
+    let title = req.canonical_title.trim();
+    if title.is_empty() {
+        return Err(ApiError::BadRequest(
+            "canonicalTitle must not be empty".into(),
+        ));
+    }
+    let now = Utc::now().timestamp();
+    let model = series::ActiveModel {
+        canonical_title: Set(title.to_string()),
+        alternate_titles_json: Set(None),
+        cover_url: Set(req.cover_url.filter(|s| !s.trim().is_empty())),
+        kind: Set(req.kind.filter(|s| !s.trim().is_empty())),
+        status: Set(None),
+        year: Set(req.year),
+        description: Set(req.description.filter(|s| !s.trim().is_empty())),
+        metadata_json: Set(None),
+        metadata_source: Set(MANUAL_METADATA_SOURCE.into()),
+        metadata_hash: Set(None),
+        metadata_fetched_at: Set(now),
+        first_seen_at: Set(now),
+        last_release_at: Set(now),
+        highest_volume: Set(None),
+        highest_chapter: Set(None),
+        owned: Set(0),
+        ..Default::default()
+    };
+    let row = series_repo::create(&state.db, model)
+        .await
+        .map_err(anyhow_err)?;
+    // A fresh manual series has no external ids, genres, or tags.
+    Ok((
+        StatusCode::CREATED,
+        Json(model_to_detail(row, Vec::new(), Vec::new(), Vec::new())),
+    ))
+}
+
 /// Re-fetch metadata for a series from the active provider and re-persist.
 #[utoipa::path(
     post,
@@ -511,6 +593,7 @@ fn model_to_list_item(m: series::Model, genres: Vec<String>, tags: Vec<String>) 
         description: m.description,
         genres,
         tags,
+        metadata_source: m.metadata_source,
         last_release_at: m.last_release_at,
         first_seen_at: m.first_seen_at,
         owned: m.owned != 0,
