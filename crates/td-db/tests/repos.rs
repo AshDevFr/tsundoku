@@ -149,19 +149,12 @@ async fn series_external_ids_round_trip_and_lookup() {
         .await
         .unwrap();
 
-    series_external_ids_repo::upsert(&db, s.id, "mangabaka", "1", None, 1_700_000_000)
+    series_external_ids_repo::upsert(&db, s.id, "mangabaka", "1", 1_700_000_000)
         .await
         .unwrap();
-    series_external_ids_repo::upsert(
-        &db,
-        s.id,
-        "mangaupdates",
-        "42",
-        Some("https://mu/42"),
-        1_700_000_000,
-    )
-    .await
-    .unwrap();
+    series_external_ids_repo::upsert(&db, s.id, "mangaupdates", "42", 1_700_000_000)
+        .await
+        .unwrap();
 
     // Lookup by provider id resolves back to the internal series.
     assert_eq!(
@@ -189,7 +182,7 @@ async fn series_external_ids_round_trip_and_lookup() {
     assert_eq!(all.len(), 2);
 
     // Re-upserting the same (provider, external_id) is idempotent.
-    series_external_ids_repo::upsert(&db, s.id, "mangabaka", "1", None, 1_700_000_500)
+    series_external_ids_repo::upsert(&db, s.id, "mangabaka", "1", 1_700_000_500)
         .await
         .unwrap();
     let all = series_external_ids_repo::list_for_series(&db, s.id)
@@ -204,7 +197,7 @@ async fn series_external_ids_cascade_on_series_delete() {
     let s = series_repo::upsert(&db, sample_series("To Delete", None))
         .await
         .unwrap();
-    series_external_ids_repo::upsert(&db, s.id, "mangabaka", "7", None, 1_700_000_000)
+    series_external_ids_repo::upsert(&db, s.id, "mangabaka", "7", 1_700_000_000)
         .await
         .unwrap();
 

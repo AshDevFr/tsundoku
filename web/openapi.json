@@ -1139,12 +1139,6 @@
           "externalId": {
             "type": "string"
           },
-          "externalUrl": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "fetchedAt": {
             "type": "integer",
             "format": "int64"
@@ -1772,12 +1766,6 @@
           "externalId": {
             "type": "string"
           },
-          "externalUrl": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "genres": {
             "type": "array",
             "items": {
@@ -2133,12 +2121,18 @@
             },
             "description": "Alternate / native titles persisted on the series row. Surfaced\nin the review UI so romaji / Japanese / publisher variants are\nvisible without opening the provider page."
           },
-          "externalUrl": {
+          "externalId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Active provider's URL for this series (e.g. the MangaBaka page),\nwhen known. Pulled from `series_external_ids.external_url` for\n`(active_provider, series_id)`; falls back to any other provider's\nURL so the operator always has a way to inspect the candidate."
+            "description": "Provider + external_id pair for building a link to the provider's\npage. Prefers the active provider's mapping; falls back to any\nother mapping so the operator always has a way to inspect the\ncandidate. None when the series has no external IDs persisted."
           },
           "reason": {
             "type": [

@@ -60,7 +60,6 @@ const UP: &[&str] = &[
         series_id       INTEGER NOT NULL,
         provider        TEXT NOT NULL,
         external_id     TEXT NOT NULL,
-        external_url    TEXT,
         fetched_at      INTEGER NOT NULL,
         PRIMARY KEY (provider, external_id),
         UNIQUE (series_id, provider),

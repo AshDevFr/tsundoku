@@ -168,7 +168,6 @@ pub async fn upsert_series_from_metadata(
         series_id,
         provider_id,
         &metadata.external_id,
-        metadata.external_url.as_deref(),
         fetched_at,
     )
     .await?;
@@ -301,7 +300,6 @@ async fn upsert_external_id<C: sea_orm::ConnectionTrait>(
     series_id: i32,
     provider: &str,
     external_id: &str,
-    external_url: Option<&str>,
     fetched_at: i64,
 ) -> Result<()> {
     // Case 1: (provider, external_id) already exists.
@@ -323,12 +321,11 @@ async fn upsert_external_id<C: sea_orm::ConnectionTrait>(
             );
             return Ok(());
         }
-        // Same series: refresh url/fetched_at.
+        // Same series: refresh fetched_at.
         let model = series_external_ids::ActiveModel {
             provider: Set(provider.to_string()),
             external_id: Set(external_id.to_string()),
             series_id: Set(series_id),
-            external_url: Set(external_url.map(str::to_string)),
             fetched_at: Set(fetched_at),
         };
         series_external_ids::Entity::update(model).exec(db).await?;
@@ -354,7 +351,6 @@ async fn upsert_external_id<C: sea_orm::ConnectionTrait>(
         provider: Set(provider.to_string()),
         external_id: Set(external_id.to_string()),
         series_id: Set(series_id),
-        external_url: Set(external_url.map(str::to_string)),
         fetched_at: Set(fetched_at),
     };
     series_external_ids::Entity::insert(model).exec(db).await?;
@@ -367,15 +363,7 @@ async fn upsert_foreign_id<C: sea_orm::ConnectionTrait>(
     fid: &ForeignId,
     fetched_at: i64,
 ) -> Result<()> {
-    upsert_external_id(
-        db,
-        series_id,
-        &fid.provider,
-        &fid.id,
-        fid.url.as_deref(),
-        fetched_at,
-    )
-    .await
+    upsert_external_id(db, series_id, &fid.provider, &fid.id, fetched_at).await
 }
 
 fn kind_to_db(kind: &SeriesKind) -> String {
@@ -423,7 +411,6 @@ mod tests {
             status: Some(SeriesStatus::Ongoing),
             year: Some(2018),
             cover_url: Some("https://example.com/c.jpg".into()),
-            external_url: Some("https://api.mangabaka.dev/v1/series/12345".into()),
             description: Some("Denji is a teenage devil-hunter.".into()),
             genres: vec!["action".into(), "horror".into()],
             tags: vec!["devil hunter".into(), "gore".into()],

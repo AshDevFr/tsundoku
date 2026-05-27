@@ -128,10 +128,10 @@ async fn series_list_paginates_and_filters_by_kind() {
 async fn series_detail_returns_external_ids() {
     let db = fresh_db().await;
     let sid = seed_series(&db, "Test Series", "manga").await;
-    series_external_ids_repo::upsert(&db, sid, "mb", "42", Some("https://mb/42"), 100)
+    series_external_ids_repo::upsert(&db, sid, "mb", "42", 100)
         .await
         .unwrap();
-    series_external_ids_repo::upsert(&db, sid, "anilist", "9", None, 100)
+    series_external_ids_repo::upsert(&db, sid, "anilist", "9", 100)
         .await
         .unwrap();
 
@@ -1613,13 +1613,13 @@ async fn metrics_id_maps_reports_per_provider_counts_and_mu_cache() {
     let db = fresh_db().await;
     let s1 = seed_series(&db, "Series A", "manga").await;
     let s2 = seed_series(&db, "Series B", "manga").await;
-    series_external_ids_repo::upsert(&db, s1, "mangaupdates", "mu-1", None, 100)
+    series_external_ids_repo::upsert(&db, s1, "mangaupdates", "mu-1", 100)
         .await
         .unwrap();
-    series_external_ids_repo::upsert(&db, s2, "mangaupdates", "mu-2", None, 100)
+    series_external_ids_repo::upsert(&db, s2, "mangaupdates", "mu-2", 100)
         .await
         .unwrap();
-    series_external_ids_repo::upsert(&db, s1, "mal", "mal-1", None, 100)
+    series_external_ids_repo::upsert(&db, s1, "mal", "mal-1", 100)
         .await
         .unwrap();
     mangaupdates_id_repo::record(&db, 11, Some("modern-x"), 500)

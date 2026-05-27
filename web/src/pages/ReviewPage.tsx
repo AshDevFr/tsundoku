@@ -42,7 +42,7 @@ import {
   useProviders,
   useUnresolvedReleases,
 } from "@/api/queries";
-import { formatAbsolute, formatRelative } from "@/api/utils";
+import { formatAbsolute, formatRelative, providerUrl } from "@/api/utils";
 
 export function ReviewPage() {
   const [page, setPage] = useState(1);
@@ -546,17 +546,22 @@ function CandidateList({
                     >
                       {c.seriesTitle}
                     </Text>
-                    {c.externalUrl && (
-                      <Anchor
-                        href={c.externalUrl}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        size="xs"
-                        title="Open on provider"
-                      >
-                        view ↗
-                      </Anchor>
-                    )}
+                    {c.provider &&
+                      c.externalId &&
+                      (() => {
+                        const href = providerUrl(c.provider, c.externalId);
+                        return href ? (
+                          <Anchor
+                            href={href}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            size="xs"
+                            title="Open on provider"
+                          >
+                            view ↗
+                          </Anchor>
+                        ) : null;
+                      })()}
                   </Group>
                   {c.alternateTitles.length > 0 && (
                     <Text
@@ -721,6 +726,7 @@ function ProviderSearchModal({
         />
 
         <SearchResults
+          provider={effectiveProvider}
           hits={search.data?.hits ?? []}
           loading={search.isFetching}
           enabled={Boolean(
@@ -741,12 +747,14 @@ function ProviderSearchModal({
 }
 
 function SearchResults({
+  provider,
   hits,
   loading,
   enabled,
   disabled,
   onPick,
 }: {
+  provider: string | null;
   hits: ProviderSearchHit[];
   loading: boolean;
   enabled: boolean;
@@ -812,17 +820,21 @@ function SearchResults({
                     >
                       {h.title}
                     </Text>
-                    {h.externalUrl && (
-                      <Anchor
-                        href={h.externalUrl}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        size="xs"
-                        title="Open on provider"
-                      >
-                        view ↗
-                      </Anchor>
-                    )}
+                    {provider &&
+                      (() => {
+                        const href = providerUrl(provider, h.externalId);
+                        return href ? (
+                          <Anchor
+                            href={href}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            size="xs"
+                            title="Open on provider"
+                          >
+                            view ↗
+                          </Anchor>
+                        ) : null;
+                      })()}
                   </Group>
                   {h.nativeTitle && (
                     <Text size="xs" c="dimmed" lineClamp={1}>

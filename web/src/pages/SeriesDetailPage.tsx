@@ -22,7 +22,7 @@ import {
   useSeriesDetail,
   useSeriesReleases,
 } from "@/api/queries";
-import { formatAbsolute, formatRelative } from "@/api/utils";
+import { formatAbsolute, formatRelative, providerUrl } from "@/api/utils";
 import { seriesDetailRoute } from "@/router";
 
 const COVER_PLACEHOLDER =
@@ -140,24 +140,30 @@ export function SeriesDetailPage() {
 
             {s.externalIds.length > 0 && (
               <Group gap="xs" mt="xs">
-                {s.externalIds.map((x) => (
-                  <Badge
-                    key={`${x.provider}-${x.externalId}`}
-                    variant="dot"
-                    color="blue"
-                    component={x.externalUrl ? "a" : undefined}
-                    {...(x.externalUrl
-                      ? {
-                          href: x.externalUrl,
-                          target: "_blank",
-                          rel: "noreferrer noopener",
-                          style: { cursor: "pointer", textDecoration: "none" },
-                        }
-                      : {})}
-                  >
-                    {x.provider}: {x.externalId}
-                  </Badge>
-                ))}
+                {s.externalIds.map((x) => {
+                  const href = providerUrl(x.provider, x.externalId);
+                  return (
+                    <Badge
+                      key={`${x.provider}-${x.externalId}`}
+                      variant="dot"
+                      color="blue"
+                      component={href ? "a" : undefined}
+                      {...(href
+                        ? {
+                            href,
+                            target: "_blank",
+                            rel: "noreferrer noopener",
+                            style: {
+                              cursor: "pointer",
+                              textDecoration: "none",
+                            },
+                          }
+                        : {})}
+                    >
+                      {x.provider}: {x.externalId}
+                    </Badge>
+                  );
+                })}
               </Group>
             )}
           </Stack>

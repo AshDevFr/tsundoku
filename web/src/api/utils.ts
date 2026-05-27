@@ -20,3 +20,37 @@ export function formatRelative(
 export function formatAbsolute(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toLocaleString();
 }
+
+// Build the public-facing URL for a (provider, externalId) pair. Returns
+// null for providers we don't know how to link to. Persisted URLs are not
+// stored server-side because they're fully derivable from these two fields
+// and decouple us from upstream URL-scheme changes (e.g. mangabaka.dev →
+// mangabaka.org).
+export function providerUrl(
+  provider: string,
+  externalId: string,
+): string | null {
+  const id = encodeURIComponent(externalId);
+  switch (provider) {
+    case "mangabaka":
+      return `https://mangabaka.org/${id}`;
+    case "mangaupdates":
+      return `https://www.mangaupdates.com/series/${id}`;
+    case "mal":
+      return `https://myanimelist.net/manga/${id}`;
+    case "anilist":
+      return `https://anilist.co/manga/${id}`;
+    case "mangadex":
+      return `https://mangadex.org/title/${id}`;
+    case "kitsu":
+      return `https://kitsu.io/manga/${id}`;
+    case "anime_planet":
+      return `https://www.anime-planet.com/manga/${id}`;
+    case "anime_news_network":
+      return `https://www.animenewsnetwork.com/encyclopedia/manga.php?id=${id}`;
+    case "shikimori":
+      return `https://shikimori.one/mangas/${id}`;
+    default:
+      return null;
+  }
+}

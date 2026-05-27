@@ -331,7 +331,6 @@ pub struct ProviderSearchHit {
     pub native_title: Option<String>,
     pub genres: Vec<String>,
     pub tags: Vec<String>,
-    pub external_url: Option<String>,
     pub score: f32,
 }
 
@@ -443,7 +442,6 @@ fn enrich(m: td_metadata::SeriesMetadata, score: f32) -> ProviderSearchHit {
         native_title: m.alternate_titles.into_iter().next(),
         genres: m.genres,
         tags: m.tags,
-        external_url: m.external_url,
         score,
     }
 }
@@ -459,7 +457,6 @@ fn stub_hit(hit: td_metadata::SearchHit, score: f32) -> ProviderSearchHit {
         native_title: None,
         genres: Vec::new(),
         tags: Vec::new(),
-        external_url: None,
         score,
     }
 }

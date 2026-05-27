@@ -292,7 +292,6 @@ fn active_row_to_canonical(row: RawRow) -> Option<SeriesMetadata> {
 
 fn row_to_canonical(row: RawRow) -> SeriesMetadata {
     let external_id = row.id.to_string();
-    let external_url = Some(format!("https://mangabaka.org/{external_id}"));
     let alternate_titles = collect_alternates(&row);
     let foreign_ids = row_to_foreign_ids(&row);
     let cover_url = pick_cover_from_row(&row);
@@ -326,7 +325,6 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
         status,
         year: row.year,
         cover_url,
-        external_url,
         description,
         genres: Vec::new(),
         tags: Vec::new(),

@@ -29,14 +29,12 @@ pub async fn upsert(
     series_id: i32,
     provider: &str,
     external_id: &str,
-    external_url: Option<&str>,
     fetched_at: i64,
 ) -> Result<()> {
     let model = series_external_ids::ActiveModel {
         provider: Set(provider.to_string()),
         external_id: Set(external_id.to_string()),
         series_id: Set(series_id),
-        external_url: Set(external_url.map(str::to_string)),
         fetched_at: Set(fetched_at),
     };
     series_external_ids::Entity::insert(model)
@@ -47,7 +45,6 @@ pub async fn upsert(
             ])
             .update_columns([
                 series_external_ids::Column::SeriesId,
-                series_external_ids::Column::ExternalUrl,
                 series_external_ids::Column::FetchedAt,
             ])
             .to_owned(),
@@ -131,13 +128,9 @@ mod tests {
         let db = fresh_db().await;
         let s1 = insert_series(&db, "A").await;
         let s2 = insert_series(&db, "B").await;
-        upsert(&db, s1, "mangaupdates", "mu-1", None, 0)
-            .await
-            .unwrap();
-        upsert(&db, s2, "mangaupdates", "mu-2", None, 0)
-            .await
-            .unwrap();
-        upsert(&db, s1, "mal", "mal-1", None, 0).await.unwrap();
+        upsert(&db, s1, "mangaupdates", "mu-1", 0).await.unwrap();
+        upsert(&db, s2, "mangaupdates", "mu-2", 0).await.unwrap();
+        upsert(&db, s1, "mal", "mal-1", 0).await.unwrap();
         let rows = count_by_provider(&db).await.unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].provider, "mal");

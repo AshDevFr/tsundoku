@@ -58,11 +58,12 @@ pub struct ReviewCandidateDto {
     pub series_cover_url: Option<String>,
     pub score: f64,
     pub reason: Option<String>,
-    /// Active provider's URL for this series (e.g. the MangaBaka page),
-    /// when known. Pulled from `series_external_ids.external_url` for
-    /// `(active_provider, series_id)`; falls back to any other provider's
-    /// URL so the operator always has a way to inspect the candidate.
-    pub external_url: Option<String>,
+    /// Provider + external_id pair for building a link to the provider's
+    /// page. Prefers the active provider's mapping; falls back to any
+    /// other mapping so the operator always has a way to inspect the
+    /// candidate. None when the series has no external IDs persisted.
+    pub provider: Option<String>,
+    pub external_id: Option<String>,
     /// Alternate / native titles persisted on the series row. Surfaced
     /// in the review UI so romaji / Japanese / publisher variants are
     /// visible without opening the provider page.
@@ -275,18 +276,20 @@ pub async fn list_unresolved(
                 .and_then(|s| s.alternate_titles_json.as_deref())
                 .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
                 .unwrap_or_default();
-            // Prefer the active provider's URL (almost always present
+            // Prefer the active provider's mapping (almost always present
             // since the candidate came from that provider's resolver);
             // fall back to any other mapping so we never leave the
-            // operator without a way to inspect the series.
+            // operator without a way to inspect the series. The UI builds
+            // the actual URL from (provider, external_id).
             let mappings = series_external_ids_repo::list_for_series(&state.db, c.series_id)
                 .await
                 .map_err(anyhow_err)?;
-            let external_url = mappings
+            let picked = mappings
                 .iter()
                 .find(|m| m.provider == active_provider)
-                .and_then(|m| m.external_url.clone())
-                .or_else(|| mappings.iter().find_map(|m| m.external_url.clone()));
+                .or_else(|| mappings.first());
+            let provider = picked.map(|m| m.provider.clone());
+            let external_id = picked.map(|m| m.external_id.clone());
             candidates.push(ReviewCandidateDto {
                 series_id: c.series_id,
                 series_title: series
@@ -296,7 +299,8 @@ pub async fn list_unresolved(
                 series_cover_url: series.and_then(|s| s.cover_url),
                 score: c.score,
                 reason: c.reason,
-                external_url,
+                provider,
+                external_id,
                 alternate_titles,
             });
         }

@@ -54,7 +54,6 @@ pub struct SeriesListPage {
 pub struct ExternalIdDto {
     pub provider: String,
     pub external_id: String,
-    pub external_url: Option<String>,
     pub fetched_at: i64,
 }
 
@@ -552,7 +551,6 @@ fn model_to_detail(
             .map(|x| ExternalIdDto {
                 provider: x.provider,
                 external_id: x.external_id,
-                external_url: x.external_url,
                 fetched_at: x.fetched_at,
             })
             .collect(),

@@ -208,7 +208,6 @@ pub fn sample_metadata(provider: &str, id: &str, title: &str) -> SeriesMetadata 
         status: Some(td_metadata::SeriesStatus::Ongoing),
         year: Some(2020),
         cover_url: None,
-        external_url: None,
         description: None,
         genres: vec![],
         tags: vec![],

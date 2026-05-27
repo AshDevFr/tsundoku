@@ -9,7 +9,6 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub external_id: String,
     pub series_id: i32,
-    pub external_url: Option<String>,
     pub fetched_at: i64,
 }
 

@@ -551,7 +551,6 @@ export interface components {
         };
         ExternalIdDto: {
             externalId: string;
-            externalUrl?: string | null;
             /** Format: int64 */
             fetchedAt: number;
             provider: string;
@@ -781,7 +780,6 @@ export interface components {
         ProviderSearchHit: {
             coverUrl?: string | null;
             externalId: string;
-            externalUrl?: string | null;
             genres: string[];
             kind?: string | null;
             /**
@@ -886,13 +884,14 @@ export interface components {
              *     visible without opening the provider page.
              */
             alternateTitles: string[];
+            externalId?: string | null;
             /**
-             * @description Active provider's URL for this series (e.g. the MangaBaka page),
-             *     when known. Pulled from `series_external_ids.external_url` for
-             *     `(active_provider, series_id)`; falls back to any other provider's
-             *     URL so the operator always has a way to inspect the candidate.
+             * @description Provider + external_id pair for building a link to the provider's
+             *     page. Prefers the active provider's mapping; falls back to any
+             *     other mapping so the operator always has a way to inspect the
+             *     candidate. None when the series has no external IDs persisted.
              */
-            externalUrl?: string | null;
+            provider?: string | null;
             reason?: string | null;
             /** Format: double */
             score: number;
