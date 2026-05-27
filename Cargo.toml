@@ -22,6 +22,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Sylvain Cau <sylvain.cau@gmail.com>"]
 description = "Manga discovery service that polls sources and resolves releases to MangaBaka series"
+repository = "https://github.com/AshDevFr/tsundoku"
 
 [workspace.dependencies]
 # Runtime
