@@ -385,6 +385,18 @@ export const handlers = [
     });
   }),
 
+  http.post("/api/v1/sources/:name/backfill", ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const pages = Number(new URL(request.url).searchParams.get("pages") ?? 1);
+    return HttpResponse.json({
+      source: String(params.name),
+      pages,
+      triggered: true,
+      skipped: false,
+    });
+  }),
+
   http.get("/api/v1/metrics/sources", () =>
     HttpResponse.json({
       items: [

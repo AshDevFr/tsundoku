@@ -1,11 +1,27 @@
-import { Badge, Button, Group, Paper, Stack, Text } from "@mantine/core";
+import {
+  Badge,
+  Button,
+  Group,
+  NumberInput,
+  Paper,
+  Popover,
+  Stack,
+  Text,
+} from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { Link } from "@tanstack/react-router";
-import { usePollSource } from "@/api/mutations";
+import { useState } from "react";
+import { useBackfillSource, usePollSource } from "@/api/mutations";
 import type { SourceConfigDto, SourceDto } from "@/api/queries";
 import { formatAbsolute, formatRelative } from "@/api/utils";
 import { ConfigRow, ExternalLink } from "./atoms";
 import { JobStatusPill } from "./JobStatusPill";
+
+/// Default pages to walk when the operator opens the backfill popover.
+/// A handful of pages is the typical useful catch-up; the operator can
+/// dial it up to MAX_BACKFILL_PAGES or down to 1.
+const DEFAULT_BACKFILL_PAGES = 5;
+const MAX_BACKFILL_PAGES = 100;
 
 const LINK_STYLE = { textDecoration: "none", color: "inherit" } as const;
 
@@ -72,6 +88,7 @@ export function SourceCard({ source }: { source: SourceDto }) {
           </Stack>
           <Group gap="xs" wrap="nowrap" align="center">
             <JobStatusPill kind="source" id={source.name} />
+            <BackfillButton source={source} />
             <Button
               size="xs"
               variant="light"
@@ -87,6 +104,111 @@ export function SourceCard({ source }: { source: SourceDto }) {
         <SourceConfigBlock config={source.config} />
       </Stack>
     </Paper>
+  );
+}
+
+/// Backfill is heavier than a poll (it fans out one detail fetch per new
+/// release across N listing pages), so it gets a deliberate two-step
+/// affordance rather than a one-click trigger: the button opens a popover
+/// that asks for a page count and only fires on the explicit confirm.
+function BackfillButton({ source }: { source: SourceDto }) {
+  const [opened, setOpened] = useState(false);
+  const [pages, setPages] = useState<number>(DEFAULT_BACKFILL_PAGES);
+  const backfill = useBackfillSource();
+  const disabled = source.config?.enabled === false;
+
+  const run = () => {
+    backfill.mutate(
+      { name: source.name, pages },
+      {
+        onSuccess: (data) => {
+          setOpened(false);
+          if (data?.skipped) {
+            notifications.show({
+              color: "gray",
+              message: `${source.name}: backfill already in flight`,
+            });
+          } else {
+            notifications.show({
+              color: "blue",
+              message: `${source.name}: backfill started (${data?.pages ?? pages} pages)`,
+            });
+          }
+        },
+        onError: (e) => {
+          setOpened(false);
+          notifications.show({
+            color: "red",
+            title: `${source.name}: backfill failed`,
+            message: (e as Error).message,
+          });
+        },
+      },
+    );
+  };
+
+  return (
+    <Popover
+      opened={opened}
+      onChange={setOpened}
+      position="bottom-end"
+      withArrow
+      shadow="md"
+      trapFocus
+    >
+      <Popover.Target>
+        <Button
+          size="xs"
+          variant="default"
+          onClick={() => setOpened((o) => !o)}
+          disabled={disabled}
+          data-testid={`backfill-${source.name}`}
+        >
+          Backfill
+        </Button>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack gap="xs" w={230}>
+          <Text size="sm" fw={600}>
+            Backfill {source.name}
+          </Text>
+          <Text size="xs" c="dimmed">
+            Walks older listing pages and resolves every new release. Runs in
+            the background; re-running skips rows already stored.
+          </Text>
+          <NumberInput
+            label="Pages to walk"
+            min={1}
+            max={MAX_BACKFILL_PAGES}
+            clampBehavior="strict"
+            allowDecimal={false}
+            value={pages}
+            onChange={(v) =>
+              setPages(typeof v === "number" ? v : DEFAULT_BACKFILL_PAGES)
+            }
+            data-testid={`backfill-pages-${source.name}`}
+          />
+          <Group justify="flex-end" gap="xs">
+            <Button
+              size="xs"
+              variant="subtle"
+              color="gray"
+              onClick={() => setOpened(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="xs"
+              onClick={run}
+              loading={backfill.isPending}
+              data-testid={`backfill-confirm-${source.name}`}
+            >
+              Run backfill
+            </Button>
+          </Group>
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
   );
 }
 

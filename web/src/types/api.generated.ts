@@ -477,6 +477,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sources/{name}/backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger an in-process historical backfill for the named source. Runs
+         *     the same loop as the `tsundoku backfill` CLI, but inside the serve
+         *     process under the shared per-source mutex, so it cannot race a cron
+         *     poll (returns `skipped = true` when work is already in flight). Returns
+         *     `422` when the source's kind does not support backfill.
+         */
+        post: operations["backfill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sources/{name}/poll": {
         parameters: {
             query?: never;
@@ -669,6 +692,21 @@ export interface components {
              *     longer waste a HEAD request on them.
              */
             tombstoneCount: number;
+        };
+        ManualBackfillResponse: {
+            /**
+             * Format: int32
+             * @description Pages the run was asked to walk (after clamping); it may stop early
+             *     if the source runs out of history.
+             */
+            pages: number;
+            /**
+             * @description `true` when a poll or backfill for this source was already in
+             *     flight; the request is a no-op.
+             */
+            skipped: boolean;
+            source: string;
+            triggered: boolean;
         };
         ManualPollResponse: {
             /** @description `false` when a previous tick is still in flight; the request is a no-op. */
@@ -1801,6 +1839,48 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PollAllResponse"];
                 };
+            };
+        };
+    };
+    backfill: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Number of listing pages to walk, starting at page 1. Clamped to a
+                 *     minimum of 1.
+                 */
+                pages?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Source instance name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManualBackfillResponse"];
+                };
+            };
+            /** @description No source with that name registered */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Source kind does not support historical backfill */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

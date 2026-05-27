@@ -1011,6 +1011,60 @@
         ]
       }
     },
+    "/api/v1/sources/{name}/backfill": {
+      "post": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "Trigger an in-process historical backfill for the named source. Runs\nthe same loop as the `tsundoku backfill` CLI, but inside the serve\nprocess under the shared per-source mutex, so it cannot race a cron\npoll (returns `skipped = true` when work is already in flight). Returns\n`422` when the source's kind does not support backfill.",
+        "operationId": "backfill",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Source instance name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pages",
+            "in": "query",
+            "description": "Number of listing pages to walk, starting at page 1. Clamped to a\nminimum of 1.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualBackfillResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No source with that name registered"
+          },
+          "422": {
+            "description": "Source kind does not support historical backfill"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/sources/{name}/poll": {
       "post": {
         "tags": [
@@ -1397,6 +1451,33 @@
             "type": "integer",
             "format": "int64",
             "description": "Rows where `modern_id IS NULL` — legacy ids MU retired, so we no\nlonger waste a HEAD request on them."
+          }
+        }
+      },
+      "ManualBackfillResponse": {
+        "type": "object",
+        "required": [
+          "source",
+          "pages",
+          "triggered",
+          "skipped"
+        ],
+        "properties": {
+          "pages": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Pages the run was asked to walk (after clamping); it may stop early\nif the source runs out of history.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "boolean",
+            "description": "`true` when a poll or backfill for this source was already in\nflight; the request is a no-op."
+          },
+          "source": {
+            "type": "string"
+          },
+          "triggered": {
+            "type": "boolean"
           }
         }
       },

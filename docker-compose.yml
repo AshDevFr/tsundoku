@@ -9,7 +9,14 @@ services:
       - "8080:8080"
     volumes:
       - ./config:/app/config:ro
-      - ./docker/data:/app/data:rw
+      # Named volume, not a host bind mount: SQLite's WAL relies on mmap'd
+      # shared memory + byte-range locks, which are unreliable on bind
+      # mounts backed by Docker Desktop's macOS FS (VirtioFS/gRPC-FUSE) and
+      # cause "database disk image is malformed". A named volume lives on
+      # the Linux VM's ext4, where WAL works. Inspect with
+      # `docker compose exec tsundoku sqlite3 /app/data/db/tsundoku.db ...`;
+      # back up with `docker run --rm -v tsundoku_data:/data ...`.
+      - tsundoku_data:/app/data
     env_file:
       - path: .env
         required: false
@@ -40,7 +47,9 @@ services:
       - cargo_cache:/usr/local/cargo/registry
       - target_cache:/app/target
       - ./config:/app/config:ro
-      - ./docker/data:/app/data:rw
+      # Named volume rather than ./docker/data bind mount — see the prod
+      # service for why (WAL + macOS bind mount corrupts the DB).
+      - tsundoku_data_dev:/app/data
     env_file:
       - path: .env
         required: false
@@ -79,6 +88,11 @@ volumes:
   cargo_cache:
   target_cache:
   frontend_node_modules:
+  # SQLite DB + provider caches + tmp scratch (the storage.data_dir root).
+  # Named volumes so WAL mode is reliable; prod and dev are kept separate
+  # so a dev wipe never touches prod data.
+  tsundoku_data:
+  tsundoku_data_dev:
 
 networks:
   tsundoku-net:

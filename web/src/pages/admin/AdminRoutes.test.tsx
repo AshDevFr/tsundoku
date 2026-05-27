@@ -186,6 +186,28 @@ describe("admin sources page", () => {
     });
   });
 
+  it("dispatches a backfill after confirming a page count", async () => {
+    renderAt("/admin/sources");
+    const open = await screen.findByTestId(
+      "backfill-english-manga-trusted",
+      undefined,
+      { timeout: 3000 },
+    );
+    fireEvent.click(open);
+    const pages = await screen.findByTestId(
+      "backfill-pages-english-manga-trusted",
+    );
+    fireEvent.change(pages, { target: { value: "7" } });
+    fireEvent.click(
+      screen.getByTestId("backfill-confirm-english-manga-trusted"),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByText(/english-manga-trusted: backfill started \(7 pages\)/),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("flips the source-card pill when a synthetic SSE event arrives", async () => {
     renderAt("/admin/sources");
     await screen.findByTestId("source-card-english-manga-trusted", undefined, {

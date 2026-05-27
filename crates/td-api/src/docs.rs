@@ -26,7 +26,8 @@ use crate::handlers::releases::{
 };
 use crate::handlers::series::{ExternalIdDto, SeriesDetail, SeriesListItem, SeriesListPage};
 use crate::handlers::sources::{
-    ManualPollResponse, PollAllResponse, SourceConfigDto, SourceDto, SourceList,
+    ManualBackfillResponse, ManualPollResponse, PollAllResponse, SourceConfigDto, SourceDto,
+    SourceList,
 };
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
@@ -56,6 +57,7 @@ use crate::state::{JobEvent, JobKind, JobPhase, JobResult};
         releases::retry_all,
         sources::list,
         sources::poll,
+        sources::backfill,
         sources::poll_all,
         providers::list,
         providers::refresh_cache,
@@ -92,6 +94,7 @@ use crate::state::{JobEvent, JobKind, JobPhase, JobResult};
         SourceConfigDto,
         SourceList,
         ManualPollResponse,
+        ManualBackfillResponse,
         PollAllResponse,
         ProviderDto,
         ProviderConfigDto,

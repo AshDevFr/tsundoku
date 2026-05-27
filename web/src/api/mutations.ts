@@ -118,6 +118,27 @@ export function usePollAllSources() {
   });
 }
 
+export function useBackfillSource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { name: string; pages: number }) => {
+      const { data, error } = await api.POST(
+        "/api/v1/sources/{name}/backfill",
+        {
+          params: {
+            path: { name: args.name },
+            query: { pages: args.pages },
+          },
+        },
+      );
+      if (error)
+        throw new Error(describeError(error, "failed to backfill source"));
+      return data;
+    },
+    onSuccess: () => invalidateSourceQueries(qc),
+  });
+}
+
 export function useRefreshProvider() {
   const qc = useQueryClient();
   return useMutation({

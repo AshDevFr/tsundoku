@@ -1,14 +1,15 @@
-//! Discovery-source listing + manual-poll trigger.
+//! Discovery-source listing + manual poll / backfill triggers.
 
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, State};
-use serde::Serialize;
+use axum::extract::{Path, Query, State};
+use serde::{Deserialize, Serialize};
 use td_config::SourceConfig;
 use td_db::repos::sources_repo;
+use td_scheduler::jobs::backfill_source::{self, BackfillOutcome};
 use td_scheduler::jobs::poll_source;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
 use crate::state::{AppState, JobEvent, JobKind, JobResult};
@@ -302,4 +303,146 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
     }
 
     Ok(Json(PollAllResponse { results }))
+}
+
+/// Default `pages` when the query param is omitted. Matches the `tsundoku
+/// backfill` CLI default: a single page, the cheapest useful catch-up.
+fn default_backfill_pages() -> u32 {
+    1
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct BackfillParams {
+    /// Number of listing pages to walk, starting at page 1. Clamped to a
+    /// minimum of 1.
+    #[serde(default = "default_backfill_pages")]
+    pub pages: u32,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualBackfillResponse {
+    pub source: String,
+    /// Pages the run was asked to walk (after clamping); it may stop early
+    /// if the source runs out of history.
+    pub pages: u32,
+    pub triggered: bool,
+    /// `true` when a poll or backfill for this source was already in
+    /// flight; the request is a no-op.
+    pub skipped: bool,
+}
+
+/// Trigger an in-process historical backfill for the named source. Runs
+/// the same loop as the `tsundoku backfill` CLI, but inside the serve
+/// process under the shared per-source mutex, so it cannot race a cron
+/// poll (returns `skipped = true` when work is already in flight). Returns
+/// `422` when the source's kind does not support backfill.
+#[utoipa::path(
+    post,
+    path = "/api/v1/sources/{name}/backfill",
+    tag = "sources",
+    params(
+        ("name" = String, Path, description = "Source instance name"),
+        BackfillParams,
+    ),
+    responses(
+        (status = 202, body = ManualBackfillResponse),
+        (status = 404, description = "No source with that name registered"),
+        (status = 422, description = "Source kind does not support historical backfill")
+    ),
+    security(("admin" = []))
+)]
+pub async fn backfill(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(params): Query<BackfillParams>,
+) -> ApiResult<Json<ManualBackfillResponse>> {
+    let pages = params.pages.max(1);
+    let source = state
+        .sources
+        .get(&name)
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound(format!("source {name:?}")))?;
+
+    // Reject non-backfillable kinds up front, before touching the lock, so
+    // the caller gets a capability error rather than a misleading 202.
+    if source.as_backfillable().is_none() {
+        return Err(ApiError::BadRequest(format!(
+            "source {name:?} (kind={}) does not support historical backfill",
+            source.kind()
+        )));
+    }
+
+    // Optimistic skip check, mirroring `poll`: report `skipped` instead of
+    // spawning a task that would immediately bail. `backfill_source::run`
+    // re-acquires the lock and is the real authority.
+    let lock = state.locks.source_lock(&name);
+    if lock.try_lock().is_err() {
+        state.send_job_event(JobEvent::finished(
+            JobKind::Source,
+            &name,
+            JobResult {
+                triggered: false,
+                skipped: true,
+                ..Default::default()
+            },
+        ));
+        return Ok(Json(ManualBackfillResponse {
+            source: name,
+            pages,
+            triggered: false,
+            skipped: true,
+        }));
+    }
+
+    state.send_job_event(JobEvent::started(JobKind::Source, &name));
+
+    let db = state.db.clone();
+    let metadata = state.metadata.clone();
+    let ingestion = state.ingestion.clone();
+    let locks = state.locks.clone();
+    let query_builder = state.query_builder.clone();
+    let mu_redirector = state.mangaupdates_redirector.clone();
+    let events = state.job_events.clone();
+    let event_name = name.clone();
+    tokio::spawn(async move {
+        let result = backfill_source::run(
+            source,
+            db,
+            metadata,
+            ingestion,
+            locks,
+            query_builder,
+            mu_redirector,
+            pages,
+            "manual",
+        )
+        .await;
+        let new = match &result {
+            Ok(BackfillOutcome::Ran(totals)) => Some(totals.new as i64),
+            _ => None,
+        };
+        if let Err(e) = &result {
+            tracing::warn!(error = ?e, source = %event_name, "manual backfill failed");
+        }
+        let _ = events.send(JobEvent::finished(
+            JobKind::Source,
+            event_name,
+            JobResult {
+                triggered: true,
+                skipped: false,
+                new,
+                ..Default::default()
+            },
+        ));
+    });
+
+    Ok(Json(ManualBackfillResponse {
+        source: name,
+        pages,
+        triggered: true,
+        skipped: false,
+    }))
 }

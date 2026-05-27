@@ -114,6 +114,49 @@ tsundoku poll                       # all sources
 tsundoku poll --source english-manga-trusted
 ```
 
+### Backfill (historical catch-up)
+
+A poll only sees the current feed. To walk a source's older listing
+pages and resolve everything it finds, use backfill. It is idempotent on
+`(source_kind, external_id)` — re-running with the same `--pages` re-fetches
+nothing already stored — and never moves the source's ETag / `last_polled_at`
+markers.
+
+Two ways to run it, and the difference matters when `serve` is up:
+
+**Endpoint (preferred while `serve` runs).** Runs in-process under the
+same per-source mutex the cron poll holds, so it cannot race a scheduled
+tick:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8080/api/v1/sources/english-manga-trusted/backfill?pages=10"
+```
+
+Returns `202` with `{ triggered, skipped, pages }`. `skipped: true` means a
+poll or backfill for that source was already in flight (no-op). Sources whose
+kind can't backfill return `422`. The walk itself runs in the background;
+watch progress in the logs or the admin UI's job events.
+
+**CLI (offline / one-shot).** Builds its own connection and runs the same
+loop:
+
+```bash
+tsundoku backfill english-manga-trusted --pages 10
+```
+
+:::warning Don't run the CLI against a DB a `serve` is using
+The CLI is a **separate process**, so its per-source lock does not
+coordinate with a running `serve`. Two processes resolving the same
+source at once is wasteful (duplicate fetches) and, on a filesystem where
+SQLite's WAL is unreliable (notably Docker Desktop macOS **bind mounts**),
+risks `database disk image is malformed` corruption. Keep the database on
+a **named volume** (the default in `docker-compose.yml`), and while `serve`
+is running, prefer the backfill **endpoint** over `docker compose exec …
+tsundoku backfill`. Use the CLI when `serve` is stopped, or for a DB on a
+real native filesystem.
+:::
+
 ## Metrics
 
 Every poll tick writes a row to `poll_runs` (cron + manual triggers
