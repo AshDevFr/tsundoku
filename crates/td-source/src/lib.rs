@@ -23,4 +23,4 @@ pub use error::{SourceError, SourceResult};
 pub use format::{Format, detect_formats};
 pub use registry::{SourceRegistry, SourceRegistryBuilder};
 pub use release::{DiscoveredRelease, ExternalLinks, PollContext, PollOutcome};
-pub use source::DiscoverySource;
+pub use source::{Backfillable, DiscoverySource};

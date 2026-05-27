@@ -1,3 +1,4 @@
+pub mod backfill;
 pub mod migrate;
 pub mod openapi;
 pub mod poll;

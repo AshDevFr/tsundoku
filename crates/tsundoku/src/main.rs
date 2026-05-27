@@ -63,6 +63,20 @@ enum Commands {
         #[arg(long)]
         retry_unresolved: bool,
     },
+    /// One-shot historical catch-up for a single source. Walks the
+    /// source's paginated HTML listing for `--pages` pages, persisting
+    /// and resolving every new release. Idempotent on re-runs; does not
+    /// affect the source's ETag / `last_polled_at` state.
+    Backfill {
+        #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
+        config: PathBuf,
+        /// Name of the discovery source to backfill. Must be a source
+        /// whose kind opts in to `Backfillable` (currently `nyaa`).
+        source: String,
+        /// Number of listing pages to walk, starting at page 1.
+        #[arg(short, long, default_value_t = 1)]
+        pages: u32,
+    },
     /// Write the OpenAPI specification to a file
     Openapi {
         #[arg(short, long, default_value = "web/openapi.json")]
@@ -84,6 +98,11 @@ async fn main() -> anyhow::Result<()> {
             config,
             retry_unresolved,
         } => commands::resolve::run(config, retry_unresolved).await,
+        Commands::Backfill {
+            config,
+            source,
+            pages,
+        } => commands::backfill::run(config, source, pages).await,
         Commands::Openapi { output } => commands::openapi::run(&output),
     }
 }

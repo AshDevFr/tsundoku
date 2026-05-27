@@ -1006,8 +1006,10 @@ export interface components {
             fetchDetails: boolean;
             /**
              * Format: int32
-             * @description Maximum number of feed pages walked per poll. `1` for sources that
-             *     don't paginate or that haven't opted in.
+             * @description Maximum number of feed pages walked per poll. Always `1` today:
+             *     no v1 source kind paginates inside the steady-state poll. Kept on
+             *     the DTO as a placeholder for future paginated source kinds; the
+             *     `backfill` CLI is the historical-catch-up path in the meantime.
              */
             maxPages: number;
             /** @description Override for the site base URL. Useful when the feed is proxied. */

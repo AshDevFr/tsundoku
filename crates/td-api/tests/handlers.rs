@@ -568,7 +568,6 @@ async fn sources_list_includes_config_block_from_app_state() {
             timeout_seconds: 45,
             fetch_details: true,
             site_base_url: "https://nyaa.si".into(),
-            max_pages: 1,
         }),
     };
     let app = common::build_app_full(

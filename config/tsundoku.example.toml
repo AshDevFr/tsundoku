@@ -159,9 +159,8 @@ queue_low_confidence  = true
 #   fetch_details   = true     # fetch each post's detail page to enrich files + external links
 #   timeout_seconds = 30
 #   site_base_url   = "https://nyaa.si"
-#   # Walk this many feed pages per poll (Nyaa serves 75 items/page). Default
-#   # 1 keeps every tick a single request; bump it to catch up after downtime
-#   # or when the upstream truncates aggressively. Items already in the local
-#   # `releases` table are filtered out before any detail-page fetch, so
-#   # extra pages cost one RSS roundtrip each and nothing downstream.
-#   max_pages       = 1
+#
+# Note: Nyaa's RSS view does not paginate (`&p=N` is silently ignored).
+# Steady-state polls fetch the most-recent 75 items only. To seed history
+# after first install, run `tsundoku backfill <name> --pages N` once — it
+# walks the paginated HTML listing pages, which the RSS feed does not.

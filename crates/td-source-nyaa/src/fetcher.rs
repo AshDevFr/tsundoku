@@ -75,4 +75,23 @@ impl Fetcher {
             .await
             .with_context(|| format!("reading detail body from {url}"))
     }
+
+    /// Fetch a Nyaa HTML listing page. Same shape as `fetch_detail` but
+    /// kept distinct so call sites self-document and so future per-kind
+    /// behaviour (headers, retry policy) can diverge cleanly.
+    pub async fn fetch_listing(&self, url: &str) -> Result<String> {
+        let resp = self
+            .http
+            .get(url)
+            .header("accept", "text/html")
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
+        if !resp.status().is_success() {
+            return Err(anyhow!("HTTP {} from {url}", resp.status().as_u16()));
+        }
+        resp.text()
+            .await
+            .with_context(|| format!("reading listing body from {url}"))
+    }
 }

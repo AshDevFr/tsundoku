@@ -3,6 +3,7 @@
 pub mod detail;
 pub mod fetcher;
 pub mod links;
+pub mod listing;
 pub mod parser;
 pub mod source;
 

@@ -6,12 +6,13 @@ use std::time::Duration;
 use async_trait::async_trait;
 use td_http::HttpLimiter;
 use td_source::{
-    DiscoveredRelease, DiscoverySource, PollContext, PollOutcome, SourceError, SourceResult,
+    Backfillable, DiscoveredRelease, DiscoverySource, PollContext, PollOutcome, SourceError,
+    SourceResult,
 };
 
 use crate::SOURCE_KIND;
 use crate::fetcher::{Fetcher, FetcherResult};
-use crate::parser;
+use crate::{listing, parser};
 
 /// Per-instance config consumed by [`NyaaSource::from_config`]. Mirrors the
 /// `[[sources]]` block when `kind = "nyaa"`.
@@ -29,12 +30,6 @@ pub struct NyaaSourceConfig {
     /// Optional override for the detail base URL (e.g. when the feed is
     /// proxied). Defaults to `https://nyaa.si`.
     pub site_base_url: String,
-    /// Maximum number of feed pages to walk per poll. `1` preserves the
-    /// single-request steady-state behaviour; higher values let the source
-    /// catch up after downtime. ETag short-circuits the whole loop on page
-    /// 1; per-page items already in `PollContext.recently_seen` are dropped
-    /// before the detail-fetch pass.
-    pub max_pages: u32,
 }
 
 impl Default for NyaaSourceConfig {
@@ -45,7 +40,6 @@ impl Default for NyaaSourceConfig {
             timeout: Duration::from_secs(30),
             fetch_details: false,
             site_base_url: "https://nyaa.si".into(),
-            max_pages: 1,
         }
     }
 }
@@ -97,16 +91,18 @@ impl DiscoverySource for NyaaSource {
     }
 
     async fn poll(&self, ctx: &PollContext) -> SourceResult<PollOutcome> {
-        // Page 1 with the previous ETag. A 304 short-circuits the entire
-        // multi-page walk: if the first page hasn't changed, the later
-        // pages are stale by construction.
-        let first = self
+        // Nyaa's RSS view (`?page=rss`) does not honour `&p=N` — every
+        // page request returns the same most-recent 75 items. The poll is
+        // therefore single-fetch by construction. Historical catch-up
+        // belongs in [`Backfillable::backfill_page`], which walks the
+        // paginated HTML listing instead.
+        let fetched = self
             .fetcher
             .fetch_feed(&self.cfg.feed_url, ctx.etag.as_deref())
             .await
             .map_err(|e| self.unavailable(e))?;
 
-        let (body, new_etag) = match first {
+        let (body, new_etag) = match fetched {
             FetcherResult::NotModified { etag } => {
                 tracing::info!(
                     source = %self.cfg.name,
@@ -122,55 +118,12 @@ impl DiscoverySource for NyaaSource {
             FetcherResult::Body { body, etag } => (body, etag),
         };
 
-        let mut survivors = self.parse_and_filter(&body, &ctx.recently_seen)?;
+        let survivors = self.parse_and_filter(&body, &ctx.recently_seen)?;
         tracing::info!(
             source = %self.cfg.name,
-            page = 1,
             new = survivors.len(),
-            "parsed nyaa feed page"
+            "parsed nyaa feed"
         );
-
-        let max_pages = self.cfg.max_pages.max(1);
-        for page in 2..=max_pages {
-            let url = page_url(&self.cfg.feed_url, page);
-            // Subsequent pages: no ETag (the previous one was bound to page
-            // 1's URL). A failure on page N doesn't poison page 1's results
-            // — log and stop walking forward.
-            let fetched = match self.fetcher.fetch_feed(&url, None).await {
-                Ok(FetcherResult::Body { body, .. }) => body,
-                Ok(FetcherResult::NotModified { .. }) => continue,
-                Err(e) => {
-                    tracing::warn!(
-                        source = %self.cfg.name,
-                        page,
-                        url = %url,
-                        error = ?e,
-                        "failed to fetch nyaa page; stopping pagination walk"
-                    );
-                    break;
-                }
-            };
-            match self.parse_and_filter(&fetched, &ctx.recently_seen) {
-                Ok(mut page_survivors) => {
-                    tracing::info!(
-                        source = %self.cfg.name,
-                        page,
-                        new = page_survivors.len(),
-                        "parsed nyaa feed page"
-                    );
-                    survivors.append(&mut page_survivors);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        source = %self.cfg.name,
-                        page,
-                        error = ?e,
-                        "failed to parse nyaa page; stopping pagination walk"
-                    );
-                    break;
-                }
-            }
-        }
 
         Ok(PollOutcome {
             releases: survivors,
@@ -228,6 +181,65 @@ impl DiscoverySource for NyaaSource {
         }
         Ok(())
     }
+
+    fn as_backfillable(&self) -> Option<&dyn Backfillable> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl Backfillable for NyaaSource {
+    async fn backfill_page(&self, page: u32) -> SourceResult<Vec<DiscoveredRelease>> {
+        let url = listing_url(&self.cfg.feed_url, page);
+        let html = self
+            .fetcher
+            .fetch_listing(&url)
+            .await
+            .map_err(|e| self.unavailable(e))?;
+        let releases = listing::parse_listing(&html, &self.cfg.name, &self.cfg.site_base_url)
+            .map_err(|e| self.malformed(format!("parsing listing page {page}: {e}")))?;
+        tracing::info!(
+            source = %self.cfg.name,
+            page,
+            url = %url,
+            count = releases.len(),
+            "parsed nyaa listing page"
+        );
+        Ok(releases)
+    }
+}
+
+/// Derive the HTML listing URL for `page` from the configured RSS
+/// `feed_url`: strip `page=rss` (the RSS-mode switch) and append `&p=N`.
+/// Any pre-existing `p=` segment is replaced. Page 1 omits `&p=` because
+/// Nyaa renders it identically — keeps the URL stable for cache hits.
+pub(crate) fn listing_url(feed_url: &str, page: u32) -> String {
+    let (path_and_query, fragment) = match feed_url.split_once('#') {
+        Some((p, f)) => (p.to_string(), Some(f.to_string())),
+        None => (feed_url.to_string(), None),
+    };
+    let (prefix, query) = match path_and_query.split_once('?') {
+        Some((p, q)) => (p.to_string(), q.to_string()),
+        None => (path_and_query, String::new()),
+    };
+    let mut kept: Vec<String> = query
+        .split('&')
+        .filter(|seg| !seg.is_empty() && *seg != "page=rss" && !seg.starts_with("p="))
+        .map(str::to_string)
+        .collect();
+    if page > 1 {
+        kept.push(format!("p={page}"));
+    }
+    let mut out = prefix;
+    if !kept.is_empty() {
+        out.push('?');
+        out.push_str(&kept.join("&"));
+    }
+    if let Some(frag) = fragment {
+        out.push('#');
+        out.push_str(&frag);
+    }
+    out
 }
 
 impl NyaaSource {
@@ -245,75 +257,45 @@ impl NyaaSource {
     }
 }
 
-/// Build the URL for page `page` of the feed. Page 1 is the base URL
-/// unchanged; for higher pages, any existing `p=` query param is stripped
-/// and replaced with the requested page number. Nyaa accepts `p=N` on the
-/// same URL that carries `page=rss` (e.g.
-/// `https://nyaa.si/?page=rss&c=3_1&p=2`).
-fn page_url(base: &str, page: u32) -> String {
-    if page <= 1 {
-        return base.to_string();
-    }
-    let (path, fragment) = match base.split_once('#') {
-        Some((p, f)) => (p.to_string(), Some(f.to_string())),
-        None => (base.to_string(), None),
-    };
-    let (prefix, query) = match path.split_once('?') {
-        Some((p, q)) => (p.to_string(), q.to_string()),
-        None => (path, String::new()),
-    };
-    let mut kept: Vec<&str> = query
-        .split('&')
-        .filter(|seg| !seg.is_empty() && !seg.starts_with("p="))
-        .collect();
-    let page_seg = format!("p={page}");
-    kept.push(&page_seg);
-    let mut out = prefix;
-    out.push('?');
-    out.push_str(&kept.join("&"));
-    if let Some(frag) = fragment {
-        out.push('#');
-        out.push_str(&frag);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::listing_url;
 
     #[test]
-    fn page_url_appends_param_when_absent() {
+    fn listing_url_strips_page_rss_and_omits_p_for_page_one() {
         assert_eq!(
-            page_url("https://nyaa.si/?page=rss&c=3_1", 2),
-            "https://nyaa.si/?page=rss&c=3_1&p=2"
+            listing_url("https://nyaa.si/?page=rss&c=3_1&f=2", 1),
+            "https://nyaa.si/?c=3_1&f=2"
         );
     }
 
     #[test]
-    fn page_url_replaces_existing_param() {
+    fn listing_url_appends_p_for_higher_pages() {
         assert_eq!(
-            page_url("https://nyaa.si/?page=rss&p=5&c=3_1", 3),
-            "https://nyaa.si/?page=rss&c=3_1&p=3"
+            listing_url("https://nyaa.si/?page=rss&c=3_1&f=2", 2),
+            "https://nyaa.si/?c=3_1&f=2&p=2"
         );
     }
 
     #[test]
-    fn page_url_keeps_base_for_page_one() {
-        let base = "https://nyaa.si/?page=rss&c=3_1";
-        assert_eq!(page_url(base, 1), base);
-    }
-
-    #[test]
-    fn page_url_handles_no_existing_query_string() {
-        assert_eq!(page_url("https://nyaa.si/", 4), "https://nyaa.si/?p=4");
-    }
-
-    #[test]
-    fn page_url_preserves_fragment() {
+    fn listing_url_replaces_existing_p() {
         assert_eq!(
-            page_url("https://nyaa.si/?page=rss#top", 2),
-            "https://nyaa.si/?page=rss&p=2#top"
+            listing_url("https://nyaa.si/?page=rss&p=7&c=3_1", 3),
+            "https://nyaa.si/?c=3_1&p=3"
+        );
+    }
+
+    #[test]
+    fn listing_url_handles_no_query_string() {
+        assert_eq!(listing_url("https://nyaa.si/", 1), "https://nyaa.si/");
+        assert_eq!(listing_url("https://nyaa.si/", 4), "https://nyaa.si/?p=4");
+    }
+
+    #[test]
+    fn listing_url_preserves_fragment() {
+        assert_eq!(
+            listing_url("https://nyaa.si/?page=rss#top", 2),
+            "https://nyaa.si/?p=2#top"
         );
     }
 }

@@ -277,7 +277,7 @@ impl ItemBuilder {
 
 /// Extract `2111533` from `https://nyaa.si/view/2111533`. Tolerates the
 /// trailing-slash and query-string variants.
-fn extract_post_id(url: &str) -> Result<String> {
+pub(crate) fn extract_post_id(url: &str) -> Result<String> {
     let trimmed = url.trim().trim_end_matches('/');
     let Some(idx) = trimmed.rfind('/') else {
         return Err(anyhow!("no '/' in {url}"));
@@ -313,7 +313,7 @@ fn urlencode(s: &str) -> String {
 
 /// Parse Nyaa's RSS "11.6 MiB" / "1.6 GiB" size strings into bytes. Returns
 /// `None` on unknown units rather than erroring — the field is informational.
-fn parse_size(raw: &str) -> Option<u64> {
+pub(crate) fn parse_size(raw: &str) -> Option<u64> {
     let raw = raw.trim();
     if raw.is_empty() {
         return None;

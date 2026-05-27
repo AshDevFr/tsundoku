@@ -2496,7 +2496,7 @@
           "maxPages": {
             "type": "integer",
             "format": "int32",
-            "description": "Maximum number of feed pages walked per poll. `1` for sources that\ndon't paginate or that haven't opted in.",
+            "description": "Maximum number of feed pages walked per poll. Always `1` today:\nno v1 source kind paginates inside the steady-state poll. Kept on\nthe DTO as a placeholder for future paginated source kinds; the\n`backfill` CLI is the historical-catch-up path in the meantime.",
             "minimum": 0
           },
           "siteBaseUrl": {
