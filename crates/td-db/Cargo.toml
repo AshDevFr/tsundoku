@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Storage layer for tsundoku: SQLite connection helper, sea-orm entities, repositories"
+repository.workspace = true
 
 [dependencies]
 td-config = { path = "../td-config" }

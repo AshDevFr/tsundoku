@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Shared outbound-HTTP plumbing for tsundoku: per-host concurrency limiter and minimum-gap throttle"
+repository.workspace = true
 
 [dependencies]
 reqwest.workspace = true

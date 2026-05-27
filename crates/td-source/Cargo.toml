@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "DiscoverySource trait, canonical release DTOs, and in-process source registry for tsundoku"
+repository.workspace = true
 
 [dependencies]
 async-trait.workspace = true

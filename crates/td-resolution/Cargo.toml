@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Release-to-series resolution pipeline for tsundoku"
+repository.workspace = true
 
 [dependencies]
 td-config = { path = "../td-config" }

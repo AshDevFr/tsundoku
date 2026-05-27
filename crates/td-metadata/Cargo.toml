@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Metadata-provider trait, canonical response types, and in-process registry for tsundoku"
+repository.workspace = true
 
 [dependencies]
 async-trait.workspace = true

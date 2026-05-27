@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Nyaa.si DiscoverySource implementation for tsundoku"
+repository.workspace = true
 
 [dependencies]
 td-source = { path = "../td-source" }
