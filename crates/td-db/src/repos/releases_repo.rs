@@ -1,13 +1,14 @@
 //! Release read/write helpers.
 
 use anyhow::Result;
-use sea_orm::sea_query::OnConflict;
+use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    TransactionTrait,
 };
 use td_source::{DiscoveredRelease, detect_formats};
 
-use crate::entities::{release_formats, releases};
+use crate::entities::{release_formats, releases, review_candidates};
 
 pub use releases::Model;
 
@@ -188,6 +189,49 @@ pub async fn set_resolution(
     Ok(())
 }
 
+/// Reject every release in `ids` in one shot: pin status to `rejected`,
+/// clear the linked series, bump the attempt counter, and drop their review
+/// candidates. Mirrors the single-release reject path (see
+/// `td_resolution::persist::link_release`) but as a set-based update so the
+/// bulk action doesn't loop per row. Returns the number of releases updated.
+///
+/// `resolved_at` is intentionally left untouched: it's only stamped on a
+/// transition to `resolved`, and a rejected release was never resolved.
+pub async fn bulk_reject(db: &DatabaseConnection, ids: &[String], now: i64) -> Result<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let txn = db.begin().await?;
+    let res = releases::Entity::update_many()
+        .col_expr(
+            releases::Column::ResolutionStatus,
+            Expr::value("rejected".to_string()),
+        )
+        .col_expr(
+            releases::Column::ResolutionPath,
+            Expr::value("rejected".to_string()),
+        )
+        .col_expr(
+            releases::Column::ResolutionConfidence,
+            Expr::value(Option::<f64>::None),
+        )
+        .col_expr(releases::Column::SeriesId, Expr::value(Option::<i32>::None))
+        .col_expr(releases::Column::LastResolveAttemptAt, Expr::value(now))
+        .col_expr(
+            releases::Column::ResolutionAttempts,
+            Expr::col(releases::Column::ResolutionAttempts).add(1),
+        )
+        .filter(releases::Column::Id.is_in(ids.iter().cloned()))
+        .exec(&txn)
+        .await?;
+    review_candidates::Entity::delete_many()
+        .filter(review_candidates::Column::ReleaseId.is_in(ids.iter().cloned()))
+        .exec(&txn)
+        .await?;
+    txn.commit().await?;
+    Ok(res.rows_affected)
+}
+
 /// Idempotently attach a format tag to a release.
 pub async fn add_format(db: &DatabaseConnection, release_id: &str, format: &str) -> Result<()> {
     let row = release_formats::ActiveModel {
@@ -290,5 +334,74 @@ mod tests {
             vec!["cbz"],
             "format must attach to the surviving row"
         );
+    }
+
+    #[tokio::test]
+    async fn bulk_reject_sets_status_increments_attempts_and_clears_candidates() {
+        use crate::entities::{review_candidates, series};
+        use sea_orm::{ActiveModelTrait, Set};
+
+        let db = fresh_db().await;
+        let a = persist_discovered(&db, &sample("feed"), 1_700_000_100)
+            .await
+            .unwrap();
+        let mut second = sample("feed");
+        second.external_id = "999".into();
+        second.link = "https://nyaa.si/view/999".into();
+        let b = persist_discovered(&db, &second, 1_700_000_200)
+            .await
+            .unwrap();
+
+        // A candidate row on `a` must be cleared by the reject.
+        let series_id = series::ActiveModel {
+            canonical_title: Set("Cand".into()),
+            metadata_source: Set("test".into()),
+            metadata_fetched_at: Set(1),
+            first_seen_at: Set(1),
+            last_release_at: Set(1),
+            owned: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap()
+        .id;
+        review_candidates::ActiveModel {
+            release_id: Set(a.clone()),
+            series_id: Set(series_id),
+            score: Set(0.5),
+            reason: Set(None),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+
+        let rejected = bulk_reject(&db, std::slice::from_ref(&a), 1_700_000_500)
+            .await
+            .unwrap();
+        assert_eq!(rejected, 1, "only the targeted release is rejected");
+
+        let row_a = find_by_id(&db, &a).await.unwrap().unwrap();
+        assert_eq!(row_a.resolution_status, "rejected");
+        assert_eq!(row_a.resolution_path.as_deref(), Some("rejected"));
+        assert_eq!(row_a.series_id, None);
+        assert_eq!(row_a.last_resolve_attempt_at, Some(1_700_000_500));
+        assert_eq!(row_a.resolution_attempts, 1, "attempts incremented");
+        assert!(
+            review_candidates::Entity::find()
+                .filter(review_candidates::Column::ReleaseId.eq(a.as_str()))
+                .all(&db)
+                .await
+                .unwrap()
+                .is_empty(),
+            "candidates cleared for rejected release"
+        );
+
+        // The untouched release keeps its original status.
+        let row_b = find_by_id(&db, &b).await.unwrap().unwrap();
+        assert_eq!(row_b.resolution_status, "unresolved");
+
+        // Empty id list is a no-op.
+        assert_eq!(bulk_reject(&db, &[], 1).await.unwrap(), 0);
     }
 }

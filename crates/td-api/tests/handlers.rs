@@ -1307,6 +1307,122 @@ async fn unresolved_endpoint_status_filter_clamps_to_queue_statuses() {
     assert_eq!(queue_total(&app, "status=bogus").await, 3);
 }
 
+async fn post_json(app: &axum::Router, uri: &str, body: serde_json::Value) -> Value {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_success(),
+        "POST {uri} failed: {}",
+        resp.status()
+    );
+    body_json(resp).await
+}
+
+#[tokio::test]
+async fn bulk_reject_targets_explicit_ids_only() {
+    let db = fresh_db().await;
+    let a = seed_queue_release(&db, "1", "feed", "A", "a.cbz", "unresolved").await;
+    let b = seed_queue_release(&db, "2", "feed", "B", "b.cbz", "review_pending").await;
+    seed_queue_release(&db, "3", "feed", "C", "c.cbz", "ambiguous").await;
+    let app = queue_app(db);
+
+    let body = post_json(
+        &app,
+        "/api/v1/releases/bulk/reject",
+        serde_json::json!({ "ids": [a, b] }),
+    )
+    .await;
+    assert_eq!(body["rejected"], 2);
+    // Only the third release remains in the queue.
+    assert_eq!(queue_total(&app, "").await, 1);
+}
+
+#[tokio::test]
+async fn bulk_reject_by_filter_rejects_whole_matching_set() {
+    let db = fresh_db().await;
+    seed_queue_release(&db, "1", "feed", "A", "a.cbz", "unresolved").await;
+    seed_queue_release(&db, "2", "feed", "B", "b.cbz", "review_pending").await;
+    seed_queue_release(&db, "3", "feed", "C", "c.epub", "ambiguous").await;
+    let app = queue_app(db);
+
+    // No ids: the filter selects the target set (both cbz rows).
+    let body = post_json(
+        &app,
+        "/api/v1/releases/bulk/reject",
+        serde_json::json!({ "format": "cbz" }),
+    )
+    .await;
+    assert_eq!(body["rejected"], 2);
+    // The epub row is the only one left.
+    assert_eq!(queue_total(&app, "").await, 1);
+    assert_eq!(queue_total(&app, "format=epub").await, 1);
+}
+
+#[tokio::test]
+async fn bulk_retry_reports_matched_and_triggers() {
+    let db = fresh_db().await;
+    seed_queue_release(&db, "1", "feed", "A", "a.cbz", "unresolved").await;
+    seed_queue_release(&db, "2", "feed", "B", "b.cbz", "review_pending").await;
+    let app = queue_app(db);
+
+    // Empty body = whole queue.
+    let body = post_json(&app, "/api/v1/releases/bulk/retry", serde_json::json!({})).await;
+    assert_eq!(body["triggered"], true);
+    assert_eq!(body["skipped"], false);
+    assert_eq!(body["matched"], 2);
+
+    // A match set of zero is neither triggered nor skipped.
+    let body = post_json(
+        &app,
+        "/api/v1/releases/bulk/retry",
+        serde_json::json!({ "ids": ["does-not-exist"] }),
+    )
+    .await;
+    assert_eq!(body["triggered"], false);
+    assert_eq!(body["skipped"], false);
+    assert_eq!(body["matched"], 0);
+}
+
+#[tokio::test]
+async fn bulk_retry_skips_when_retry_lock_held() {
+    let db = fresh_db().await;
+    seed_queue_release(&db, "1", "feed", "A", "a.cbz", "unresolved").await;
+    let locks = std::sync::Arc::new(td_scheduler::JobLocks::default());
+    // Hold the shared retry-all lock so the bulk retry can't acquire it.
+    let held = locks.retry_all_releases_lock();
+    let _guard = held.try_lock().expect("test should hold the lock first");
+
+    let app = common::build_app_full(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+        Vec::new(),
+        td_config::ProvidersConfig::default(),
+        locks,
+    );
+
+    let body = post_json(&app, "/api/v1/releases/bulk/retry", serde_json::json!({})).await;
+    assert_eq!(body["triggered"], false);
+    assert_eq!(body["skipped"], true);
+    assert_eq!(body["matched"], 1);
+}
+
 #[tokio::test]
 async fn series_list_filters_by_genre_and_tag_and_combines() {
     let db = fresh_db().await;

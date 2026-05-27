@@ -277,6 +277,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/releases/bulk/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk-reject a set of review-queue releases. The body's `ids` (or, when
+         *     empty, the filter fields) select the target set; every matched release is
+         *     pinned to `rejected` and its candidates dropped in one set-based update.
+         */
+        post: operations["bulk_reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/releases/bulk/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk-retry a set of review-queue releases. The body's `ids` (or, when
+         *     empty, the filter fields) select the target set (capped at the per-batch
+         *     limit). Spawns a background batch under the shared retry-all lock and
+         *     returns immediately; a concurrent retry-all / bulk-retry reports
+         *     `skipped: true`. An empty match set is reported as `triggered: false`
+         *     with `matched: 0` (no batch spawned, nothing skipped).
+         */
+        post: operations["bulk_retry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/releases/retry-all": {
         parameters: {
             query?: never;
@@ -593,6 +638,45 @@ export interface components {
         ApiErrorBody: {
             error: string;
             message: string;
+        };
+        BulkRejectResponse: {
+            /**
+             * Format: int64
+             * @description Number of releases moved to `rejected`.
+             */
+            rejected: number;
+        };
+        BulkRetryResponse: {
+            /**
+             * Format: int64
+             * @description Number of releases the filters/ids matched (the batch size, capped at
+             *     the per-batch limit).
+             */
+            matched: number;
+            /** @description `true` when a prior retry batch is still in flight; the request is a no-op. */
+            skipped: boolean;
+            /** @description `true` when a batch was spawned by this request. */
+            triggered: boolean;
+        };
+        /**
+         * @description Shared body for the bulk review actions. The target set is either an
+         *     explicit `ids` list (when non-empty) or every queue release matching the
+         *     filter fields. An all-empty body targets the entire queue. The filters
+         *     mirror [`ReviewQueueQuery`] so "select all matching" acts on exactly what
+         *     the list endpoint shows; explicit `ids` are still intersected with the
+         *     queue statuses so a decided release can't be re-acted on.
+         */
+        BulkReviewRequest: {
+            /** @default null */
+            format: string | null;
+            /** @default [] */
+            ids: string[];
+            /** @default null */
+            q: string | null;
+            /** @default null */
+            sourceName: string | null;
+            /** @default null */
+            status: string | null;
         };
         /**
          * @description Body for creating a manual series. Only `canonicalTitle` is required;
@@ -1603,6 +1687,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReleasePage"];
+                };
+            };
+        };
+    };
+    bulk_reject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkReviewRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkRejectResponse"];
+                };
+            };
+        };
+    };
+    bulk_retry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkReviewRequest"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkRetryResponse"];
                 };
             };
         };

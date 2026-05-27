@@ -168,6 +168,25 @@ impl Resolver {
             .await
     }
 
+    /// Re-run the resolver against an explicit set of release ids. Mirrors
+    /// [`resolve_review_queue`] but targets the exact selection a bulk-retry
+    /// request resolved from its filters, rather than a status sweep. An id
+    /// that no longer exists (e.g. deleted between selection and execution)
+    /// is counted as an error and does not abort the batch.
+    pub async fn resolve_ids(&self, ids: &[String]) -> Result<RetrySummary> {
+        let mut summary = RetrySummary::default();
+        for id in ids {
+            match self.resolve_one(id).await {
+                Ok(outcome) => summary.observe(outcome.status),
+                Err(e) => {
+                    tracing::warn!(error = ?e, release_id = %id, "resolver failed");
+                    summary.errors += 1;
+                }
+            }
+        }
+        Ok(summary)
+    }
+
     async fn resolve_by_statuses(
         &self,
         statuses: &[&str],

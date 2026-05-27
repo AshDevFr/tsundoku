@@ -143,6 +143,41 @@ pub struct RetryAllResponse {
 /// default and is plenty for personal-scale review queues.
 const RETRY_ALL_BATCH_LIMIT: u64 = 1000;
 
+/// Shared body for the bulk review actions. The target set is either an
+/// explicit `ids` list (when non-empty) or every queue release matching the
+/// filter fields. An all-empty body targets the entire queue. The filters
+/// mirror [`ReviewQueueQuery`] so "select all matching" acts on exactly what
+/// the list endpoint shows; explicit `ids` are still intersected with the
+/// queue statuses so a decided release can't be re-acted on.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BulkReviewRequest {
+    pub ids: Vec<String>,
+    pub q: Option<String>,
+    pub source_name: Option<String>,
+    pub format: Option<String>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkRejectResponse {
+    /// Number of releases moved to `rejected`.
+    pub rejected: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkRetryResponse {
+    /// `true` when a batch was spawned by this request.
+    pub triggered: bool,
+    /// `true` when a prior retry batch is still in flight; the request is a no-op.
+    pub skipped: bool,
+    /// Number of releases the filters/ids matched (the batch size, capped at
+    /// the per-batch limit).
+    pub matched: u64,
+}
+
 #[derive(Debug, Deserialize, IntoParams)]
 #[serde(default, rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
@@ -272,6 +307,40 @@ fn review_queue_select(
         select = select.filter(releases::Column::Id.in_subquery(sub));
     }
     select
+}
+
+/// Resolve a [`BulkReviewRequest`] into the concrete release ids it targets,
+/// always scoped to the queue statuses via [`review_queue_select`]. When
+/// `ids` are given they further restrict the set (so a stale/decided id is
+/// dropped); otherwise the filters select the whole matching set. `limit`
+/// caps the materialized set for the (expensive, per-item) retry path; reject
+/// passes `None` since it's a single set-based update.
+async fn review_queue_target_ids(
+    db: &sea_orm::DatabaseConnection,
+    req: &BulkReviewRequest,
+    limit: Option<u64>,
+) -> ApiResult<Vec<String>> {
+    let mut select = review_queue_select(
+        req.q.as_deref(),
+        req.source_name.as_deref(),
+        req.format.as_deref(),
+        req.status.as_deref(),
+    );
+    if !req.ids.is_empty() {
+        select = select.filter(releases::Column::Id.is_in(req.ids.iter().cloned()));
+    }
+    select = select.order_by_desc(releases::Column::ObservedAt);
+    if let Some(limit) = limit {
+        select = select.limit(limit);
+    }
+    let ids = select
+        .select_only()
+        .column(releases::Column::Id)
+        .into_tuple::<String>()
+        .all(db)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(ids)
 }
 
 /// List releases ordered by `observed_at` descending. Filters compose.
@@ -704,6 +773,99 @@ pub async fn retry_all(State(state): State<AppState>) -> ApiResult<Json<RetryAll
     Ok(Json(RetryAllResponse {
         triggered: true,
         skipped: false,
+    }))
+}
+
+/// Bulk-reject a set of review-queue releases. The body's `ids` (or, when
+/// empty, the filter fields) select the target set; every matched release is
+/// pinned to `rejected` and its candidates dropped in one set-based update.
+#[utoipa::path(
+    post,
+    path = "/api/v1/releases/bulk/reject",
+    tag = "releases",
+    request_body = BulkReviewRequest,
+    responses((status = 200, body = BulkRejectResponse)),
+    security(("admin" = []))
+)]
+pub async fn bulk_reject(
+    State(state): State<AppState>,
+    Json(req): Json<BulkReviewRequest>,
+) -> ApiResult<Json<BulkRejectResponse>> {
+    let ids = review_queue_target_ids(&state.db, &req, None).await?;
+    let now = Utc::now().timestamp();
+    let rejected = releases_repo::bulk_reject(&state.db, &ids, now)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(BulkRejectResponse { rejected }))
+}
+
+/// Bulk-retry a set of review-queue releases. The body's `ids` (or, when
+/// empty, the filter fields) select the target set (capped at the per-batch
+/// limit). Spawns a background batch under the shared retry-all lock and
+/// returns immediately; a concurrent retry-all / bulk-retry reports
+/// `skipped: true`. An empty match set is reported as `triggered: false`
+/// with `matched: 0` (no batch spawned, nothing skipped).
+#[utoipa::path(
+    post,
+    path = "/api/v1/releases/bulk/retry",
+    tag = "releases",
+    request_body = BulkReviewRequest,
+    responses((status = 202, body = BulkRetryResponse)),
+    security(("admin" = []))
+)]
+pub async fn bulk_retry(
+    State(state): State<AppState>,
+    Json(req): Json<BulkReviewRequest>,
+) -> ApiResult<Json<BulkRetryResponse>> {
+    let ids = review_queue_target_ids(&state.db, &req, Some(RETRY_ALL_BATCH_LIMIT)).await?;
+    let matched = ids.len() as u64;
+    if ids.is_empty() {
+        return Ok(Json(BulkRetryResponse {
+            triggered: false,
+            skipped: false,
+            matched: 0,
+        }));
+    }
+
+    let lock = state.locks.retry_all_releases_lock();
+    let Ok(guard) = lock.try_lock_owned() else {
+        return Ok(Json(BulkRetryResponse {
+            triggered: false,
+            skipped: true,
+            matched,
+        }));
+    };
+
+    let db = state.db.clone();
+    let metadata = state.metadata.clone();
+    let ingestion = state.ingestion.clone();
+    let query_builder = state.query_builder.clone();
+    let mu_redirector = state.mangaupdates_redirector.clone();
+
+    tokio::spawn(async move {
+        let _g = guard;
+        let mut resolver = Resolver::new(db, metadata, ingestion).with_query_builder(query_builder);
+        if let Some(r) = mu_redirector {
+            resolver = resolver.with_mangaupdates_redirector(r);
+        }
+        match resolver.resolve_ids(&ids).await {
+            Ok(summary) => tracing::info!(
+                resolved = summary.resolved,
+                ambiguous = summary.ambiguous,
+                review_pending = summary.review_pending,
+                unresolved = summary.unresolved,
+                errors = summary.errors,
+                total = summary.total(),
+                "bulk-retry batch completed"
+            ),
+            Err(e) => tracing::warn!(error = ?e, "bulk-retry batch failed"),
+        }
+    });
+
+    Ok(Json(BulkRetryResponse {
+        triggered: true,
+        skipped: false,
+        matched,
     }))
 }
 

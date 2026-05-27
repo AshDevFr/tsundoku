@@ -796,6 +796,45 @@ async fn resolve_unresolved_picks_up_only_unresolved_and_ambiguous() {
     assert_eq!(u2.resolution_status, "resolved");
 }
 
+#[tokio::test]
+async fn resolve_ids_targets_only_the_given_releases() {
+    let db = fresh_db().await;
+    let provider = Arc::new(FakeProvider::new("mb"));
+    provider.register_foreign("mangaupdates", "ylx5wzn", sample_metadata());
+    let registry = build_registry(provider.clone());
+
+    let links = serde_json::json!({
+        "mangaupdates": "https://www.mangaupdates.com/series/ylx5wzn/x",
+        "anilist": null,
+        "mal": null,
+        "mangadex": null,
+    });
+    insert_release(&db, "u1", "u1", Some(&links.to_string()), &["cbz"]).await;
+    insert_release(&db, "u2", "u2", Some(&links.to_string()), &["cbz"]).await;
+
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    // Only u1 is in the target set; u2 must be left untouched.
+    let summary = resolver.resolve_ids(&["u1".to_string()]).await.unwrap();
+    assert_eq!(summary.resolved, 1);
+    assert_eq!(summary.errors, 0);
+
+    let u2 = releases::Entity::find_by_id("u2".to_string())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(u2.resolution_attempts, 0, "u2 not in the target set");
+    assert_eq!(u2.resolution_status, "unresolved");
+
+    // A missing id is counted as an error, not a panic.
+    let summary = resolver
+        .resolve_ids(&["does-not-exist".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(summary.errors, 1);
+    assert_eq!(summary.total(), 1);
+}
+
 // ---------------------------------------------------------------------------
 // Legacy MangaUpdates URL → modern slug normalization
 // ---------------------------------------------------------------------------

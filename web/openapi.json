@@ -563,6 +563,78 @@
         }
       }
     },
+    "/api/v1/releases/bulk/reject": {
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Bulk-reject a set of review-queue releases. The body's `ids` (or, when\nempty, the filter fields) select the target set; every matched release is\npinned to `rejected` and its candidates dropped in one set-based update.",
+        "operationId": "bulk_reject",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkRejectResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/releases/bulk/retry": {
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Bulk-retry a set of review-queue releases. The body's `ids` (or, when\nempty, the filter fields) select the target set (capped at the per-batch\nlimit). Spawns a background batch under the shared retry-all lock and\nreturns immediately; a concurrent retry-all / bulk-retry reports\n`skipped: true`. An empty match set is reported as `triggered: false`\nwith `matched: 0` (no batch spawned, nothing skipped).",
+        "operationId": "bulk_retry",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkRetryResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/releases/retry-all": {
       "post": {
         "tags": [
@@ -1276,6 +1348,85 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "BulkRejectResponse": {
+        "type": "object",
+        "required": [
+          "rejected"
+        ],
+        "properties": {
+          "rejected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of releases moved to `rejected`.",
+            "minimum": 0
+          }
+        }
+      },
+      "BulkRetryResponse": {
+        "type": "object",
+        "required": [
+          "triggered",
+          "skipped",
+          "matched"
+        ],
+        "properties": {
+          "matched": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of releases the filters/ids matched (the batch size, capped at\nthe per-batch limit).",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "boolean",
+            "description": "`true` when a prior retry batch is still in flight; the request is a no-op."
+          },
+          "triggered": {
+            "type": "boolean",
+            "description": "`true` when a batch was spawned by this request."
+          }
+        }
+      },
+      "BulkReviewRequest": {
+        "type": "object",
+        "description": "Shared body for the bulk review actions. The target set is either an\nexplicit `ids` list (when non-empty) or every queue release matching the\nfilter fields. An all-empty body targets the entire queue. The filters\nmirror [`ReviewQueueQuery`] so \"select all matching\" acts on exactly what\nthe list endpoint shows; explicit `ids` are still intersected with the\nqueue statuses so a decided release can't be re-acted on.",
+        "properties": {
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "q": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "sourceName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
           }
         }
       },
