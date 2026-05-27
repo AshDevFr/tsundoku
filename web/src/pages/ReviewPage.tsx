@@ -277,17 +277,17 @@ function CleanupTrail({
   return (
     <Stack gap={4} data-testid="cleanup-trail">
       {queries.length > 0 && (
-        <Group gap={6} wrap="wrap">
+        <Group gap={6} wrap="wrap" align="center">
           <Text size="xs" c="dimmed" tt="uppercase" fw={500}>
-            searched
+            {queries.length > 1 ? "searched (any)" : "searched"}
           </Text>
-          <Text size="xs" ff="monospace">
-            “{queries[0]}”
-          </Text>
-          {queries.slice(1).map((q) => (
-            <Badge key={q} size="xs" variant="light" color="gray">
-              {q}
-            </Badge>
+          {/* Every query is searched independently; the resolver keeps
+              the best match across all of them. Show them all so the
+              operator can see exactly what was tried. */}
+          {queries.map((q) => (
+            <Text key={q} size="xs" ff="monospace">
+              “{q}”
+            </Text>
           ))}
         </Group>
       )}

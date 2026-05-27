@@ -171,4 +171,17 @@ describe("ReviewPage", () => {
     expect(trail.textContent).toContain("strip_brackets");
     expect(trail.textContent).toContain("strip_parens");
   });
+
+  it("shows every search query when the cleaner produced more than one", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Unknown Title v05/, undefined, { timeout: 3000 });
+    const card = screen.getByTestId("review-card-nyaa:9002");
+    const trail = card.querySelector('[data-testid="cleanup-trail"]');
+    if (!trail) throw new Error("cleanup-trail not rendered");
+    // Both the full title and the discounted subtitle head are shown.
+    expect(trail.textContent).toContain("Unknown Title - A Story");
+    expect(trail.textContent).toContain("Unknown Title");
+    expect(trail.textContent).toContain("split_subtitle");
+  });
 });

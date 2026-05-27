@@ -157,8 +157,12 @@ const INITIAL_QUEUE: UnresolvedRelease[] = [
     resolutionAttempts: 1,
     lastResolveAttemptAt: NOW - 6_000,
     candidates: [],
-    searchQueries: ["Unknown Title"],
-    cleanupRulesApplied: ["strip_brackets", "strip_vol_compact"],
+    searchQueries: ["Unknown Title - A Story", "Unknown Title"],
+    cleanupRulesApplied: [
+      "strip_brackets",
+      "strip_vol_compact",
+      "split_subtitle",
+    ],
     topCandidate: null,
   },
 ];

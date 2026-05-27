@@ -425,10 +425,14 @@ impl Resolver {
                 }
             };
             for hit in hits {
+                // Score against the best-matching query, scaling each by
+                // its weight so a lossy subtitle-head query (weight < 1)
+                // can't auto-resolve on a mediocre match.
                 let score = cleaned
                     .queries
                     .iter()
-                    .map(|q| dice(q, &hit.title))
+                    .zip(&cleaned.query_weights)
+                    .map(|(q, w)| dice(q, &hit.title) * w)
                     .fold(0f32, f32::max);
                 by_id
                     .entry(hit.external_id.clone())
