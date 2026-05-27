@@ -870,7 +870,7 @@ async fn unresolved_endpoint_surfaces_persisted_search_queries_and_rules() {
         .await
         .unwrap();
     // Simulate a resolve cycle that left the cleaned queries on the row.
-    let release_id = format!("{}:{}:{}", r.source_kind, r.source_name, r.external_id);
+    let release_id = releases_repo::id_for(&r.source_kind, &r.external_id);
     assert!(
         releases::Entity::find_by_id(release_id.clone())
             .one(&db)

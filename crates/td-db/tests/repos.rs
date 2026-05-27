@@ -485,7 +485,7 @@ async fn persist_discovered_upserts_release_and_attaches_formats() {
     let id = releases_repo::persist_discovered(&db, &release, 1_700_000_100)
         .await
         .unwrap();
-    assert_eq!(id, "nyaa:trusted:2111533");
+    assert_eq!(id, "nyaa:2111533");
 
     let got = releases_repo::find_by_id(&db, &id).await.unwrap().unwrap();
     assert_eq!(got.title, "Some Series v01");

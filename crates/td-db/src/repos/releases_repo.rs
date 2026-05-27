@@ -11,12 +11,15 @@ use crate::entities::{release_formats, releases};
 
 pub use releases::Model;
 
-/// Compute the stable internal id for a release. The PRD lists
-/// `kind:name:external_id` as one acceptable shape; we use that so the id is
-/// human-readable in logs and round-trips with the source-side observation
-/// without a UUID lookup.
-pub fn id_for(source_kind: &str, source_name: &str, external_id: &str) -> String {
-    format!("{source_kind}:{source_name}:{external_id}")
+/// Compute the stable internal id for a release. Mirrors the
+/// `UNIQUE(source_kind, external_id)` constraint on the `releases` table: a
+/// single nyaa post surfaced by two different uploader feeds is one row, not
+/// two, so `source_name` must not appear in the id. Including it would
+/// produce a fresh id on the second poll while the upsert keeps the
+/// original row's primary key, leaving the format-attach step's FK
+/// reference pointing at a non-existent id.
+pub fn id_for(source_kind: &str, external_id: &str) -> String {
+    format!("{source_kind}:{external_id}")
 }
 
 /// Persist one [`DiscoveredRelease`] into the storage layer: upsert the
@@ -34,11 +37,7 @@ pub async fn persist_discovered(
     release: &DiscoveredRelease,
     observed_at: i64,
 ) -> Result<String> {
-    let id = id_for(
-        &release.source_kind,
-        &release.source_name,
-        &release.external_id,
-    );
+    let id = id_for(&release.source_kind, &release.external_id);
     let active = to_active_model(release, &id, observed_at)?;
 
     // Both upsert and add_format are idempotent on their unique key, so a
@@ -196,3 +195,78 @@ pub async fn list_formats(db: &DatabaseConnection, release_id: &str) -> Result<V
 }
 
 pub use releases::{ActiveModel, Column, Entity};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::Database;
+    use td_source::{DiscoveredRelease, ExternalLinks};
+
+    async fn fresh_db() -> DatabaseConnection {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        db
+    }
+
+    fn sample(source_name: &str) -> DiscoveredRelease {
+        DiscoveredRelease {
+            source_kind: "nyaa".into(),
+            source_name: source_name.into(),
+            external_id: "2095990".into(),
+            title: "Some Manga v01 (Digital)".into(),
+            link: "https://nyaa.si/view/2095990".into(),
+            magnet: None,
+            torrent_url: None,
+            ddl_url: None,
+            info_hash: None,
+            size_bytes: None,
+            files: vec!["Some Manga v01.cbz".into()],
+            description_html: None,
+            external_links: ExternalLinks::default(),
+            posted_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+        }
+    }
+
+    /// Regression: two uploader feeds (different `source_name`) can surface
+    /// the same nyaa post. The unique constraint `UNIQUE(source_kind,
+    /// external_id)` means it's one row in `releases`; the synthetic id
+    /// must therefore be derivable from `(source_kind, external_id)` alone,
+    /// or the format-attach step's FK reference goes stale on the second
+    /// poll.
+    #[tokio::test]
+    async fn duplicate_post_under_two_source_names_is_idempotent() {
+        let db = fresh_db().await;
+        let first = sample("nyaa-uploaderA");
+        let second = sample("nyaa-uploaderB");
+
+        let id_first = persist_discovered(&db, &first, 1_700_000_100)
+            .await
+            .unwrap();
+        let id_second = persist_discovered(&db, &second, 1_700_000_200)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            id_first, id_second,
+            "the same (source_kind, external_id) must produce the same release id regardless of source_name"
+        );
+
+        let row_count = releases::Entity::find()
+            .filter(releases::Column::SourceKind.eq("nyaa"))
+            .filter(releases::Column::ExternalId.eq("2095990"))
+            .all(&db)
+            .await
+            .unwrap()
+            .len();
+        assert_eq!(row_count, 1, "duplicate poll must not create a second row");
+
+        let formats = list_formats(&db, &id_second).await.unwrap();
+        assert_eq!(
+            formats,
+            vec!["cbz"],
+            "format must attach to the surviving row"
+        );
+    }
+}
