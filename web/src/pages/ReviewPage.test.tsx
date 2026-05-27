@@ -210,6 +210,42 @@ describe("ReviewPage", () => {
     );
   });
 
+  it("links a release to an existing catalog series via the Link existing modal", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+    const card = screen.getByTestId("review-card-nyaa:9001");
+    const linkExistingBtn = Array.from(card.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === "Link existing",
+    );
+    if (!linkExistingBtn) throw new Error("Link existing button not rendered");
+    fireEvent.click(linkExistingBtn);
+
+    const dialog = await screen.findByRole("dialog");
+    const search = await waitFor(() => {
+      const el = dialog.querySelector<HTMLInputElement>(
+        '[data-testid="link-existing-search"]',
+      );
+      if (!el) throw new Error("link-existing-search input not rendered");
+      return el;
+    });
+    // Search the local catalog for an existing series.
+    fireEvent.change(search, { target: { value: "Chainsaw" } });
+    const linkBtn = await screen.findByTestId("link-existing-1", undefined, {
+      timeout: 3000,
+    });
+    fireEvent.click(linkBtn);
+
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByTestId("review-card-nyaa:9001"),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+  });
+
   it("renders the cleanup trail (cleaned query + rule chips) on each card", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderReview();

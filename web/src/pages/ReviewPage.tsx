@@ -40,9 +40,11 @@ import {
   type ProviderSearchHit,
   type ReleaseDto,
   type ReviewCandidateDto,
+  type SeriesListItem,
   type UnresolvedRelease,
   useProviderSearch,
   useProviders,
+  useSeriesList,
   useUnresolvedReleases,
 } from "@/api/queries";
 import { formatAbsolute, formatRelative, providerUrl } from "@/api/utils";
@@ -155,6 +157,10 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
     useDisclosure(false);
   const [createOpen, { open: openCreate, close: closeCreate }] =
     useDisclosure(false);
+  const [
+    linkExistingOpen,
+    { open: openLinkExisting, close: closeLinkExisting },
+  ] = useDisclosure(false);
 
   const busy =
     link.isPending || reject.isPending || keep.isPending || retry.isPending;
@@ -244,6 +250,17 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
             >
               Search provider
             </Button>
+            <Tooltip label="Link this release to a series already in the catalog (including manual ones).">
+              <Button
+                variant="light"
+                color="cyan"
+                size="xs"
+                onClick={openLinkExisting}
+                disabled={busy}
+              >
+                Link existing
+              </Button>
+            </Tooltip>
             <Tooltip label="Create a manual series for something MangaBaka lacks, then link this release to it.">
               <Button
                 variant="light"
@@ -305,7 +322,197 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
         releaseId={item.id}
         seedTitle={item.searchQueries[0] ?? item.title}
       />
+      {/* Mounted only while open so the catalog search doesn't run in the
+          background for every card in the queue. */}
+      {linkExistingOpen && (
+        <LinkExistingModal
+          onClose={closeLinkExisting}
+          releaseId={item.id}
+          seedQuery={item.searchQueries[0] ?? item.title}
+        />
+      )}
     </Paper>
+  );
+}
+
+/// Link the current release to a series that already exists in the local
+/// catalog (provider-backed or manual). Closes the gap that the resolver
+/// and provider search both miss: a manual series has no external id, so it
+/// never surfaces as a candidate or in provider search — but recurring
+/// releases of it still need to attach to the same row.
+function LinkExistingModal({
+  onClose,
+  releaseId,
+  seedQuery,
+}: {
+  onClose: () => void;
+  releaseId: string;
+  seedQuery: string;
+}) {
+  const link = useLinkRelease();
+  const [query, setQuery] = useState(seedQuery);
+  const [debounced, setDebounced] = useState(seedQuery);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebounced(query), 300);
+    return () => window.clearTimeout(handle);
+  }, [query]);
+
+  // Blank query falls back to the most-recent series, which is a sensible
+  // default browse for "I just made this one".
+  const results = useSeriesList({ q: debounced, pageSize: 20 });
+  const items = results.data?.items ?? [];
+
+  const handlePick = (series: SeriesListItem) => {
+    link.mutate(
+      { releaseId, body: { seriesId: series.id } },
+      {
+        onSuccess: () => {
+          notifications.show({
+            color: "green",
+            message: `Linked to “${series.canonicalTitle}”`,
+          });
+          onClose();
+        },
+        onError: (e) =>
+          notifications.show({
+            color: "red",
+            title: "Link failed",
+            message: (e as Error).message,
+          }),
+      },
+    );
+  };
+
+  return (
+    <Modal
+      opened
+      onClose={onClose}
+      title="Link to existing series"
+      size="lg"
+      centered
+    >
+      <Stack gap="md">
+        <TextInput
+          label="Search the catalog"
+          description="Matches every series you've already discovered, including manual ones"
+          placeholder="Series title"
+          value={query}
+          onChange={(e) => setQuery(e.currentTarget.value)}
+          data-testid="link-existing-search"
+          autoFocus
+        />
+        <ExistingSeriesResults
+          items={items}
+          loading={results.isFetching}
+          disabled={link.isPending}
+          onPick={handlePick}
+        />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>
+            Close
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+function ExistingSeriesResults({
+  items,
+  loading,
+  disabled,
+  onPick,
+}: {
+  items: SeriesListItem[];
+  loading: boolean;
+  disabled: boolean;
+  onPick: (series: SeriesListItem) => void;
+}) {
+  if (loading && items.length === 0) {
+    return (
+      <Center py="md">
+        <Loader size="sm" />
+      </Center>
+    );
+  }
+  if (items.length === 0) {
+    return (
+      <Text size="xs" c="dimmed">
+        No series in the catalog match. Try a different title, or create a
+        manual series.
+      </Text>
+    );
+  }
+  return (
+    <Stack gap={6} data-testid="link-existing-results">
+      <Text size="xs" fw={500} c="dimmed" tt="uppercase">
+        {items.length} match{items.length === 1 ? "" : "es"}
+      </Text>
+      <Stack gap={6} mah={400} style={{ overflowY: "auto" }}>
+        {items.map((s) => (
+          <Card
+            key={s.id}
+            withBorder
+            padding="xs"
+            radius="sm"
+            data-testid={`existing-series-${s.id}`}
+            style={{ flexShrink: 0 }}
+          >
+            <Group justify="space-between" wrap="nowrap" align="center">
+              <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+                <Box w={42} miw={42} h={56}>
+                  <Image
+                    src={s.coverUrl ?? CANDIDATE_PLACEHOLDER}
+                    fallbackSrc={CANDIDATE_PLACEHOLDER}
+                    alt={s.canonicalTitle}
+                    radius="sm"
+                    h={56}
+                    fit="cover"
+                  />
+                </Box>
+                <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+                  <Text
+                    size="sm"
+                    fw={500}
+                    lineClamp={1}
+                    title={s.canonicalTitle}
+                  >
+                    {s.canonicalTitle}
+                  </Text>
+                  <Group gap={6} wrap="wrap">
+                    {s.kind && (
+                      <Badge size="xs" variant="light" color="indigo">
+                        {s.kind}
+                      </Badge>
+                    )}
+                    {typeof s.year === "number" && (
+                      <Badge size="xs" variant="light" color="gray">
+                        {s.year}
+                      </Badge>
+                    )}
+                    {s.metadataSource === "manual" && (
+                      <Badge size="xs" variant="light" color="grape">
+                        manual
+                      </Badge>
+                    )}
+                  </Group>
+                </Stack>
+              </Group>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => onPick(s)}
+                disabled={disabled}
+                data-testid={`link-existing-${s.id}`}
+              >
+                Link
+              </Button>
+            </Group>
+          </Card>
+        ))}
+      </Stack>
+    </Stack>
   );
 }
 
