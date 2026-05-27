@@ -22,7 +22,7 @@ use crate::client::{MbScaledImage, MbSeries};
 /// Map a MangaBaka series payload to the canonical [`SeriesMetadata`].
 pub fn series_to_canonical(series: MbSeries) -> SeriesMetadata {
     let external_id = series.id.to_string();
-    let external_url = Some(format!("https://mangabaka.dev/series/{external_id}"));
+    let external_url = Some(format!("https://mangabaka.org/{external_id}"));
     let alternate_titles = collect_alternates(&series);
     let kind = series.kind.as_deref().map(parse_kind);
     let status = series.status.as_deref().map(parse_status);
@@ -224,10 +224,7 @@ mod tests {
         assert_eq!(m.kind, Some(SeriesKind::Manga));
         assert_eq!(m.status, Some(SeriesStatus::Ongoing));
         assert_eq!(m.cover_url.as_deref(), Some("https://mangabaka/350@2x.jpg"));
-        assert_eq!(
-            m.external_url.as_deref(),
-            Some("https://mangabaka.dev/series/1")
-        );
+        assert_eq!(m.external_url.as_deref(), Some("https://mangabaka.org/1"));
         assert!(m.genres.contains(&"action".to_string()));
     }
 

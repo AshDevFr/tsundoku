@@ -292,7 +292,7 @@ fn active_row_to_canonical(row: RawRow) -> Option<SeriesMetadata> {
 
 fn row_to_canonical(row: RawRow) -> SeriesMetadata {
     let external_id = row.id.to_string();
-    let external_url = Some(format!("https://mangabaka.dev/series/{external_id}"));
+    let external_url = Some(format!("https://mangabaka.org/{external_id}"));
     let alternate_titles = collect_alternates(&row);
     let foreign_ids = row_to_foreign_ids(&row);
     let cover_url = pick_cover_from_row(&row);
