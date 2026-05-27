@@ -93,11 +93,6 @@ pub async fn upsert_series_from_metadata(
     } else {
         Some(serde_json::to_string(&metadata.alternate_titles)?)
     };
-    let genres_json = if metadata.genres.is_empty() {
-        None
-    } else {
-        Some(serde_json::to_string(&metadata.genres)?)
-    };
 
     let (series_id, unchanged) = match series_id {
         Some(id) => {
@@ -123,7 +118,6 @@ pub async fn upsert_series_from_metadata(
                     status: Set(metadata.status.as_ref().map(status_to_db)),
                     year: Set(metadata.year),
                     description: Set(metadata.description.clone()),
-                    genres_json: Set(genres_json),
                     metadata_json: Set(Some(metadata_json)),
                     metadata_source: Set(METADATA_SOURCE_DEFAULT.into()),
                     metadata_hash: Set(Some(metadata.content_hash.clone())),
@@ -149,7 +143,6 @@ pub async fn upsert_series_from_metadata(
                 status: Set(metadata.status.as_ref().map(status_to_db)),
                 year: Set(metadata.year),
                 description: Set(metadata.description.clone()),
-                genres_json: Set(genres_json),
                 metadata_json: Set(Some(metadata_json)),
                 metadata_source: Set(METADATA_SOURCE_DEFAULT.into()),
                 metadata_hash: Set(Some(metadata.content_hash.clone())),
@@ -185,9 +178,7 @@ pub async fn upsert_series_from_metadata(
 
     txn.commit().await?;
 
-    // Sync the normalized genre/tag join tables. We keep `series.genres_json`
-    // writes in the loop above as a fallback for one release; the canonical
-    // source the UI reads from is the join tables. Failures here don't roll
+    // Sync the normalized genre/tag join tables. Failures here don't roll
     // back the series row: the next persist will re-sync from the full set,
     // and the catalog stays usable in the meantime.
     if let Err(e) = tagging_repo::set_series_genres(db, series_id, &metadata.genres).await {
@@ -499,14 +490,6 @@ mod tests {
             upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), 1_700_000_000, now)
                 .await
                 .unwrap();
-
-        // Both genres_json (fallback) and the join tables get populated.
-        let row = series::Entity::find_by_id(res.series_id)
-            .one(&db)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(row.genres_json.as_deref().unwrap().contains("action"));
 
         let genres = td_db::repos::tagging_repo::list_genres_for_series(&db, res.series_id)
             .await

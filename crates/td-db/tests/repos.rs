@@ -27,7 +27,6 @@ fn sample_series(title: &str, alternates: Option<&str>) -> series::ActiveModel {
         kind: Set(Some("manga".into())),
         status: Set(Some("ongoing".into())),
         year: Set(Some(2020)),
-        genres_json: Set(None),
         metadata_json: Set(None),
         metadata_source: Set("offline_cache".into()),
         metadata_hash: Set(None),

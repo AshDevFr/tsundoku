@@ -315,7 +315,6 @@ mod tests {
             kind: Set(Some("manga".into())),
             status: Set(Some("ongoing".into())),
             year: Set(Some(2020)),
-            genres_json: Set(None),
             metadata_json: Set(None),
             metadata_source: Set("api".into()),
             metadata_hash: Set(None),

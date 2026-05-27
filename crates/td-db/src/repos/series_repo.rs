@@ -22,7 +22,6 @@ pub async fn upsert(db: &DatabaseConnection, model: series::ActiveModel) -> Resu
                     series::Column::Kind,
                     series::Column::Status,
                     series::Column::Year,
-                    series::Column::GenresJson,
                     series::Column::MetadataJson,
                     series::Column::MetadataSource,
                     series::Column::MetadataHash,
