@@ -787,6 +787,7 @@ function SearchResults({
             padding="xs"
             radius="sm"
             data-testid={`search-hit-${h.externalId}`}
+            style={{ flexShrink: 0 }}
           >
             <Group justify="space-between" wrap="nowrap" align="center">
               <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
