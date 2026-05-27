@@ -111,3 +111,6 @@ targets = [
 pr-run-mode = "plan"
 install-updater = false
 install-path = "CARGO_HOME"
+# We ship a custom unified build.yml instead of the auto-generated release.yml;
+# tell dist not to flag the missing/divergent file as "out of date".
+allow-dirty = ["ci"]
