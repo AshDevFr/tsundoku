@@ -519,28 +519,33 @@ function CandidateList({
           <Card
             key={c.seriesId}
             withBorder
-            padding="xs"
+            padding="sm"
             radius="sm"
             data-testid={`candidate-${c.seriesId}`}
           >
-            <Group justify="space-between" wrap="nowrap" align="center">
-              <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
-                <Box w={36} miw={36} h={48}>
+            <Group justify="space-between" wrap="nowrap" align="flex-start">
+              <Group
+                gap="sm"
+                wrap="nowrap"
+                align="flex-start"
+                style={{ minWidth: 0, flex: 1 }}
+              >
+                <Box w={56} miw={56} h={76}>
                   <Image
                     src={c.seriesCoverUrl ?? CANDIDATE_PLACEHOLDER}
                     fallbackSrc={CANDIDATE_PLACEHOLDER}
                     alt={c.seriesTitle}
                     radius="sm"
-                    h={48}
+                    h={76}
                     fit="cover"
                   />
                 </Box>
-                <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+                <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
                   <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
                     <Text
-                      size="sm"
-                      fw={500}
-                      lineClamp={1}
+                      size="md"
+                      fw={600}
+                      lineClamp={2}
                       title={c.seriesTitle}
                       style={{ minWidth: 0, flex: 1 }}
                     >
@@ -567,8 +572,7 @@ function CandidateList({
                     <Text
                       size="xs"
                       c="dimmed"
-                      lineClamp={1}
-                      title={c.alternateTitles.join(" / ")}
+                      style={{ wordBreak: "break-word" }}
                     >
                       {c.alternateTitles.join(" / ")}
                     </Text>
