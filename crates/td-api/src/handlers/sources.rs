@@ -43,6 +43,9 @@ pub struct SourceConfigDto {
     pub timeout_seconds: u32,
     /// Override for the site base URL. Useful when the feed is proxied.
     pub site_base_url: Option<String>,
+    /// Maximum number of feed pages walked per poll. `1` for sources that
+    /// don't paginate or that haven't opted in.
+    pub max_pages: u32,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -69,18 +72,20 @@ pub struct PollAllResponse {
 fn build_config_dto(cfg: &SourceConfig) -> SourceConfigDto {
     // For v1 only the nyaa kind exists, so we read directly from it. New
     // kinds add an arm here.
-    let (feed_url, fetch_details, timeout_seconds, site_base_url) = match cfg.kind.as_str() {
-        "nyaa" => {
-            let opts = cfg.nyaa.as_ref();
-            (
-                opts.map(|o| o.feed_url.clone()).unwrap_or_default(),
-                opts.map(|o| o.fetch_details).unwrap_or(true),
-                opts.map(|o| o.timeout_seconds).unwrap_or(30),
-                opts.map(|o| o.site_base_url.clone()),
-            )
-        }
-        _ => (String::new(), true, 30, None),
-    };
+    let (feed_url, fetch_details, timeout_seconds, site_base_url, max_pages) =
+        match cfg.kind.as_str() {
+            "nyaa" => {
+                let opts = cfg.nyaa.as_ref();
+                (
+                    opts.map(|o| o.feed_url.clone()).unwrap_or_default(),
+                    opts.map(|o| o.fetch_details).unwrap_or(true),
+                    opts.map(|o| o.timeout_seconds).unwrap_or(30),
+                    opts.map(|o| o.site_base_url.clone()),
+                    opts.map(|o| o.max_pages.max(1)).unwrap_or(1),
+                )
+            }
+            _ => (String::new(), true, 30, None, 1),
+        };
     SourceConfigDto {
         enabled: cfg.enabled,
         cron: cfg.cron.clone(),
@@ -88,6 +93,7 @@ fn build_config_dto(cfg: &SourceConfig) -> SourceConfigDto {
         fetch_details,
         timeout_seconds,
         site_base_url,
+        max_pages,
     }
 }
 

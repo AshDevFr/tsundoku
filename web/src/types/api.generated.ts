@@ -1004,6 +1004,12 @@ export interface components {
              */
             feedUrl: string;
             fetchDetails: boolean;
+            /**
+             * Format: int32
+             * @description Maximum number of feed pages walked per poll. `1` for sources that
+             *     don't paginate or that haven't opted in.
+             */
+            maxPages: number;
             /** @description Override for the site base URL. Useful when the feed is proxied. */
             siteBaseUrl?: string | null;
             /** Format: int32 */

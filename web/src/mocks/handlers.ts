@@ -354,6 +354,7 @@ export const handlers = [
             fetchDetails: false,
             timeoutSeconds: 30,
             siteBaseUrl: "https://nyaa.si",
+            maxPages: 1,
           },
         },
       ],

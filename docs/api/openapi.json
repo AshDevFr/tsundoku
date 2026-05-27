@@ -2473,7 +2473,8 @@
           "enabled",
           "feedUrl",
           "fetchDetails",
-          "timeoutSeconds"
+          "timeoutSeconds",
+          "maxPages"
         ],
         "properties": {
           "cron": {
@@ -2491,6 +2492,12 @@
           },
           "fetchDetails": {
             "type": "boolean"
+          },
+          "maxPages": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum number of feed pages walked per poll. `1` for sources that\ndon't paginate or that haven't opted in.",
+            "minimum": 0
           },
           "siteBaseUrl": {
             "type": [

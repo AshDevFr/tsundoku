@@ -159,6 +159,7 @@ export function SourceConfigBlock({
         value={config.fetchDetails ? "yes" : "no"}
         mono
       />
+      <ConfigRow label="max_pages" value={String(config.maxPages)} mono />
     </Stack>
   );
 }

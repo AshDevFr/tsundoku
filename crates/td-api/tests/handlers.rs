@@ -607,6 +607,7 @@ async fn sources_list_includes_config_block_from_app_state() {
     assert_eq!(item["config"]["feedUrl"], "https://nyaa.si/?page=rss&f=2");
     assert_eq!(item["config"]["fetchDetails"], true);
     assert_eq!(item["config"]["timeoutSeconds"], 45);
+    assert_eq!(item["config"]["maxPages"], 1);
 }
 
 #[tokio::test]
