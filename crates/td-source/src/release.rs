@@ -4,6 +4,8 @@
 //! into [`DiscoveredRelease`]. Persistence keys on `(source_kind, external_id)`
 //! and on `link`, so the source must emit stable values for both.
 
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -88,6 +90,12 @@ pub struct PollContext {
     /// short-circuit when items older than this can be assumed already
     /// observed.
     pub last_success_at: Option<DateTime<Utc>>,
+    /// `external_id`s already persisted for this `(source_kind, source_name)`.
+    /// Populated by the caller from the recent tail of the `releases` table;
+    /// sources should drop matching items before any per-item enrichment
+    /// (detail fetches, etc.) so steady-state polls stay cheap even when an
+    /// ETag flake or pagination overlap re-surfaces known posts.
+    pub recently_seen: HashSet<String>,
 }
 
 /// What a source produced. Distinct from `Vec<DiscoveredRelease>` so a source

@@ -39,3 +39,7 @@ cron = "0 */2 * * *"   # every 2 hours; 5-field cron, seconds-0 auto-padded
 enabled = true
   [sources.nyaa]
   feed_url = "https://nyaa.si/?page=rss&c=3_1&f=2"
+  # Bump this to catch up after the container has been down for a while
+  # (each extra page is one RSS request; items already in the local
+  # `releases` table are filtered out before detail fetches run).
+  # max_pages = 1

@@ -303,6 +303,13 @@ pub struct NyaaSourceOptions {
     pub fetch_details: bool,
     /// Override for the site base URL. Useful when the feed is proxied.
     pub site_base_url: String,
+    /// Maximum number of feed pages to walk per poll. `1` (the default)
+    /// keeps the steady-state poll a single request. Raising this lets the
+    /// source catch up after downtime or when the upstream RSS truncates
+    /// aggressively; items already in `PollContext.recently_seen` are
+    /// dropped before any detail-page enrichment runs, so extra pages cost
+    /// one RSS fetch each.
+    pub max_pages: u32,
 }
 
 /// Settings for the resolution pipeline. Controls how raw `releases` rows
@@ -489,6 +496,7 @@ impl Default for NyaaSourceOptions {
             timeout_seconds: 30,
             fetch_details: true,
             site_base_url: "https://nyaa.si".into(),
+            max_pages: 1,
         }
     }
 }

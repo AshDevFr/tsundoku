@@ -124,7 +124,8 @@ pub async fn run_tick(
             None
         }
     };
-    let ctx = state_to_context(prev_state.as_ref());
+    let mut ctx = state_to_context(prev_state.as_ref());
+    ctx.recently_seen = load_recently_seen(&db, &kind, &name).await;
 
     // Time only the outbound HTTP call, not the surrounding persist/resolve
     // loop — the admin metrics card uses this as the "feed health" signal.
@@ -316,6 +317,30 @@ async fn finalize_metrics(
     }
 }
 
+/// Upper bound on the number of recent `external_id`s loaded into
+/// `PollContext.recently_seen`. Generous enough to cover several pages of a
+/// paginated source (Nyaa is 75 items/page) without ever materializing more
+/// than a few hundred short strings.
+const RECENT_SEEN_LIMIT: u64 = 500;
+
+async fn load_recently_seen(
+    db: &DatabaseConnection,
+    kind: &str,
+    name: &str,
+) -> std::collections::HashSet<String> {
+    match releases_repo::recent_external_ids(db, kind, name, RECENT_SEEN_LIMIT).await {
+        Ok(ids) => ids.into_iter().collect(),
+        Err(e) => {
+            tracing::warn!(
+                error = ?e,
+                source = %name,
+                "failed to load recent external_ids; proceeding without dedup hint"
+            );
+            std::collections::HashSet::new()
+        }
+    }
+}
+
 fn state_to_context(state: Option<&source_state::Model>) -> PollContext {
     let Some(state) = state else {
         return PollContext::default();
@@ -327,6 +352,7 @@ fn state_to_context(state: Option<&source_state::Model>) -> PollContext {
         etag: state.etag.clone(),
         cursor: state.cursor.clone(),
         last_success_at,
+        ..Default::default()
     }
 }
 

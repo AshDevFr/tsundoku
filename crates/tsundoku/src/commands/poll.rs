@@ -69,7 +69,8 @@ async fn poll_one(db: &DatabaseConnection, source: &dyn DiscoverySource) -> Poll
             None
         }
     };
-    let ctx = state_to_context(state.as_ref());
+    let mut ctx = state_to_context(state.as_ref());
+    ctx.recently_seen = load_recently_seen(db, source.kind(), source.name()).await;
 
     let started_at = Utc::now();
     let outcome = match source.poll(&ctx).await {
@@ -104,6 +105,28 @@ async fn poll_one(db: &DatabaseConnection, source: &dyn DiscoverySource) -> Poll
     summary
 }
 
+/// Mirrors `td-scheduler`'s limit so manual `tsundoku poll` and the cron
+/// path drop the same overlapping items before per-item enrichment runs.
+const RECENT_SEEN_LIMIT: u64 = 500;
+
+async fn load_recently_seen(
+    db: &DatabaseConnection,
+    kind: &str,
+    name: &str,
+) -> std::collections::HashSet<String> {
+    match releases_repo::recent_external_ids(db, kind, name, RECENT_SEEN_LIMIT).await {
+        Ok(ids) => ids.into_iter().collect(),
+        Err(e) => {
+            tracing::warn!(
+                error = ?e,
+                source = %name,
+                "failed to load recent external_ids; proceeding without dedup hint"
+            );
+            std::collections::HashSet::new()
+        }
+    }
+}
+
 fn state_to_context(state: Option<&source_state::Model>) -> PollContext {
     let Some(state) = state else {
         return PollContext::default();
@@ -115,6 +138,7 @@ fn state_to_context(state: Option<&source_state::Model>) -> PollContext {
         etag: state.etag.clone(),
         cursor: state.cursor.clone(),
         last_success_at,
+        ..Default::default()
     }
 }
 

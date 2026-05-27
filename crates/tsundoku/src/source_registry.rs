@@ -59,6 +59,7 @@ fn construct_source(
                 timeout: Duration::from_secs(opts.timeout_seconds.max(1) as u64),
                 fetch_details: opts.fetch_details,
                 site_base_url: opts.site_base_url.clone(),
+                max_pages: opts.max_pages.max(1),
             };
             let nyaa = NyaaSource::from_config(nyaa_cfg, limiter)
                 .with_context(|| format!("building nyaa source {:?}", src.name))?;

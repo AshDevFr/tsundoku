@@ -130,6 +130,28 @@ pub async fn find_by_id(db: &DatabaseConnection, id: &str) -> Result<Option<Mode
     Ok(releases::Entity::find_by_id(id.to_string()).one(db).await?)
 }
 
+/// Most recent `external_id`s for a `(source_kind, source_name)`. Used by
+/// the scheduler / one-shot poll to populate `PollContext.recently_seen`
+/// so sources can drop overlapping items before per-item enrichment runs.
+pub async fn recent_external_ids(
+    db: &DatabaseConnection,
+    source_kind: &str,
+    source_name: &str,
+    limit: u64,
+) -> Result<Vec<String>> {
+    let rows = releases::Entity::find()
+        .select_only()
+        .column(releases::Column::ExternalId)
+        .filter(releases::Column::SourceKind.eq(source_kind))
+        .filter(releases::Column::SourceName.eq(source_name))
+        .order_by_desc(releases::Column::PostedAt)
+        .limit(limit)
+        .into_tuple::<String>()
+        .all(db)
+        .await?;
+    Ok(rows)
+}
+
 pub async fn list_by_status(
     db: &DatabaseConnection,
     status: &str,
