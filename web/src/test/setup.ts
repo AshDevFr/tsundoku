@@ -75,6 +75,22 @@ console.error = (...args: unknown[]) => {
   originalConsoleError(...args);
 };
 
+// jsdom doesn't compute layout, so Mantine's focusable() check (which relies
+// on element dimensions) can't find a focusable child inside a Popover whose
+// dropdown is still off-screen mid-transition. The trap settles correctly in
+// a real browser; suppress the dev-only warning here.
+const originalConsoleWarn = console.warn;
+console.warn = (...args: unknown[]) => {
+  const first = args[0];
+  if (
+    typeof first === "string" &&
+    first.includes("[@mantine/hooks/use-focus-trap]")
+  ) {
+    return;
+  }
+  originalConsoleWarn(...args);
+};
+
 // MSW: intercept API calls for the whole test run.
 beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
 afterEach(() => server.resetHandlers());

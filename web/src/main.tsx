@@ -1,4 +1,4 @@
-import { MantineProvider } from "@mantine/core";
+import { ColorSchemeScript, MantineProvider } from "@mantine/core";
 import "@mantine/core/styles.css";
 import { Notifications } from "@mantine/notifications";
 import "@mantine/notifications/styles.css";
@@ -21,7 +21,8 @@ enableMocking().then(() => {
   if (!rootEl) throw new Error("#root element not found");
   createRoot(rootEl).render(
     <StrictMode>
-      <MantineProvider>
+      <ColorSchemeScript defaultColorScheme="auto" />
+      <MantineProvider defaultColorScheme="auto">
         <Notifications />
         <QueryClientProvider client={queryClient}>
           <RouterProvider router={router} />
