@@ -500,6 +500,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/series/invalidate-metadata-hashes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear `metadata_hash` for every provider-backed series row in scope so
+         *     the next refresh tick rewrites them. The persist layer short-circuits
+         *     the series UPDATE when the incoming provider payload hashes to the
+         *     stored value; that's the right call for steady-state refreshes, but it
+         *     strands existing rows whenever a new denormalized column lands on the
+         *     `series` table (the upstream payload is unchanged → hash matches →
+         *     write skipped → new column stays NULL forever).
+         * @description This endpoint is the operator escape hatch for that scenario. It runs
+         *     synchronously and returns the affected count; the operator then
+         *     triggers `/series/refresh-all` (or waits for the next cron tick) to
+         *     actually rewrite the rows.
+         *
+         *     Manual rows (`metadata_source = 'manual'`) are always left alone.
+         */
+        post: operations["invalidate_series_metadata_hashes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series/refresh-all": {
         parameters: {
             query?: never;
@@ -796,6 +827,33 @@ export interface components {
             externalIds: components["schemas"]["ExternalIdMapCount"][];
             /** @description State of the persisted MangaUpdates legacy → modern slug cache. */
             mangaupdatesRedirectCache: components["schemas"]["MangaupdatesRedirectStats"];
+        };
+        /**
+         * @description Response from `POST /api/v1/series/invalidate-metadata-hashes`. The
+         *     endpoint runs synchronously, so the counts are the actual outcome of
+         *     the call (not "queued work").
+         */
+        InvalidateMetadataHashesResponse: {
+            /**
+             * Format: int32
+             * @description Number of `series` rows whose `metadata_hash` was cleared. A
+             *     subsequent series-refresh tick will rewrite each one because the
+             *     hash short-circuit no longer fires.
+             */
+            invalidated: number;
+            /**
+             * @description Echoes the `provider` query parameter, or `null` when the call
+             *     was not scoped.
+             */
+            provider?: string | null;
+            /**
+             * Format: int32
+             * @description Number of rows that matched the scope but were left untouched
+             *     because `metadata_source = 'manual'`. Reported so the operator
+             *     can spot when a meaningful chunk of the catalog is curated by
+             *     hand (and therefore not eligible for upstream refresh).
+             */
+            skippedManual: number;
         };
         /**
          * @description Single broadcast frame for the SSE channel. Always has `kind`, `id`,
@@ -2189,6 +2247,31 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    invalidate_series_metadata_hashes: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Provider id to scope the invalidation to (e.g. `"mangabaka"`).
+                 *     Optional. When absent, every provider-backed row is affected.
+                 */
+                provider?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidateMetadataHashesResponse"];
+                };
             };
         };
     };

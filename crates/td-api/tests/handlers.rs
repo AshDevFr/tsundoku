@@ -2772,3 +2772,173 @@ async fn series_refresh_all_requires_admin_token() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+async fn seed_series_with_hash(
+    db: &sea_orm::DatabaseConnection,
+    title: &str,
+    metadata_source: &str,
+    metadata_hash: Option<&str>,
+) -> i32 {
+    let now = Utc::now().timestamp();
+    let model = series::ActiveModel {
+        canonical_title: Set(title.into()),
+        alternate_titles_json: Set(None),
+        cover_url: Set(None),
+        kind: Set(Some("manga".into())),
+        status: Set(Some("ongoing".into())),
+        year: Set(Some(2020)),
+        metadata_json: Set(None),
+        metadata_source: Set(metadata_source.into()),
+        metadata_hash: Set(metadata_hash.map(str::to_owned)),
+        metadata_fetched_at: Set(now),
+        first_seen_at: Set(now),
+        last_release_at: Set(now),
+        highest_volume: Set(None),
+        highest_chapter: Set(None),
+        owned: Set(0),
+        ..Default::default()
+    };
+    let row = model.insert(db).await.unwrap();
+    row.id
+}
+
+#[tokio::test]
+async fn invalidate_metadata_hashes_clears_provider_rows_and_skips_manual() {
+    let db = fresh_db().await;
+    let api_row = seed_series_with_hash(&db, "A", "api", Some("hash-a")).await;
+    let cache_row = seed_series_with_hash(&db, "B", "offline_cache", Some("hash-b")).await;
+    let manual_row = seed_series_with_hash(&db, "M", "manual", Some("hash-m")).await;
+
+    let app = build_app(
+        db.clone(),
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/invalidate-metadata-hashes")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["invalidated"], 2);
+    assert_eq!(body["skippedManual"], 1);
+    assert!(
+        body["provider"].is_null(),
+        "no scope was requested, so provider echoes null; got {body:?}"
+    );
+
+    // Verify DB state matches the response.
+    let api_after = series::Entity::find_by_id(api_row)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let cache_after = series::Entity::find_by_id(cache_row)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let manual_after = series::Entity::find_by_id(manual_row)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(api_after.metadata_hash, None);
+    assert_eq!(cache_after.metadata_hash, None);
+    assert_eq!(manual_after.metadata_hash, Some("hash-m".into()));
+}
+
+#[tokio::test]
+async fn invalidate_metadata_hashes_filters_by_provider() {
+    let db = fresh_db().await;
+    let mb_id = seed_series_with_hash(&db, "MB", "api", Some("hash-mb")).await;
+    let other_id = seed_series_with_hash(&db, "Other", "api", Some("hash-other")).await;
+    let now = Utc::now().timestamp();
+    series_external_ids_repo::upsert(&db, mb_id, "mangabaka", "1", now)
+        .await
+        .unwrap();
+    series_external_ids_repo::upsert(&db, other_id, "anilist", "999", now)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db.clone(),
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/invalidate-metadata-hashes?provider=mangabaka")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["invalidated"], 1);
+    assert_eq!(body["skippedManual"], 0);
+    assert_eq!(body["provider"], "mangabaka");
+
+    let mb_after = series::Entity::find_by_id(mb_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let other_after = series::Entity::find_by_id(other_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(mb_after.metadata_hash, None);
+    assert_eq!(
+        other_after.metadata_hash,
+        Some("hash-other".into()),
+        "anilist-backed row stays untouched when scoped to mangabaka",
+    );
+}
+
+#[tokio::test]
+async fn invalidate_metadata_hashes_requires_admin_token() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/invalidate-metadata-hashes")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

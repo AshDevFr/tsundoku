@@ -28,6 +28,10 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/series", post(series::create))
         .route("/series/refresh-all", post(series::refresh_all))
         .route(
+            "/series/invalidate-metadata-hashes",
+            post(series::invalidate_metadata_hashes),
+        )
+        .route(
             "/series/{id}/refresh-metadata",
             post(series::refresh_metadata),
         )

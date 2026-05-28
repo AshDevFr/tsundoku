@@ -1129,6 +1129,47 @@
         ]
       }
     },
+    "/api/v1/series/invalidate-metadata-hashes": {
+      "post": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Clear `metadata_hash` for every provider-backed series row in scope so\nthe next refresh tick rewrites them. The persist layer short-circuits\nthe series UPDATE when the incoming provider payload hashes to the\nstored value; that's the right call for steady-state refreshes, but it\nstrands existing rows whenever a new denormalized column lands on the\n`series` table (the upstream payload is unchanged → hash matches →\nwrite skipped → new column stays NULL forever).",
+        "description": "This endpoint is the operator escape hatch for that scenario. It runs\nsynchronously and returns the affected count; the operator then\ntriggers `/series/refresh-all` (or waits for the next cron tick) to\nactually rewrite the rows.\n\nManual rows (`metadata_source = 'manual'`) are always left alone.",
+        "operationId": "invalidate_series_metadata_hashes",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "description": "Provider id to scope the invalidation to (e.g. `\"mangabaka\"`).\nOptional. When absent, every provider-backed row is affected.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidateMetadataHashesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/series/refresh-all": {
       "post": {
         "tags": [
@@ -1710,6 +1751,35 @@
           "mangaupdatesRedirectCache": {
             "$ref": "#/components/schemas/MangaupdatesRedirectStats",
             "description": "State of the persisted MangaUpdates legacy → modern slug cache."
+          }
+        }
+      },
+      "InvalidateMetadataHashesResponse": {
+        "type": "object",
+        "description": "Response from `POST /api/v1/series/invalidate-metadata-hashes`. The\nendpoint runs synchronously, so the counts are the actual outcome of\nthe call (not \"queued work\").",
+        "required": [
+          "invalidated",
+          "skippedManual"
+        ],
+        "properties": {
+          "invalidated": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of `series` rows whose `metadata_hash` was cleared. A\nsubsequent series-refresh tick will rewrite each one because the\nhash short-circuit no longer fires.",
+            "minimum": 0
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Echoes the `provider` query parameter, or `null` when the call\nwas not scoped."
+          },
+          "skippedManual": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of rows that matched the scope but were left untouched\nbecause `metadata_source = 'manual'`. Reported so the operator\ncan spot when a meaningful chunk of the catalog is curated by\nhand (and therefore not eligible for upstream refresh).",
+            "minimum": 0
           }
         }
       },

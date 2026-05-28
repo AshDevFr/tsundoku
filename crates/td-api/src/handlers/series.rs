@@ -834,6 +834,79 @@ pub async fn refresh_all(
     }))
 }
 
+/// Query string for `POST /api/v1/series/invalidate-metadata-hashes`.
+/// `provider` scopes the operation to rows that have a `series_external_ids`
+/// row for that provider; when omitted, every non-manual row is cleared.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct InvalidateMetadataHashesQuery {
+    /// Provider id to scope the invalidation to (e.g. `"mangabaka"`).
+    /// Optional. When absent, every provider-backed row is affected.
+    pub provider: Option<String>,
+}
+
+/// Response from `POST /api/v1/series/invalidate-metadata-hashes`. The
+/// endpoint runs synchronously, so the counts are the actual outcome of
+/// the call (not "queued work").
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InvalidateMetadataHashesResponse {
+    /// Echoes the `provider` query parameter, or `null` when the call
+    /// was not scoped.
+    pub provider: Option<String>,
+    /// Number of `series` rows whose `metadata_hash` was cleared. A
+    /// subsequent series-refresh tick will rewrite each one because the
+    /// hash short-circuit no longer fires.
+    pub invalidated: u32,
+    /// Number of rows that matched the scope but were left untouched
+    /// because `metadata_source = 'manual'`. Reported so the operator
+    /// can spot when a meaningful chunk of the catalog is curated by
+    /// hand (and therefore not eligible for upstream refresh).
+    pub skipped_manual: u32,
+}
+
+/// Clear `metadata_hash` for every provider-backed series row in scope so
+/// the next refresh tick rewrites them. The persist layer short-circuits
+/// the series UPDATE when the incoming provider payload hashes to the
+/// stored value; that's the right call for steady-state refreshes, but it
+/// strands existing rows whenever a new denormalized column lands on the
+/// `series` table (the upstream payload is unchanged → hash matches →
+/// write skipped → new column stays NULL forever).
+///
+/// This endpoint is the operator escape hatch for that scenario. It runs
+/// synchronously and returns the affected count; the operator then
+/// triggers `/series/refresh-all` (or waits for the next cron tick) to
+/// actually rewrite the rows.
+///
+/// Manual rows (`metadata_source = 'manual'`) are always left alone.
+#[utoipa::path(
+    post,
+    path = "/api/v1/series/invalidate-metadata-hashes",
+    tag = "series",
+    operation_id = "invalidate_series_metadata_hashes",
+    params(InvalidateMetadataHashesQuery),
+    responses((status = 200, body = InvalidateMetadataHashesResponse)),
+    security(("admin" = []))
+)]
+pub async fn invalidate_metadata_hashes(
+    State(state): State<AppState>,
+    Query(params): Query<InvalidateMetadataHashesQuery>,
+) -> ApiResult<Json<InvalidateMetadataHashesResponse>> {
+    let provider = params
+        .provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let outcome = series_repo::invalidate_metadata_hashes(&state.db, provider)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(InvalidateMetadataHashesResponse {
+        provider: provider.map(str::to_owned),
+        invalidated: u32::try_from(outcome.invalidated).unwrap_or(u32::MAX),
+        skipped_manual: u32::try_from(outcome.skipped_manual).unwrap_or(u32::MAX),
+    }))
+}
+
 fn model_to_list_item(
     m: series::Model,
     genres: Vec<String>,
