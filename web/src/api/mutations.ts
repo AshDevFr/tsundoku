@@ -4,6 +4,7 @@ import type { components } from "@/types/api.generated";
 
 type LinkRequest = components["schemas"]["LinkRequest"];
 type CreateSeriesRequest = components["schemas"]["CreateSeriesRequest"];
+type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
 
 // Extract a useful error message from an openapi-fetch error payload, falling
 // back to a sentence the user can act on. The backend serializes errors as
@@ -109,6 +110,42 @@ export function useRetryAllReleases() {
   return useMutation({
     mutationFn: async () => {
       const { data, error } = await api.POST("/api/v1/releases/retry-all", {});
+      if (error)
+        throw new Error(describeError(error, "failed to retry releases"));
+      return data;
+    },
+    onSuccess: () => invalidateReleaseQueries(qc),
+  });
+}
+
+/// Reject a set of review-queue releases in one request. The body carries
+/// either an explicit `ids` list or the filter fields ("all matching"); see
+/// `BulkReviewRequest`.
+export function useBulkReject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: BulkReviewRequest) => {
+      const { data, error } = await api.POST("/api/v1/releases/bulk/reject", {
+        body,
+      });
+      if (error)
+        throw new Error(describeError(error, "failed to reject releases"));
+      return data;
+    },
+    onSuccess: () => invalidateReleaseQueries(qc),
+  });
+}
+
+/// Retry a set of review-queue releases as a background batch. Same body
+/// shape as `useBulkReject`; the response reports `triggered`/`skipped`/
+/// `matched`.
+export function useBulkRetry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: BulkReviewRequest) => {
+      const { data, error } = await api.POST("/api/v1/releases/bulk/retry", {
+        body,
+      });
       if (error)
         throw new Error(describeError(error, "failed to retry releases"));
       return data;

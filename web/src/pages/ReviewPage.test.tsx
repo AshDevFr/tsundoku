@@ -308,6 +308,72 @@ describe("ReviewPage", () => {
     );
   });
 
+  it("bulk-rejects the selected releases after confirmation", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+
+    // Select every release on the page; the bulk toolbar appears.
+    fireEvent.click(screen.getByTestId("select-all-page"));
+    expect(screen.getByTestId("bulk-action-bar")).toHaveTextContent(
+      "2 selected",
+    );
+
+    // Reject opens a confirmation modal, not an immediate action.
+    fireEvent.click(screen.getByTestId("bulk-reject"));
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByTestId("confirm-bulk-reject"));
+
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByTestId("review-card-nyaa:9001"),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByTestId("review-card-nyaa:9002"),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it("cancels a bulk reject and leaves the releases in the queue", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+
+    fireEvent.click(screen.getByTestId("select-all-page"));
+    fireEvent.click(screen.getByTestId("bulk-reject"));
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // Both cards survive the cancelled action.
+    expect(screen.getByTestId("review-card-nyaa:9001")).toBeInTheDocument();
+    expect(screen.getByTestId("review-card-nyaa:9002")).toBeInTheDocument();
+  });
+
+  it("bulk-retries the selected releases and clears the selection", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+
+    fireEvent.click(screen.getByTestId("select-nyaa:9001"));
+    expect(screen.getByTestId("bulk-action-bar")).toHaveTextContent(
+      "1 selected",
+    );
+    fireEvent.click(screen.getByTestId("bulk-retry"));
+
+    // Retry is a background batch: the rows stay, but the selection clears
+    // (the toolbar disappears) once the request resolves.
+    await waitFor(
+      () => {
+        expect(screen.queryByTestId("bulk-action-bar")).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+    expect(screen.getByTestId("review-card-nyaa:9001")).toBeInTheDocument();
+  });
+
   it("shows every search query when the cleaner produced more than one", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderReview();

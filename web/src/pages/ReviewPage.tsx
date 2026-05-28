@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Center,
+  Checkbox,
   Collapse,
   Group,
   Image,
@@ -29,6 +30,8 @@ import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import {
+  useBulkReject,
+  useBulkRetry,
   useCreateSeries,
   useKeepRelease,
   useLinkRelease,
@@ -49,6 +52,9 @@ import {
   useUnresolvedReleases,
 } from "@/api/queries";
 import { formatAbsolute, formatRelative, providerUrl } from "@/api/utils";
+import type { components } from "@/types/api.generated";
+
+type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
 
 /// Canonical file formats the detector can tag a release with. Hardcoded
 /// rather than derived from the queue so the dropdown is stable; an option
@@ -81,14 +87,33 @@ export function ReviewPage() {
   const [sourceName, setSourceName] = useState<string | null>(null);
   const [format, setFormat] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  // Explicit per-card selection. `selectAllMatching` overrides it: the bulk
+  // action then targets every release matching the current filters (resolved
+  // server-side), not just the checked ids on this page.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
+  const [
+    confirmRejectOpen,
+    { open: openConfirmReject, close: closeConfirmReject },
+  ] = useDisclosure(false);
+
+  const resetSelection = () => {
+    setSelected(new Set());
+    setSelectAllMatching(false);
+  };
 
   // Debounce the search box so each keystroke doesn't fire a request. A
   // settled query also restarts pagination: a narrower result set could
-  // otherwise leave the operator stranded on a now-empty page.
+  // otherwise leave the operator stranded on a now-empty page. The matching
+  // set changes too, so any in-flight selection is dropped.
   useEffect(() => {
     const handle = window.setTimeout(() => {
       setDebouncedQ(searchInput);
       setPage(1);
+      // Inline the reset (rather than calling resetSelection) so the effect's
+      // only dependency stays `searchInput`; the state setters are stable.
+      setSelected(new Set());
+      setSelectAllMatching(false);
     }, 300);
     return () => window.clearTimeout(handle);
   }, [searchInput]);
@@ -101,23 +126,28 @@ export function ReviewPage() {
     status: status ?? undefined,
   });
   const retryAll = useRetryAllReleases();
+  const bulkRetry = useBulkRetry();
+  const bulkReject = useBulkReject();
 
   const hasFilters = Boolean(
     debouncedQ.trim() || sourceName || format || status,
   );
-  // The select filters reset pagination synchronously on change (the search
-  // box does so via its debounce effect above).
+  // The select filters reset pagination + selection synchronously on change
+  // (the search box does so via its debounce effect above).
   const changeSource = (v: string | null) => {
     setSourceName(v);
     setPage(1);
+    resetSelection();
   };
   const changeFormat = (v: string | null) => {
     setFormat(v);
     setPage(1);
+    resetSelection();
   };
   const changeStatus = (v: string | null) => {
     setStatus(v);
     setPage(1);
+    resetSelection();
   };
   const clearFilters = () => {
     setSearchInput("");
@@ -126,11 +156,102 @@ export function ReviewPage() {
     setFormat(null);
     setStatus(null);
     setPage(1);
+    resetSelection();
+  };
+  // Paging is a different view of the same filtered set; drop the per-page
+  // selection so a stale checkbox can't ride along to the next page.
+  const changePage = (p: number) => {
+    setPage(p);
+    resetSelection();
   };
 
   const total = queue.data?.total ?? 0;
   const pageSize = queue.data?.pageSize ?? 20;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const items = queue.data?.items ?? [];
+  const pageIds = items.map((i) => i.id);
+  const allPageSelected =
+    pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+  const somePageSelected = pageIds.some((id) => selected.has(id));
+  // More matching releases exist than this page shows: offer "select all".
+  const moreMatchThanPage = total > items.length;
+  const selectionCount = selectAllMatching ? total : selected.size;
+
+  const toggleOne = (id: string) => {
+    setSelectAllMatching(false);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const toggleAllOnPage = () => {
+    setSelectAllMatching(false);
+    setSelected((prev) => {
+      if (pageIds.every((id) => prev.has(id))) return new Set();
+      return new Set(pageIds);
+    });
+  };
+
+  const bulkBody = (): BulkReviewRequest =>
+    selectAllMatching
+      ? {
+          ids: [],
+          q: debouncedQ.trim() || null,
+          sourceName,
+          format,
+          status,
+        }
+      : {
+          ids: [...selected],
+          q: null,
+          sourceName: null,
+          format: null,
+          status: null,
+        };
+
+  const handleBulkRetry = () => {
+    bulkRetry.mutate(bulkBody(), {
+      onSuccess: (data) => {
+        notifications.show({
+          color: data?.skipped ? "gray" : "blue",
+          message: data?.skipped
+            ? "Retry already in progress"
+            : `Re-running resolver on ${data?.matched ?? 0} release${data?.matched === 1 ? "" : "s"}`,
+        });
+        resetSelection();
+      },
+      onError: (e) =>
+        notifications.show({
+          color: "red",
+          title: "Bulk retry failed",
+          message: (e as Error).message,
+        }),
+    });
+  };
+
+  const handleBulkReject = () => {
+    bulkReject.mutate(bulkBody(), {
+      onSuccess: (data) => {
+        notifications.show({
+          color: "gray",
+          message: `Rejected ${data?.rejected ?? 0} release${data?.rejected === 1 ? "" : "s"}`,
+        });
+        resetSelection();
+        closeConfirmReject();
+      },
+      onError: (e) => {
+        notifications.show({
+          color: "red",
+          title: "Bulk reject failed",
+          message: (e as Error).message,
+        });
+        closeConfirmReject();
+      },
+    });
+  };
 
   const handleRetryAll = () => {
     retryAll.mutate(undefined, {
@@ -224,18 +345,134 @@ export function ReviewPage() {
       )}
 
       {queue.data && queue.data.items.length > 0 && (
-        <Stack gap="md">
-          {queue.data.items.map((item) => (
-            <ReviewCard key={item.id} item={item} />
-          ))}
-        </Stack>
+        <>
+          <Group
+            justify="space-between"
+            align="center"
+            wrap="wrap"
+            gap="sm"
+            data-testid="review-selection-bar"
+          >
+            <Group gap="sm" align="center">
+              <Checkbox
+                size="sm"
+                checked={allPageSelected}
+                indeterminate={somePageSelected && !allPageSelected}
+                onChange={toggleAllOnPage}
+                label="Select page"
+                data-testid="select-all-page"
+              />
+              {/* When more matching releases exist than this page shows,
+                  offer to act on the whole filtered set. */}
+              {allPageSelected &&
+                moreMatchThanPage &&
+                (selectAllMatching ? (
+                  <Text size="sm" data-testid="select-all-matching-active">
+                    All {total.toLocaleString()} matching selected.{" "}
+                    <Anchor
+                      component="button"
+                      type="button"
+                      onClick={resetSelection}
+                    >
+                      Clear
+                    </Anchor>
+                  </Text>
+                ) : (
+                  <Anchor
+                    component="button"
+                    type="button"
+                    size="sm"
+                    onClick={() => setSelectAllMatching(true)}
+                    data-testid="select-all-matching"
+                  >
+                    Select all {total.toLocaleString()} matching
+                  </Anchor>
+                ))}
+            </Group>
+            {selectionCount > 0 && (
+              <Group gap="xs" data-testid="bulk-action-bar">
+                <Text size="sm" fw={500}>
+                  {selectionCount.toLocaleString()} selected
+                </Text>
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={handleBulkRetry}
+                  loading={bulkRetry.isPending}
+                  disabled={bulkReject.isPending}
+                  data-testid="bulk-retry"
+                >
+                  Retry
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="red"
+                  onClick={openConfirmReject}
+                  disabled={bulkRetry.isPending || bulkReject.isPending}
+                  data-testid="bulk-reject"
+                >
+                  Reject
+                </Button>
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  color="gray"
+                  onClick={resetSelection}
+                  data-testid="bulk-clear"
+                >
+                  Clear
+                </Button>
+              </Group>
+            )}
+          </Group>
+
+          <Stack gap="md">
+            {items.map((item) => (
+              <ReviewCard
+                key={item.id}
+                item={item}
+                selected={selected.has(item.id) || selectAllMatching}
+                onToggleSelect={() => toggleOne(item.id)}
+              />
+            ))}
+          </Stack>
+        </>
       )}
+
+      <Modal
+        opened={confirmRejectOpen}
+        onClose={closeConfirmReject}
+        title="Reject releases"
+        centered
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            Reject {selectionCount.toLocaleString()} release
+            {selectionCount === 1 ? "" : "s"}? They're marked rejected and
+            removed from the queue; the resolver leaves them alone afterward.
+          </Text>
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" onClick={closeConfirmReject}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              onClick={handleBulkReject}
+              loading={bulkReject.isPending}
+              data-testid="confirm-bulk-reject"
+            >
+              Reject {selectionCount.toLocaleString()}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       {totalPages > 1 && (
         <Center>
           <Pagination
             value={page}
-            onChange={setPage}
+            onChange={changePage}
             total={totalPages}
             size="sm"
           />
@@ -337,7 +574,15 @@ function ReviewFilterBar({
   );
 }
 
-function ReviewCard({ item }: { item: UnresolvedRelease }) {
+function ReviewCard({
+  item,
+  selected,
+  onToggleSelect,
+}: {
+  item: UnresolvedRelease;
+  selected: boolean;
+  onToggleSelect: () => void;
+}) {
   const link = useLinkRelease();
   const reject = useRejectRelease();
   const keep = useKeepRelease();
@@ -417,7 +662,18 @@ function ReviewCard({ item }: { item: UnresolvedRelease }) {
   return (
     <Paper withBorder radius="md" p="md" data-testid={`review-card-${item.id}`}>
       <Stack gap="sm">
-        <ReleaseHeader release={item} />
+        <Group align="flex-start" wrap="nowrap" gap="sm">
+          <Checkbox
+            mt={4}
+            checked={selected}
+            onChange={onToggleSelect}
+            aria-label="Select release"
+            data-testid={`select-${item.id}`}
+          />
+          <Box style={{ flex: 1, minWidth: 0 }}>
+            <ReleaseHeader release={item} />
+          </Box>
+        </Group>
         <ExtractedLinks links={item.extractedLinks} />
         <DescriptionBlock body={item.descriptionHtml} />
         <CleanupTrail

@@ -11,6 +11,7 @@ type UnresolvedRelease = components["schemas"]["UnresolvedRelease"];
 type UnresolvedPage = components["schemas"]["UnresolvedPage"];
 type LinkRequest = components["schemas"]["LinkRequest"];
 type CreateSeriesRequest = components["schemas"]["CreateSeriesRequest"];
+type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
 type TagList = components["schemas"]["TagList"];
 
 const NOW = Math.floor(Date.now() / 1000);
@@ -212,6 +213,27 @@ export function resetReviewQueue() {
     candidates: r.candidates.map((c) => ({ ...c })),
   }));
   kept = INITIAL_KEPT.map((r) => ({ ...r }));
+}
+
+// Resolve a bulk request body into the queue rows it targets, mirroring the
+// server: explicit `ids` win; otherwise the filter fields select the set
+// (with the status clamp).
+function bulkTargets(body: BulkReviewRequest): UnresolvedRelease[] {
+  const QUEUE_STATUSES = ["unresolved", "ambiguous", "review_pending"];
+  if (body.ids && body.ids.length > 0) {
+    const ids = new Set(body.ids);
+    return queue.filter((r) => ids.has(r.id));
+  }
+  const q = body.q?.trim().toLowerCase();
+  return queue.filter((r) => {
+    if (q && !r.title.toLowerCase().includes(q)) return false;
+    if (body.sourceName && r.sourceName !== body.sourceName) return false;
+    if (body.format && !r.formats.includes(body.format)) return false;
+    if (body.status && QUEUE_STATUSES.includes(body.status)) {
+      if (r.resolutionStatus !== body.status) return false;
+    }
+    return true;
+  });
 }
 
 function requireAdmin(request: Request): Response | null {
@@ -866,6 +888,34 @@ export const handlers = [
       total: filtered.length,
     };
     return HttpResponse.json(body);
+  }),
+
+  // Registered before the `:id` POST handlers below: MSW is first-match-wins,
+  // so `/releases/:id/reject` would otherwise swallow `/releases/bulk/reject`
+  // with id="bulk". (axum prioritizes the static segment, so the server is
+  // fine — this ordering only matters for the mock.)
+  http.post("/api/v1/releases/bulk/reject", async ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const body = (await request.json()) as BulkReviewRequest;
+    const targets = bulkTargets(body);
+    const ids = new Set(targets.map((r) => r.id));
+    queue = queue.filter((r) => !ids.has(r.id));
+    return HttpResponse.json({ rejected: targets.length });
+  }),
+
+  http.post("/api/v1/releases/bulk/retry", async ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const body = (await request.json()) as BulkReviewRequest;
+    const matched = bulkTargets(body).length;
+    // The mock doesn't re-resolve; rows stay in the queue (as they would
+    // until the background batch reclassifies them).
+    return HttpResponse.json({
+      triggered: matched > 0,
+      skipped: false,
+      matched,
+    });
   }),
 
   http.post("/api/v1/releases/:id/link", async ({ request, params }) => {
