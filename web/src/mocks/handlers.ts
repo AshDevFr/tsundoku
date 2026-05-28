@@ -276,6 +276,25 @@ export const ADMIN_TEST_TOKEN = ADMIN_TOKEN;
 export const handlers = [
   http.get("/api/v1/health", () => HttpResponse.json({ status: "ok" })),
 
+  http.get("/api/v1/info", () =>
+    HttpResponse.json({ name: "tsundoku", version: "1.0.1-mock" }),
+  ),
+
+  // SSE stream of job lifecycle events. The dev mock holds the
+  // connection open with a single keepalive comment so the browser's
+  // EventSource doesn't loop into reconnect attempts. No real events
+  // are emitted; admin pages fall back to the normal poll cadence.
+  http.get("/api/v1/events/jobs", () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(": keepalive\n\n"));
+      },
+    });
+    return new HttpResponse(stream, {
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  }),
+
   http.get("/api/v1/stats", () => {
     const stats: StatsResponse = {
       activeProvider: "mangabaka",
