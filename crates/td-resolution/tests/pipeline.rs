@@ -708,6 +708,187 @@ async fn format_type_mismatch_demotes_to_ambiguous_even_with_confident_match() {
     );
 }
 
+/// Two same-titled candidates exist on the provider (a manga and a
+/// novel adaptation, both at score ~1.0). For a CBZ-only release, the
+/// resolver must pick the manga — even if the novel sits first in the
+/// search results. This is the scenario from the Vexations-of-a-Shut-In-
+/// Vampire-Princess bug report.
+#[tokio::test]
+async fn fuzzy_title_with_cbz_prefers_manga_over_same_titled_novel() {
+    let db = fresh_db().await;
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let manga = SeriesMetadata {
+        external_id: "manga-1".into(),
+        canonical_title: "Vampire Princess".into(),
+        kind: Some(SeriesKind::Manga),
+        content_hash: "h-m".into(),
+        ..sample_metadata()
+    };
+    let novel = SeriesMetadata {
+        external_id: "novel-1".into(),
+        canonical_title: "Vampire Princess".into(),
+        kind: Some(SeriesKind::Novel),
+        content_hash: "h-n".into(),
+        ..novel_metadata()
+    };
+    provider.register_get(manga.clone());
+    provider.register_get(novel.clone());
+    // Both score 1.0. Order matters: the novel comes FIRST in the
+    // unfiltered ranking, so naive "best wins" picks it. Format-aware
+    // filtering must demote it.
+    provider.register_search(
+        "Vampire Princess",
+        vec![
+            SearchHit {
+                external_id: "novel-1".into(),
+                title: "Vampire Princess".into(),
+                year: None,
+                cover_url: None,
+                kind: Some(SeriesKind::Novel),
+                score: Some(1.0),
+            },
+            SearchHit {
+                external_id: "manga-1".into(),
+                title: "Vampire Princess".into(),
+                year: None,
+                cover_url: None,
+                kind: Some(SeriesKind::Manga),
+                score: Some(1.0),
+            },
+        ],
+    );
+    let registry = build_registry(provider.clone());
+    insert_release(&db, "r-cbz-prefer", "Vampire Princess", None, &["cbz"]).await;
+
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-cbz-prefer").await.unwrap();
+    assert_eq!(out.path, Some(ResolutionPath::FuzzyTitle));
+    assert_eq!(out.status, td_resolution::ResolutionStatus::Resolved);
+    let stored = releases::Entity::find_by_id("r-cbz-prefer".to_string())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let linked_series_id = stored.series_id.expect("series should be linked");
+    let linked = series::Entity::find_by_id(linked_series_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(linked.kind.as_deref(), Some("manga"));
+}
+
+/// When the release fires multiple format-type rules (cbz AND epub) and
+/// confident candidates exist in *both* the manga bucket and the novel
+/// bucket, the resolver refuses to guess: it routes the row to
+/// `review_pending` with one candidate per bucket so the operator can
+/// choose.
+#[tokio::test]
+async fn mixed_format_release_with_candidates_in_two_kinds_goes_to_review() {
+    let db = fresh_db().await;
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let manga = SeriesMetadata {
+        external_id: "manga-2".into(),
+        canonical_title: "Dual Form".into(),
+        kind: Some(SeriesKind::Manga),
+        content_hash: "h-mm".into(),
+        ..sample_metadata()
+    };
+    let novel = SeriesMetadata {
+        external_id: "novel-2".into(),
+        canonical_title: "Dual Form".into(),
+        kind: Some(SeriesKind::Novel),
+        content_hash: "h-nn".into(),
+        ..novel_metadata()
+    };
+    provider.register_get(manga);
+    provider.register_get(novel);
+    provider.register_search(
+        "Dual Form",
+        vec![
+            SearchHit {
+                external_id: "manga-2".into(),
+                title: "Dual Form".into(),
+                year: None,
+                cover_url: None,
+                kind: Some(SeriesKind::Manga),
+                score: Some(1.0),
+            },
+            SearchHit {
+                external_id: "novel-2".into(),
+                title: "Dual Form".into(),
+                year: None,
+                cover_url: None,
+                kind: Some(SeriesKind::Novel),
+                score: Some(1.0),
+            },
+        ],
+    );
+    let registry = build_registry(provider.clone());
+    insert_release(&db, "r-mixed", "Dual Form", None, &["cbz", "epub"]).await;
+
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-mixed").await.unwrap();
+    assert_eq!(out.status, td_resolution::ResolutionStatus::ReviewPending);
+    assert_eq!(out.series_id, None);
+    assert_eq!(out.path, None);
+    assert!(
+        out.reason
+            .as_deref()
+            .unwrap()
+            .contains("mixed_format_multi_kind")
+    );
+    let candidates = review_candidates::Entity::find()
+        .filter(review_candidates::Column::ReleaseId.eq("r-mixed"))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 2);
+}
+
+/// When the only fuzzy candidate is format-incompatible (e.g. a CBZ
+/// release whose sole same-titled match is a novel), the resolver still
+/// links the release to that candidate but demotes it to `ambiguous`,
+/// so the operator sees it in the review queue with the mismatch
+/// reason. Filtering must not silently drop the candidate.
+#[tokio::test]
+async fn fuzzy_title_with_only_incompatible_candidate_demotes_to_ambiguous() {
+    let db = fresh_db().await;
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let novel = SeriesMetadata {
+        external_id: "novel-3".into(),
+        canonical_title: "Only Novel".into(),
+        kind: Some(SeriesKind::Novel),
+        content_hash: "h-only".into(),
+        ..novel_metadata()
+    };
+    provider.register_get(novel);
+    provider.register_search(
+        "Only Novel",
+        vec![SearchHit {
+            external_id: "novel-3".into(),
+            title: "Only Novel".into(),
+            year: None,
+            cover_url: None,
+            kind: Some(SeriesKind::Novel),
+            score: Some(1.0),
+        }],
+    );
+    let registry = build_registry(provider.clone());
+    insert_release(&db, "r-only-novel", "Only Novel", None, &["cbz"]).await;
+
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-only-novel").await.unwrap();
+    assert_eq!(out.path, Some(ResolutionPath::FuzzyTitle));
+    assert_eq!(out.status, td_resolution::ResolutionStatus::Ambiguous);
+    assert!(
+        out.reason
+            .as_deref()
+            .unwrap()
+            .contains("format_type_mismatch")
+    );
+}
+
 #[tokio::test]
 async fn swapping_active_provider_changes_who_drives_resolution() {
     let db = fresh_db().await;
@@ -810,6 +991,93 @@ async fn resolve_unresolved_picks_up_only_unresolved_and_ambiguous() {
     // Untouched by the batch — attempts still 0.
     assert_eq!(u2.resolution_attempts, 0);
     assert_eq!(u2.resolution_status, "resolved");
+}
+
+#[tokio::test]
+async fn resolve_all_picks_up_resolved_rows_but_skips_manual_links() {
+    let db = fresh_db().await;
+    let provider = Arc::new(FakeProvider::new("mb"));
+    provider.register_foreign("mangaupdates", "ylx5wzn", sample_metadata());
+    let registry = build_registry(provider.clone());
+
+    let links = serde_json::json!({
+        "mangaupdates": "https://www.mangaupdates.com/series/ylx5wzn/x",
+        "anilist": null,
+        "mal": null,
+        "mangadex": null,
+    });
+    // Three releases all currently `resolved`:
+    // - auto: previously matched by the resolver, eligible for re-resolve.
+    // - manual: operator-linked via /releases/{id}/link, must be skipped.
+    // - rejected: out of bounds entirely.
+    insert_release(&db, "auto", "auto", Some(&links.to_string()), &["cbz"]).await;
+    insert_release(&db, "manual", "manual", Some(&links.to_string()), &["cbz"]).await;
+    insert_release(
+        &db,
+        "rejected",
+        "rejected",
+        Some(&links.to_string()),
+        &["cbz"],
+    )
+    .await;
+    let auto_row = releases::ActiveModel {
+        id: Set("auto".into()),
+        resolution_status: Set("resolved".into()),
+        resolution_path: Set(Some("foreign_id_lookup".into())),
+        ..Default::default()
+    };
+    releases::Entity::update(auto_row).exec(&db).await.unwrap();
+    let manual_row = releases::ActiveModel {
+        id: Set("manual".into()),
+        resolution_status: Set("resolved".into()),
+        resolution_path: Set(Some("manual".into())),
+        ..Default::default()
+    };
+    releases::Entity::update(manual_row)
+        .exec(&db)
+        .await
+        .unwrap();
+    let rejected_row = releases::ActiveModel {
+        id: Set("rejected".into()),
+        resolution_status: Set("rejected".into()),
+        resolution_path: Set(Some("rejected".into())),
+        ..Default::default()
+    };
+    releases::Entity::update(rejected_row)
+        .exec(&db)
+        .await
+        .unwrap();
+
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let summary = resolver.resolve_all(100).await.unwrap();
+    assert_eq!(summary.resolved, 1, "only the auto-resolved row re-runs");
+    assert_eq!(summary.errors, 0);
+
+    let auto = releases::Entity::find_by_id("auto".to_string())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(auto.resolution_attempts, 1);
+
+    let manual = releases::Entity::find_by_id("manual".to_string())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(manual.resolution_attempts, 0, "manual link must not retry");
+    assert_eq!(manual.resolution_path.as_deref(), Some("manual"));
+
+    let rejected = releases::Entity::find_by_id("rejected".to_string())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        rejected.resolution_attempts, 0,
+        "rejected row must not retry"
+    );
+    assert_eq!(rejected.resolution_status, "rejected");
 }
 
 #[tokio::test]

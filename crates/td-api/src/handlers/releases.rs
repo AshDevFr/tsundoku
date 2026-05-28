@@ -734,20 +734,40 @@ pub async fn retry(
     Ok(Json(model_to_release(row, formats)))
 }
 
+/// Query parameters for `POST /releases/retry-all`.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(default, rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct RetryAllQuery {
+    /// Also re-evaluate rows currently marked `resolved` (excluding
+    /// manually-linked ones). Use after changing format-type rules,
+    /// title-cleanup config, or the active provider's cache, when
+    /// previously-confident matches need to be reconsidered against the
+    /// new logic. `rejected`, `standalone`, and `manual`-path rows are
+    /// always excluded.
+    pub include_resolved: bool,
+}
+
 /// Re-run the resolver against every release currently visible in the
-/// review queue (`unresolved`, `ambiguous`, `review_pending`). Spawns a
-/// background task and returns immediately so the request doesn't block
-/// on what can be a multi-minute walk. A dedicated per-process lock
-/// prevents a second click from spawning a parallel walk; in that case
-/// the response is `{ triggered: false, skipped: true }`.
+/// review queue (`unresolved`, `ambiguous`, `review_pending`). With
+/// `?includeResolved=true`, also walks `resolved` rows (skipping
+/// manually-linked ones). Spawns a background task and returns
+/// immediately so the request doesn't block on what can be a multi-
+/// minute walk. A dedicated per-process lock prevents a second click
+/// from spawning a parallel walk; in that case the response is
+/// `{ triggered: false, skipped: true }`.
 #[utoipa::path(
     post,
     path = "/api/v1/releases/retry-all",
     tag = "releases",
+    params(RetryAllQuery),
     responses((status = 202, body = RetryAllResponse)),
     security(("admin" = []))
 )]
-pub async fn retry_all(State(state): State<AppState>) -> ApiResult<Json<RetryAllResponse>> {
+pub async fn retry_all(
+    State(state): State<AppState>,
+    Query(query): Query<RetryAllQuery>,
+) -> ApiResult<Json<RetryAllResponse>> {
     let lock = state.locks.retry_all_releases_lock();
     let Ok(guard) = lock.try_lock_owned() else {
         return Ok(Json(RetryAllResponse {
@@ -761,6 +781,7 @@ pub async fn retry_all(State(state): State<AppState>) -> ApiResult<Json<RetryAll
     let ingestion = state.ingestion.clone();
     let query_builder = state.query_builder.clone();
     let mu_redirector = state.mangaupdates_redirector.clone();
+    let include_resolved = query.include_resolved;
 
     tokio::spawn(async move {
         let _g = guard;
@@ -768,8 +789,14 @@ pub async fn retry_all(State(state): State<AppState>) -> ApiResult<Json<RetryAll
         if let Some(r) = mu_redirector {
             resolver = resolver.with_mangaupdates_redirector(r);
         }
-        match resolver.resolve_review_queue(RETRY_ALL_BATCH_LIMIT).await {
+        let result = if include_resolved {
+            resolver.resolve_all(RETRY_ALL_BATCH_LIMIT).await
+        } else {
+            resolver.resolve_review_queue(RETRY_ALL_BATCH_LIMIT).await
+        };
+        match result {
             Ok(summary) => tracing::info!(
+                include_resolved,
                 resolved = summary.resolved,
                 ambiguous = summary.ambiguous,
                 review_pending = summary.review_pending,
@@ -778,7 +805,7 @@ pub async fn retry_all(State(state): State<AppState>) -> ApiResult<Json<RetryAll
                 total = summary.total(),
                 "retry-all batch completed"
             ),
-            Err(e) => tracing::warn!(error = ?e, "retry-all batch failed"),
+            Err(e) => tracing::warn!(error = ?e, include_resolved, "retry-all batch failed"),
         }
     });
 

@@ -640,8 +640,19 @@
         "tags": [
           "releases"
         ],
-        "summary": "Re-run the resolver against every release currently visible in the\nreview queue (`unresolved`, `ambiguous`, `review_pending`). Spawns a\nbackground task and returns immediately so the request doesn't block\non what can be a multi-minute walk. A dedicated per-process lock\nprevents a second click from spawning a parallel walk; in that case\nthe response is `{ triggered: false, skipped: true }`.",
+        "summary": "Re-run the resolver against every release currently visible in the\nreview queue (`unresolved`, `ambiguous`, `review_pending`). With\n`?includeResolved=true`, also walks `resolved` rows (skipping\nmanually-linked ones). Spawns a background task and returns\nimmediately so the request doesn't block on what can be a multi-\nminute walk. A dedicated per-process lock prevents a second click\nfrom spawning a parallel walk; in that case the response is\n`{ triggered: false, skipped: true }`.",
         "operationId": "retry_all",
+        "parameters": [
+          {
+            "name": "includeResolved",
+            "in": "query",
+            "description": "Also re-evaluate rows currently marked `resolved` (excluding\nmanually-linked ones). Use after changing format-type rules,\ntitle-cleanup config, or the active provider's cache, when\npreviously-confident matches need to be reconsidered against the\nnew logic. `rejected`, `standalone`, and `manual`-path rows are\nalways excluded.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "202": {
             "description": "",

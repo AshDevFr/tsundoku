@@ -31,7 +31,7 @@ use crate::mangaupdates_redirect::{MangaUpdatesRedirector, ResolveOutcome};
 use crate::persist::{self, UpsertResult};
 use crate::query_builder::{CleanedQuery, QueryBuilder};
 use crate::scoring::dice;
-use crate::validation::{self, ValidationOutcome};
+use crate::validation::{self, FormatKindGroups, ValidationOutcome};
 
 /// How a release was matched. Persisted to `releases.resolution_path`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,6 +168,41 @@ impl Resolver {
             .await
     }
 
+    /// Like [`Self::resolve_review_queue`] but also walks rows currently
+    /// marked `resolved`. Use after changing `format_type_rules`,
+    /// `cleanup`, or the active provider's offline cache, when a
+    /// previously-confident match needs to be re-evaluated against the
+    /// new logic.
+    ///
+    /// Excluded by design:
+    /// - `rejected` / `standalone` — operator decisions.
+    /// - any row whose `resolution_path` is `'manual'` — set by
+    ///   `POST /releases/{id}/link`; re-resolving would silently
+    ///   overwrite the operator's manual relink. Operators that want to
+    ///   force a manual re-resolve still have `POST /bulk/retry` with
+    ///   explicit ids.
+    pub async fn resolve_all(&self, batch_limit: u64) -> Result<RetrySummary> {
+        let mut summary = RetrySummary::default();
+        let mut rows = Vec::new();
+        for status in ["unresolved", "ambiguous", "review_pending"] {
+            rows.extend(releases_repo::list_by_status(&self.db, status, batch_limit).await?);
+        }
+        rows.extend(
+            releases_repo::list_by_status_excluding_manual(&self.db, "resolved", batch_limit)
+                .await?,
+        );
+        for row in rows {
+            match self.resolve_release(&row).await {
+                Ok(outcome) => summary.observe(outcome.status),
+                Err(e) => {
+                    tracing::warn!(error = ?e, release_id = %row.id, "resolver failed");
+                    summary.errors += 1;
+                }
+            }
+        }
+        Ok(summary)
+    }
+
     /// Re-run the resolver against an explicit set of release ids. Mirrors
     /// [`resolve_review_queue`] but targets the exact selection a bulk-retry
     /// request resolved from its filters, rather than a status sweep. An id
@@ -282,7 +317,41 @@ impl Resolver {
             .step_fuzzy_title(&active_id, active.as_ref(), &cleaned)
             .await?;
 
-        if let Some((hit, score)) = fuzzy.best_above_threshold(self.config.resolution_threshold) {
+        // Format-to-kind rules influence candidate selection in two ways:
+        //  - Mixed-format release (e.g. cbz + epub) with confident hits in
+        //    more than one rule's required-kinds → operator must choose,
+        //    so route directly to review with one candidate per bucket.
+        //  - Single-format release (e.g. cbz only) → drop hits whose kind
+        //    sits outside the firing rule's required-kinds before picking
+        //    a winner, so a same-titled novel can't steal a CBZ release
+        //    from its manga counterpart.
+        // When no rule fires (no format the rules care about), the
+        // filtering is a no-op and the legacy "best score wins" behavior
+        // applies.
+        let groups = validation::rule_groups(&self.config.format_type_rules, &formats);
+
+        if let Some(top_per_bucket) =
+            multi_bucket_confident_hits(&groups, &fuzzy.hits, self.config.resolution_threshold)
+        {
+            let outcome = self
+                .finalize_multi_bucket_review(
+                    release,
+                    &top_per_bucket,
+                    &active_id,
+                    active.as_ref(),
+                    now,
+                )
+                .await?;
+            self.write_outcome(&outcome, attempted_at).await?;
+            return Ok(outcome);
+        }
+
+        let filtered = filter_compatible_hits(&groups, &fuzzy.hits);
+        let primary_hits: &[(SearchHit, f32)] = filtered.as_deref().unwrap_or(&fuzzy.hits);
+
+        if let Some((hit, score)) =
+            best_above_threshold(primary_hits, self.config.resolution_threshold)
+        {
             // Above the confident threshold → fetch full metadata, persist,
             // run validation.
             let metadata = active
@@ -306,7 +375,10 @@ impl Resolver {
             }
         }
 
-        // Below threshold: maybe queue for review.
+        // Below threshold: maybe queue for review. Use the full hit list
+        // (including format-incompatible ones) so the operator sees every
+        // candidate the fuzzy step found — the review UI can still flag
+        // format mismatches via the candidate's own `kind`.
         let outcome = self
             .finalize_low_confidence(release, &fuzzy.hits, &active_id, active.as_ref(), now)
             .await?;
@@ -654,6 +726,78 @@ impl Resolver {
         })
     }
 
+    /// Persist one candidate per rule-bucket and mark the release
+    /// `review_pending`. Called when the release's format set fires
+    /// multiple format-type rules and high-confidence hits exist in more
+    /// than one rule's required-kinds (e.g. a CBZ+EPUB release with a
+    /// same-titled manga and novel both at score 1.0). The operator picks
+    /// the correct kind in the review UI; the resolver refuses to guess.
+    async fn finalize_multi_bucket_review(
+        &self,
+        release: &releases_entity::Model,
+        scored: &[(SearchHit, f32)],
+        active_id: &str,
+        active: &dyn td_metadata::MetadataProvider,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<ResolutionOutcome> {
+        let mut candidate_rows = Vec::with_capacity(scored.len());
+        for (hit, score) in scored {
+            let metadata = match active.get(&hit.external_id).await {
+                Ok(Some(m)) => m,
+                Ok(None) => {
+                    tracing::debug!(provider = %active_id, id = %hit.external_id,
+                        "mixed-format candidate present in search() but absent from get(); skipping");
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(error = ?e, provider = %active_id, id = %hit.external_id,
+                        "fetching mixed-format candidate metadata failed");
+                    continue;
+                }
+            };
+            let UpsertResult { series_id, .. } = persist::upsert_series_from_metadata(
+                &self.db,
+                active_id,
+                &metadata,
+                release.posted_at,
+                now,
+                false,
+            )
+            .await?;
+            let s = *score;
+            candidate_rows.push(review_candidates::ActiveModel {
+                release_id: sea_orm::Set(release.id.clone()),
+                series_id: sea_orm::Set(series_id),
+                score: sea_orm::Set(s as f64),
+                reason: sea_orm::Set(Some(format!("mixed_format:{:.3}", s))),
+            });
+        }
+
+        if candidate_rows.is_empty() {
+            // All `get()` calls failed; fall back to unresolved so the
+            // next retry can rebuild candidates from a fresh fetch.
+            review_repo::replace_for_release(&self.db, &release.id, Vec::new()).await?;
+            return Ok(ResolutionOutcome {
+                release_id: release.id.clone(),
+                series_id: None,
+                path: None,
+                confidence: scored.first().map(|(_, s)| *s as f64),
+                status: ResolutionStatus::Unresolved,
+                reason: Some("candidate_fetch_failed".into()),
+            });
+        }
+
+        review_repo::replace_for_release(&self.db, &release.id, candidate_rows).await?;
+        Ok(ResolutionOutcome {
+            release_id: release.id.clone(),
+            series_id: None,
+            path: None,
+            confidence: scored.first().map(|(_, s)| *s as f64),
+            status: ResolutionStatus::ReviewPending,
+            reason: Some("mixed_format_multi_kind".into()),
+        })
+    }
+
     async fn write_outcome(&self, outcome: &ResolutionOutcome, attempted_at: i64) -> Result<()> {
         persist::link_release(
             &self.db,
@@ -697,15 +841,6 @@ struct FuzzyResults {
     hits: Vec<(SearchHit, f32)>,
 }
 
-impl FuzzyResults {
-    fn best_above_threshold(&self, threshold: f32) -> Option<(&SearchHit, f32)> {
-        self.hits
-            .first()
-            .filter(|(_, score)| *score >= threshold)
-            .map(|(h, s)| (h, *s))
-    }
-}
-
 fn parse_external_links(json: Option<&str>) -> ExternalLinks {
     json.and_then(|j| serde_json::from_str::<ExternalLinks>(j).ok())
         .unwrap_or_default()
@@ -735,4 +870,63 @@ fn format_type_mismatch_reason(
         required_kinds,
         series_kind.unwrap_or("<unknown>")
     )
+}
+
+/// First hit at-or-above `threshold`. The slice is assumed sorted in
+/// descending score order (the fuzzy step does that).
+fn best_above_threshold(scored: &[(SearchHit, f32)], threshold: f32) -> Option<(&SearchHit, f32)> {
+    scored
+        .first()
+        .filter(|(_, score)| *score >= threshold)
+        .map(|(h, s)| (h, *s))
+}
+
+/// When the release's format set fires multiple format-type rules,
+/// return the top-scoring candidate per bucket — but only if at least
+/// two buckets have a candidate at-or-above `threshold`. Returns `None`
+/// in every other case (single bucket, no rules firing, only one bucket
+/// has a confident hit) so the caller can take its normal "best wins"
+/// path.
+fn multi_bucket_confident_hits(
+    groups: &FormatKindGroups,
+    scored: &[(SearchHit, f32)],
+    threshold: f32,
+) -> Option<Vec<(SearchHit, f32)>> {
+    if groups.groups.len() < 2 {
+        return None;
+    }
+    let mut top: Vec<Option<(SearchHit, f32)>> = vec![None; groups.groups.len()];
+    for (hit, score) in scored {
+        if *score < threshold {
+            // Slice is sorted descending; everything past here is below.
+            break;
+        }
+        for idx in groups.bucket_indexes_for(hit.kind.as_ref()) {
+            if top[idx].is_none() {
+                top[idx] = Some((hit.clone(), *score));
+            }
+        }
+    }
+    let filled: Vec<(SearchHit, f32)> = top.into_iter().flatten().collect();
+    (filled.len() >= 2).then_some(filled)
+}
+
+/// Drop hits whose `kind` is outside any firing rule's required-kinds.
+/// Returns `None` when there's nothing to filter (unconstrained) or when
+/// every hit would be filtered out (caller falls back to the original
+/// list so post-match validation can still link-and-flag the best
+/// available candidate as `ambiguous`).
+fn filter_compatible_hits(
+    groups: &FormatKindGroups,
+    scored: &[(SearchHit, f32)],
+) -> Option<Vec<(SearchHit, f32)>> {
+    if groups.is_unconstrained() {
+        return None;
+    }
+    let kept: Vec<(SearchHit, f32)> = scored
+        .iter()
+        .filter(|(h, _)| groups.is_kind_compatible(h.kind.as_ref()))
+        .cloned()
+        .collect();
+    if kept.is_empty() { None } else { Some(kept) }
 }

@@ -1,14 +1,19 @@
-//! `tsundoku resolve [--retry-unresolved]`.
+//! `tsundoku resolve [--retry-unresolved] [--include-resolved]`.
 //!
-//! Drives the resolution pipeline against persisted releases. Two modes:
+//! Drives the resolution pipeline against persisted releases. Three modes:
 //!
 //! - **Default**: walk every release whose `resolution_status` is
-//!   `unresolved`. Useful for the first run after a fresh poll, before
-//!   the scheduler is wired up (Phase 6).
-//! - **`--retry-unresolved`**: also include `ambiguous` rows. Used when
-//!   the operator updates `[ingestion.format_type_rules]` or refreshes
-//!   the provider's offline cache and wants the existing review queue
-//!   re-evaluated against the new state.
+//!   `unresolved` or `ambiguous`. Useful for the first run after a fresh
+//!   poll, before the scheduler is wired up.
+//! - **`--retry-unresolved`**: same set as default today (kept for CLI
+//!   surface stability).
+//! - **`--include-resolved`**: also re-evaluate rows currently marked
+//!   `resolved`, skipping manually-linked rows. Use after changing
+//!   `[ingestion.format_type_rules]` or `[ingestion.cleanup]` so the
+//!   updated logic is applied to already-linked rows. Prefer the
+//!   `POST /api/v1/releases/retry-all?includeResolved=true` endpoint
+//!   when `serve` is running — both processes writing to the same
+//!   SQLite file will contend for the write lock.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,7 +25,11 @@ use td_resolution::query_builder::QueryBuilder;
 
 const DEFAULT_BATCH_SIZE: u64 = 1000;
 
-pub async fn run(config_path: PathBuf, retry_unresolved: bool) -> Result<()> {
+pub async fn run(
+    config_path: PathBuf,
+    retry_unresolved: bool,
+    include_resolved: bool,
+) -> Result<()> {
     let cfg = td_config::load(&config_path)
         .with_context(|| format!("loading config from {}", config_path.display()))?;
     super::init_tracing(&cfg);
@@ -52,7 +61,11 @@ pub async fn run(config_path: PathBuf, retry_unresolved: bool) -> Result<()> {
     // exposes the intent in the CLI surface (and gives us a hook if we
     // later want a default-mode that skips `ambiguous`).
     let _ = retry_unresolved;
-    let summary = resolver.resolve_unresolved(DEFAULT_BATCH_SIZE).await?;
+    let summary = if include_resolved {
+        resolver.resolve_all(DEFAULT_BATCH_SIZE).await?
+    } else {
+        resolver.resolve_unresolved(DEFAULT_BATCH_SIZE).await?
+    };
 
     println!("\nresolve summary:");
     println!("  resolved        {}", summary.resolved);

@@ -68,7 +68,13 @@ enum Commands {
     },
     /// Walk releases that have not been resolved yet and run them through
     /// the resolution pipeline. With `--retry-unresolved`, also re-run
-    /// rows currently marked `ambiguous`.
+    /// rows currently marked `ambiguous`. With `--include-resolved`,
+    /// also re-evaluate rows currently marked `resolved` (skipping
+    /// manually-linked ones) — use after changing format-type rules or
+    /// title-cleanup config. Note: with `serve` running, prefer
+    /// `POST /api/v1/releases/retry-all?includeResolved=true`, since
+    /// running this CLI in parallel against the same SQLite file will
+    /// contend for the write lock.
     Resolve {
         #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
         config: PathBuf,
@@ -76,6 +82,11 @@ enum Commands {
         /// provider refresh or a rules change).
         #[arg(long)]
         retry_unresolved: bool,
+        /// Also re-evaluate rows currently marked `resolved`. Excludes
+        /// manually-linked rows (resolution_path = 'manual') so a bulk
+        /// retry doesn't overwrite operator decisions.
+        #[arg(long)]
+        include_resolved: bool,
     },
     /// One-shot historical catch-up for a single source. Walks the
     /// source's paginated HTML listing for `--pages` pages, persisting
@@ -116,7 +127,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Resolve {
             config,
             retry_unresolved,
-        } => commands::resolve::run(config, retry_unresolved).await,
+            include_resolved,
+        } => commands::resolve::run(config, retry_unresolved, include_resolved).await,
         Commands::Backfill {
             config,
             source,

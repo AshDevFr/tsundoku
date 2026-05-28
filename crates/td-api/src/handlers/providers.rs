@@ -462,7 +462,7 @@ fn stub_hit(hit: td_metadata::SearchHit, score: f32) -> ProviderSearchHit {
         // once the hit is enriched via the provider's `get`.
         total_volumes: None,
         total_chapters: None,
-        kind: None,
+        kind: hit.kind.as_ref().map(series_kind_str),
         status: None,
         native_title: None,
         genres: Vec::new(),

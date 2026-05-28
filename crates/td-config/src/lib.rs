@@ -516,11 +516,39 @@ impl Default for IngestionConfig {
             review_threshold: 0.55,
             fuzzy_search_limit: 10,
             queue_low_confidence: true,
-            format_type_rules: Vec::new(),
+            format_type_rules: default_format_type_rules(),
             cleanup: CleanupConfig::default(),
             http: HttpConfig::default(),
         }
     }
+}
+
+/// The format-to-kind ruleset shipped out of the box. Operators can
+/// override (or clear) it via `[[ingestion.format_type_rules]]`; an empty
+/// list disables format-type validation entirely.
+///
+/// The defaults reflect the resolver's most common mistake: matching a
+/// `cbz` release to a same-titled `novel` series (e.g. light novel
+/// adaptations of a manga sharing the canonical title). Image-comic
+/// archives are restricted to image-comic kinds; e-book formats to
+/// novels.
+fn default_format_type_rules() -> Vec<FormatTypeRule> {
+    vec![
+        FormatTypeRule {
+            formats: vec!["cbz".into(), "cbr".into(), "zip".into(), "rar".into()],
+            required_kinds: vec![
+                "manga".into(),
+                "manhwa".into(),
+                "manhua".into(),
+                "one_shot".into(),
+                "oel".into(),
+            ],
+        },
+        FormatTypeRule {
+            formats: vec!["epub".into(), "azw3".into(), "mobi".into()],
+            required_kinds: vec!["novel".into()],
+        },
+    ]
 }
 
 impl Default for NyaaSourceOptions {
@@ -998,6 +1026,60 @@ min_gap_ms  = 250
         let cfg = load(&PathBuf::from("does-not-exist.toml")).unwrap();
         assert!((cfg.ingestion.resolution_threshold - 0.85).abs() < 1e-6);
         assert!(cfg.ingestion.queue_low_confidence);
+        // The CBZ → novel mismatch is the most common resolver failure mode
+        // (matching same-titled light-novel adaptations to a manga
+        // release). Ship the rule list so unconfigured deployments catch
+        // it out of the box; operators can clear it explicitly by setting
+        // `[ingestion] format_type_rules = []` in their config.
+        let rules = &cfg.ingestion.format_type_rules;
+        let cbz_rule = rules
+            .iter()
+            .find(|r| r.formats.iter().any(|f| f.eq_ignore_ascii_case("cbz")))
+            .expect("default rules include a cbz rule");
+        assert!(
+            cbz_rule
+                .required_kinds
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case("manga"))
+        );
+        assert!(
+            !cbz_rule
+                .required_kinds
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case("novel")),
+            "novel must not be an allowed kind for cbz",
+        );
+        let epub_rule = rules
+            .iter()
+            .find(|r| r.formats.iter().any(|f| f.eq_ignore_ascii_case("epub")))
+            .expect("default rules include an epub rule");
+        assert_eq!(
+            epub_rule
+                .required_kinds
+                .iter()
+                .map(|s| s.to_ascii_lowercase())
+                .collect::<Vec<_>>(),
+            vec!["novel".to_string()]
+        );
+    }
+
+    #[test]
+    fn ingestion_format_type_rules_explicit_empty_disables_validation() {
+        // Operators opt out by writing `format_type_rules = []`. Figment
+        // takes the user-provided empty array over the Serialized default.
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[ingestion]
+format_type_rules = []
+"#
+        )
+        .unwrap();
+        let cfg = load(&path).unwrap();
         assert!(cfg.ingestion.format_type_rules.is_empty());
     }
 

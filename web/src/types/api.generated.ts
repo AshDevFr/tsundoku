@@ -333,11 +333,13 @@ export interface paths {
         put?: never;
         /**
          * Re-run the resolver against every release currently visible in the
-         *     review queue (`unresolved`, `ambiguous`, `review_pending`). Spawns a
-         *     background task and returns immediately so the request doesn't block
-         *     on what can be a multi-minute walk. A dedicated per-process lock
-         *     prevents a second click from spawning a parallel walk; in that case
-         *     the response is `{ triggered: false, skipped: true }`.
+         *     review queue (`unresolved`, `ambiguous`, `review_pending`). With
+         *     `?includeResolved=true`, also walks `resolved` rows (skipping
+         *     manually-linked ones). Spawns a background task and returns
+         *     immediately so the request doesn't block on what can be a multi-
+         *     minute walk. A dedicated per-process lock prevents a second click
+         *     from spawning a parallel walk; in that case the response is
+         *     `{ triggered: false, skipped: true }`.
          */
         post: operations["retry_all"];
         delete?: never;
@@ -1865,7 +1867,17 @@ export interface operations {
     };
     retry_all: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Also re-evaluate rows currently marked `resolved` (excluding
+                 *     manually-linked ones). Use after changing format-type rules,
+                 *     title-cleanup config, or the active provider's cache, when
+                 *     previously-confident matches need to be reconsidered against the
+                 *     new logic. `rejected`, `standalone`, and `manual`-path rows are
+                 *     always excluded.
+                 */
+                includeResolved?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;

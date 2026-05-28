@@ -166,6 +166,28 @@ pub async fn list_by_status(
         .await?)
 }
 
+/// Variant of [`list_by_status`] used by the "retry all (including
+/// resolved)" path. Excludes rows whose `resolution_path` is `'manual'`:
+/// those represent operator decisions made via `POST /releases/{id}/link`
+/// and must not be silently overwritten by a bulk re-resolve.
+pub async fn list_by_status_excluding_manual(
+    db: &DatabaseConnection,
+    status: &str,
+    limit: u64,
+) -> Result<Vec<Model>> {
+    Ok(releases::Entity::find()
+        .filter(releases::Column::ResolutionStatus.eq(status))
+        .filter(
+            releases::Column::ResolutionPath
+                .ne("manual")
+                .or(releases::Column::ResolutionPath.is_null()),
+        )
+        .order_by_desc(releases::Column::ObservedAt)
+        .limit(limit)
+        .all(db)
+        .await?)
+}
+
 /// Record resolution outcome on a release. Does not touch the format rows.
 pub async fn set_resolution(
     db: &DatabaseConnection,
