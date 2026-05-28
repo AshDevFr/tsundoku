@@ -74,6 +74,11 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
             .context("building title cleaner from ingestion.cleanup config")?,
     );
 
+    // Single broadcast channel feeds both the scheduler (cron-driven
+    // progress frames) and the API (manual-trigger lifecycle + SSE
+    // delivery). The sender clones cheaply; one underlying ring buffer.
+    let (job_events, _) = tokio::sync::broadcast::channel(td_api::JOB_EVENT_BUFFER);
+
     let ctx = SchedulerContext {
         db: db.clone(),
         sources: sources.clone(),
@@ -82,6 +87,7 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
         locks: locks.clone(),
         query_builder: query_builder.clone(),
         mangaupdates_redirector: mu_redirector.clone(),
+        job_events: job_events.clone(),
     };
     let scheduler = Scheduler::build(&cfg, ctx).await?;
     scheduler.start().await?;
@@ -93,7 +99,6 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
     // cron just `try_lock`s and skips. Errors are logged inside `run_tick`.
     spawn_startup_refreshes(metadata.clone(), db.clone(), locks.clone());
 
-    let (job_events, _) = tokio::sync::broadcast::channel(td_api::JOB_EVENT_BUFFER);
     let state = AppState {
         db,
         sources,

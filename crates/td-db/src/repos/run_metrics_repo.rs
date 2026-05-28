@@ -311,16 +311,85 @@ pub async fn finalize_series_refresh_run<C: ConnectionTrait>(
 
 /// Latest in-flight run row for a single source / provider / series-refresh
 /// stream. Returned by the `find_in_flight_*` finders so the listing
-/// handlers can hydrate the "currently running" pill without depending on
-/// the in-memory SSE channel (which is per-connection and empty on a
-/// fresh page load).
-///
-/// Carries only the columns the UI needs in Phase 1: when the row started.
-/// Progress columns join here once Phase 2 lands.
-#[derive(Debug, Clone, Copy, Serialize, FromQueryResult)]
+/// handlers can hydrate the "currently running" pill (and any
+/// last-checkpoint progress numbers) without depending on the in-memory
+/// SSE channel (which is per-connection and empty on a fresh page load).
+#[derive(Debug, Clone, Serialize, FromQueryResult)]
 #[serde(rename_all = "camelCase")]
 pub struct InFlightRunRow {
     pub started_at: i64,
+    /// Last-checkpointed progress current value. `None` when the job
+    /// doesn't report progress or hasn't reached its first checkpoint yet.
+    pub progress_current: Option<i64>,
+    pub progress_total: Option<i64>,
+    pub progress_phase: Option<String>,
+}
+
+/// Table this helper writes progress columns to. Picked once per
+/// `ProgressHandle` so the throttled UPDATE knows which physical table to
+/// touch without us pulling in a generic over `EntityTrait`.
+#[derive(Debug, Clone, Copy)]
+pub enum ProgressTable {
+    PollRuns,
+    ProviderRefreshes,
+    SeriesRefreshRuns,
+}
+
+impl ProgressTable {
+    fn name(self) -> &'static str {
+        match self {
+            Self::PollRuns => "poll_runs",
+            Self::ProviderRefreshes => "provider_refreshes",
+            Self::SeriesRefreshRuns => "series_refresh_runs",
+        }
+    }
+}
+
+/// Snapshot of the values `ProgressHandle` wants written. Total and phase
+/// are nullable so a checkpoint that's "only ticking the counter" doesn't
+/// overwrite an earlier phase string.
+#[derive(Debug, Clone)]
+pub struct ProgressSnapshot {
+    pub current: i64,
+    pub total: Option<i64>,
+    pub phase: Option<String>,
+}
+
+/// Throttled progress UPDATE for an in-flight `*_runs` row.
+///
+/// Hot path: called from inside a job loop, potentially many times. Touches
+/// only the three progress columns; never finalizes the row or clears the
+/// `running` status (that's `finalize_*_run`'s job).
+///
+/// `total` is treated as "set if Some, leave alone if None" via SQLite's
+/// `COALESCE(?, progress_total)` — that way `tick_to(...)` calls that
+/// don't carry a new total don't blow away one a prior `set_total` set.
+pub async fn record_progress<C: ConnectionTrait>(
+    db: &C,
+    table: ProgressTable,
+    row_id: i64,
+    snapshot: &ProgressSnapshot,
+) -> Result<()> {
+    let sql = format!(
+        "UPDATE {} SET
+            progress_current = ?1,
+            progress_total = COALESCE(?2, progress_total),
+            progress_phase = COALESCE(?3, progress_phase)
+        WHERE id = ?4",
+        table.name()
+    );
+    let stmt = Statement::from_sql_and_values(
+        db.get_database_backend(),
+        sql,
+        [
+            snapshot.current.into(),
+            snapshot.total.into(),
+            snapshot.phase.clone().into(),
+            row_id.into(),
+        ],
+    );
+    db.execute(stmt).await?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, FromQueryResult)]
@@ -575,7 +644,11 @@ pub async fn find_in_flight_poll_for_source(
     db: &DatabaseConnection,
     source_name: &str,
 ) -> Result<Option<InFlightRunRow>> {
-    let sql = "SELECT started_at AS started_at
+    let sql = "SELECT
+            started_at AS started_at,
+            progress_current AS progress_current,
+            progress_total AS progress_total,
+            progress_phase AS progress_phase
         FROM poll_runs
         WHERE source_name = ?1 AND status = ?2
         ORDER BY started_at DESC
@@ -594,7 +667,11 @@ pub async fn find_in_flight_provider_refresh(
     db: &DatabaseConnection,
     provider_id: &str,
 ) -> Result<Option<InFlightRunRow>> {
-    let sql = "SELECT started_at AS started_at
+    let sql = "SELECT
+            started_at AS started_at,
+            progress_current AS progress_current,
+            progress_total AS progress_total,
+            progress_phase AS progress_phase
         FROM provider_refreshes
         WHERE provider_id = ?1 AND status = ?2
         ORDER BY started_at DESC
@@ -615,7 +692,11 @@ pub async fn find_in_flight_series_refresh(
     db: &DatabaseConnection,
     provider_id: &str,
 ) -> Result<Option<InFlightRunRow>> {
-    let sql = "SELECT started_at AS started_at
+    let sql = "SELECT
+            started_at AS started_at,
+            progress_current AS progress_current,
+            progress_total AS progress_total,
+            progress_phase AS progress_phase
         FROM series_refresh_runs
         WHERE provider_id = ?1 AND status = ?2
         ORDER BY started_at DESC
@@ -1155,6 +1236,122 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn record_progress_writes_to_chosen_table_and_preserves_unset_fields() {
+        let db = fresh_db().await;
+        let id = start_poll_run(&db, "feed-a", "nyaa", 100, trigger::CRON)
+            .await
+            .unwrap();
+
+        // First tick sets all three columns; verify they all round-trip.
+        record_progress(
+            &db,
+            ProgressTable::PollRuns,
+            id,
+            &ProgressSnapshot {
+                current: 5,
+                total: Some(75),
+                phase: Some("enriching".into()),
+            },
+        )
+        .await
+        .unwrap();
+        let row = poll_runs::Entity::find_by_id(id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.progress_current, Some(5));
+        assert_eq!(row.progress_total, Some(75));
+        assert_eq!(row.progress_phase.as_deref(), Some("enriching"));
+
+        // Subsequent tick advances current without re-sending total / phase;
+        // COALESCE must preserve them rather than blanking them.
+        record_progress(
+            &db,
+            ProgressTable::PollRuns,
+            id,
+            &ProgressSnapshot {
+                current: 30,
+                total: None,
+                phase: None,
+            },
+        )
+        .await
+        .unwrap();
+        let row = poll_runs::Entity::find_by_id(id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.progress_current, Some(30));
+        assert_eq!(row.progress_total, Some(75), "total must persist");
+        assert_eq!(
+            row.progress_phase.as_deref(),
+            Some("enriching"),
+            "phase must persist"
+        );
+
+        // ProgressTable::ProviderRefreshes must hit a different physical
+        // table — sanity that the dispatch isn't hardcoded.
+        let pid = start_provider_refresh(&db, "mangabaka", 200, trigger::MANUAL)
+            .await
+            .unwrap();
+        record_progress(
+            &db,
+            ProgressTable::ProviderRefreshes,
+            pid,
+            &ProgressSnapshot {
+                current: 1024 * 1024,
+                total: Some(8 * 1024 * 1024),
+                phase: Some("downloading".into()),
+            },
+        )
+        .await
+        .unwrap();
+        let prow = provider_refreshes::Entity::find_by_id(pid)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(prow.progress_phase.as_deref(), Some("downloading"));
+        // Poll row unaffected by the provider write.
+        let row = poll_runs::Entity::find_by_id(id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.progress_phase.as_deref(), Some("enriching"));
+    }
+
+    #[tokio::test]
+    async fn find_in_flight_poll_returns_progress_columns_when_set() {
+        let db = fresh_db().await;
+        let id = start_poll_run(&db, "feed-a", "nyaa", 100, trigger::CRON)
+            .await
+            .unwrap();
+        record_progress(
+            &db,
+            ProgressTable::PollRuns,
+            id,
+            &ProgressSnapshot {
+                current: 12,
+                total: Some(47),
+                phase: None,
+            },
+        )
+        .await
+        .unwrap();
+        let row = find_in_flight_poll_for_source(&db, "feed-a")
+            .await
+            .unwrap()
+            .expect("running row should be found");
+        assert_eq!(row.started_at, 100);
+        assert_eq!(row.progress_current, Some(12));
+        assert_eq!(row.progress_total, Some(47));
+        assert!(row.progress_phase.is_none());
     }
 
     #[tokio::test]

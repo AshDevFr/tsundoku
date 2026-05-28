@@ -33,6 +33,11 @@ pub struct Model {
     pub fetch_duration_ms: Option<i64>,
     pub error_message: Option<String>,
     pub error_kind: Option<String>,
+    /// Live-progress fields. `progress_total` is typically the batch size
+    /// the selection query returned; `progress_current` advances per row.
+    pub progress_current: Option<i64>,
+    pub progress_total: Option<i64>,
+    pub progress_phase: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

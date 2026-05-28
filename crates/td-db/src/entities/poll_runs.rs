@@ -29,6 +29,12 @@ pub struct Model {
     pub outcome_fuzzy: Option<i32>,
     pub outcome_review: Option<i32>,
     pub outcome_failed: Option<i32>,
+    /// Live-progress fields, written by `ProgressHandle` during the loop
+    /// (throttled) and frozen at job end. `NULL` for jobs that don't
+    /// report progress and on pre-migration rows.
+    pub progress_current: Option<i64>,
+    pub progress_total: Option<i64>,
+    pub progress_phase: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

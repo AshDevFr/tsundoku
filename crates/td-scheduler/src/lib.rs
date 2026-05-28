@@ -20,7 +20,10 @@
 //! the scheduler boundary.
 
 pub mod error_kind;
+pub mod events;
 pub mod jobs;
+
+pub use events::{JOB_EVENT_BUFFER, JobEvent, JobKind, JobPhase, JobProgress, JobResult};
 
 use std::sync::Arc;
 
@@ -32,7 +35,7 @@ use td_metadata::MetadataRegistry;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_resolution::query_builder::QueryBuilder;
 use td_source::SourceRegistry;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 use tokio_cron_scheduler::JobScheduler;
 
 /// Per-key in-flight markers. Cloned into every job closure so overlapping
@@ -97,6 +100,10 @@ pub struct SchedulerContext {
     /// alphanumeric slugs before the foreign-id lookup step. `None` in
     /// tests that don't need network access.
     pub mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
+    /// Broadcast channel for job-lifecycle / progress events. Shared with
+    /// `td-api::AppState::job_events` so cron-driven progress frames and
+    /// manual-trigger lifecycle frames fan out through one stream.
+    pub job_events: broadcast::Sender<JobEvent>,
 }
 
 /// Owns the running scheduler. Drop or call [`Self::shutdown`] to stop.

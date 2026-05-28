@@ -25,4 +25,6 @@ pub mod state;
 
 pub use docs::ApiDoc;
 pub use router::router;
-pub use state::{AppState, InFlight, JOB_EVENT_BUFFER, JobEvent, JobKind, JobPhase, JobResult};
+pub use state::{
+    AppState, InFlight, JOB_EVENT_BUFFER, JobEvent, JobKind, JobPhase, JobProgress, JobResult,
+};

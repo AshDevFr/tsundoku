@@ -126,9 +126,7 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<SourceList>> 
         let in_flight = run_metrics_repo::find_in_flight_poll_for_source(&state.db, name)
             .await
             .map_err(ApiError::Internal)?
-            .map(|r| InFlight {
-                started_at: r.started_at,
-            });
+            .map(InFlight::from_row);
         items.push(SourceDto {
             name: name.to_string(),
             kind: source.kind().to_string(),

@@ -232,6 +232,57 @@ describe("admin sources page", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders numeric progress from the DTO inFlight.progress payload", async () => {
+    // Third fixture source carries `inFlight.progress = { current: 47, total: 200 }`.
+    // Pill should render the fraction without waiting for SSE.
+    renderAt("/admin/sources");
+    expect(
+      await screen.findByTestId(
+        "job-pill-source-running-with-progress",
+        undefined,
+        { timeout: 3000 },
+      ),
+    ).toHaveTextContent(/47 \/ 200/);
+  });
+
+  it("updates the pill from an SSE Progress frame, preferring the frame's payload", async () => {
+    renderAt("/admin/sources");
+    await screen.findByTestId("source-card-english-manga-trusted", undefined, {
+      timeout: 3000,
+    });
+    const MockES = (
+      globalThis as unknown as {
+        __mockEventSources: {
+          instances: {
+            emit: (data: unknown) => void;
+            url: string;
+            readyState: number;
+          }[];
+        };
+      }
+    ).__mockEventSources;
+    const live = MockES.instances
+      .slice()
+      .reverse()
+      .find((i) => i.url.includes("/events/jobs") && i.readyState !== 2);
+    const es = live;
+    expect(es).toBeDefined();
+    es?.emit({
+      kind: "source",
+      id: "english-manga-trusted",
+      phase: "progress",
+      at: Date.now(),
+      progress: { current: 12, total: 75, phase: "enriching" },
+    });
+    expect(
+      await screen.findByTestId(
+        "job-pill-source-english-manga-trusted",
+        undefined,
+        { timeout: 1500 },
+      ),
+    ).toHaveTextContent(/12 \/ 75 \(enriching\)/);
+  });
+
   it("flips the source-card pill when a synthetic SSE event arrives", async () => {
     renderAt("/admin/sources");
     await screen.findByTestId("source-card-english-manga-trusted", undefined, {

@@ -835,10 +835,13 @@ export interface components {
          *     state it never had.
          *
          *     Hydrated from the matching `*_runs` row whose `status = 'running'`.
-         *     Progress fields land in a later phase; for now only the start time is
-         *     meaningful and the pill renders the binary "is in flight" state.
+         *     `progress` is populated when the in-flight row's `progress_current` /
+         *     `progress_total` / `progress_phase` columns are non-`NULL` (i.e. the
+         *     job is reporting progress); jobs that don't report leave it `None`
+         *     and the pill shows the binary "is in flight" state.
          */
         InFlight: {
+            progress?: null | components["schemas"]["JobProgress"];
             /**
              * Format: int64
              * @description Epoch seconds the in-flight run started at.
@@ -875,7 +878,7 @@ export interface components {
         /**
          * @description Single broadcast frame for the SSE channel. Always has `kind`, `id`,
          *     `phase`, and `at` (epoch millis); `result` is only populated on
-         *     `Finished` events.
+         *     `Finished` events; `progress` is only populated on `Progress` events.
          */
         JobEvent: {
             /** Format: int64 */
@@ -883,6 +886,7 @@ export interface components {
             id: string;
             kind: components["schemas"]["JobKind"];
             phase: components["schemas"]["JobPhase"];
+            progress?: null | components["schemas"]["JobProgress"];
             result?: null | components["schemas"]["JobResult"];
         };
         /**
@@ -894,10 +898,36 @@ export interface components {
         JobKind: "source" | "provider" | "seriesRefresh";
         /**
          * @description Lifecycle phase. `Started` fires after the per-key mutex was
-         *     acquired (so a `skipped` job emits only `Finished`).
+         *     acquired (so a `skipped` job emits only `Finished`). `Progress`
+         *     frames fire from inside the work body via
+         *     [`ProgressHandle`](crate::jobs::progress::ProgressHandle); they are
+         *     not throttled the way DB progress writes are — the broadcast channel
+         *     back-pressure handles laggy consumers by dropping intermediate frames.
          * @enum {string}
          */
-        JobPhase: "started" | "finished";
+        JobPhase: "started" | "progress" | "finished";
+        /**
+         * @description Progress payload attached to a `Progress` SSE frame and to the
+         *     `InFlight` DTO when the in-flight row carries a last-checkpoint
+         *     snapshot.
+         *
+         *     `total` is optional because some phases of some jobs don't have a
+         *     meaningful upper bound (e.g. the tar-extract phase of the provider
+         *     cache refresh, which streams files of unknown count); a `current`-only
+         *     payload still lets the UI render "doing N units" with no fraction.
+         */
+        JobProgress: {
+            /** Format: int64 */
+            current: number;
+            /**
+             * @description Free-text label for multi-stage jobs. Provider cache refresh uses
+             *     it for `"downloading"` / `"extracting"` / `"indexing"`; other jobs
+             *     leave it `None`.
+             */
+            phase?: string | null;
+            /** Format: int64 */
+            total?: number | null;
+        };
         /**
          * @description Compact result payload attached to a `finished` event. Optional
          *     per-trigger fields (fetched / new / resolved / bytes) are `None`

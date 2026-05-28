@@ -147,9 +147,7 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<ProviderList>
         let in_flight = run_metrics_repo::find_in_flight_provider_refresh(&state.db, id)
             .await
             .map_err(ApiError::Internal)?
-            .map(|r| InFlight {
-                started_at: r.started_at,
-            });
+            .map(InFlight::from_row);
         items.push(ProviderDto {
             id: id.to_string(),
             display_name: provider.display_name().to_string(),

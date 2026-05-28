@@ -17,47 +17,10 @@ use td_source::SourceRegistry;
 use tokio::sync::{Mutex, broadcast};
 use utoipa::ToSchema;
 
-/// Bounded buffer for the manual-trigger event channel. Generous enough
-/// that a slow client never causes the producer to lag, small enough
-/// that an idle process doesn't hold meaningful memory. Per-client
-/// receivers can still drop oldest events under back-pressure; that's
-/// fine for ephemeral progress.
-pub const JOB_EVENT_BUFFER: usize = 256;
-
-/// Kind of work an event refers to. Stays a plain string in the
-/// serialized form so the frontend can pattern-match without importing
-/// the enum.
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum JobKind {
-    Source,
-    Provider,
-    /// Bulk series-metadata refresh against the active provider.
-    SeriesRefresh,
-}
-
-/// Lifecycle phase. `Started` fires after the per-key mutex was
-/// acquired (so a `skipped` job emits only `Finished`).
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum JobPhase {
-    Started,
-    Finished,
-}
-
-/// Compact result payload attached to a `finished` event. Optional
-/// per-trigger fields (fetched / new / resolved / bytes) are `None`
-/// when the trigger doesn't produce them.
-#[derive(Debug, Clone, Default, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct JobResult {
-    pub triggered: bool,
-    pub skipped: bool,
-    pub fetched: Option<i64>,
-    pub new: Option<i64>,
-    pub resolved: Option<i64>,
-    pub bytes: Option<i64>,
-}
+// Job-lifecycle event types live in `td-scheduler` so cron-driven jobs
+// can construct and emit them without depending on this crate. Re-exported
+// here for handler / test convenience and registered in `docs::ApiDoc`.
+pub use td_scheduler::{JOB_EVENT_BUFFER, JobEvent, JobKind, JobPhase, JobProgress, JobResult};
 
 /// Currently-running marker hung off each source / provider listing entry
 /// so the admin UI can render the "RUNNING…" pill straight from the DTO
@@ -65,55 +28,35 @@ pub struct JobResult {
 /// state it never had.
 ///
 /// Hydrated from the matching `*_runs` row whose `status = 'running'`.
-/// Progress fields land in a later phase; for now only the start time is
-/// meaningful and the pill renders the binary "is in flight" state.
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+/// `progress` is populated when the in-flight row's `progress_current` /
+/// `progress_total` / `progress_phase` columns are non-`NULL` (i.e. the
+/// job is reporting progress); jobs that don't report leave it `None`
+/// and the pill shows the binary "is in flight" state.
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InFlight {
     /// Epoch seconds the in-flight run started at.
     pub started_at: i64,
-}
-
-/// Single broadcast frame for the SSE channel. Always has `kind`, `id`,
-/// `phase`, and `at` (epoch millis); `result` is only populated on
-/// `Finished` events.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct JobEvent {
-    pub kind: JobKind,
-    pub id: String,
-    pub phase: JobPhase,
-    pub at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<JobResult>,
+    pub progress: Option<JobProgress>,
 }
 
-impl JobEvent {
-    /// `Started` after the per-key mutex was acquired. Not emitted for
-    /// `skipped=true` triggers (they go straight to a `Finished` frame).
-    pub fn started(kind: JobKind, id: impl Into<String>) -> Self {
+impl InFlight {
+    /// Build an `InFlight` from a repo `InFlightRunRow`. `progress` is set
+    /// when the row carries at least a `progress_current` checkpoint;
+    /// missing-total / missing-phase are passed through as `None` so the
+    /// UI can render a `current`-only fraction-free pill.
+    pub fn from_row(row: td_db::repos::run_metrics_repo::InFlightRunRow) -> Self {
+        let progress = row.progress_current.map(|current| JobProgress {
+            current: current as u64,
+            total: row.progress_total.map(|t| t as u64),
+            phase: row.progress_phase,
+        });
         Self {
-            kind,
-            id: id.into(),
-            phase: JobPhase::Started,
-            at: now_ms(),
-            result: None,
+            started_at: row.started_at,
+            progress,
         }
     }
-
-    pub fn finished(kind: JobKind, id: impl Into<String>, result: JobResult) -> Self {
-        Self {
-            kind,
-            id: id.into(),
-            phase: JobPhase::Finished,
-            at: now_ms(),
-            result: Some(result),
-        }
-    }
-}
-
-fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
 }
 
 /// Concrete shared state passed to every handler via the axum `State`

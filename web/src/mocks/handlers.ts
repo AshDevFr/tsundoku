@@ -486,6 +486,29 @@ export const handlers = [
           },
           inFlight: { startedAt: NOW - 30 },
         },
+        // Third source carries `inFlight.progress` so component tests can
+        // exercise the numeric-progress rendering path.
+        {
+          kind: "nyaa",
+          name: "running-with-progress",
+          lastPolledAt: NOW - 86_400 * 2,
+          lastSuccessAt: NOW - 86_400 * 2,
+          lastError: null,
+          lastSummary: "many releases",
+          config: {
+            enabled: true,
+            cron: "0 */6 * * *",
+            feedUrl: "https://nyaa.si/?page=rss&u=anotherone",
+            fetchDetails: true,
+            timeoutSeconds: 30,
+            siteBaseUrl: "https://nyaa.si",
+            maxPages: 1,
+          },
+          inFlight: {
+            startedAt: NOW - 10,
+            progress: { current: 47, total: 200 },
+          },
+        },
       ],
     }),
   ),

@@ -21,6 +21,11 @@ pub struct Model {
     /// Coarse classification of the failure cause; see
     /// `td_scheduler::error_kind`.
     pub error_kind: Option<String>,
+    /// Live-progress fields. Provider cache refreshes use `progress_phase`
+    /// to expose the multi-stage download → extract → index sequence.
+    pub progress_current: Option<i64>,
+    pub progress_total: Option<i64>,
+    pub progress_phase: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

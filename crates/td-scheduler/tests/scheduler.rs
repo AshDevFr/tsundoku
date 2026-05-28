@@ -25,6 +25,15 @@ use td_metadata::{
 };
 use td_resolution::ResolutionPath;
 use td_scheduler::{JobLocks, Scheduler, SchedulerContext, jobs};
+use tokio::sync::broadcast;
+
+/// Tests don't subscribe to the SSE channel; this helper returns a
+/// detached sender to fill the `job_events` field on `SchedulerContext`.
+/// `send()` returning `Err` (no receivers) is fine — every emit site
+/// already ignores the error.
+fn detached_events() -> broadcast::Sender<td_scheduler::JobEvent> {
+    broadcast::channel(16).0
+}
 use td_source::{
     DiscoveredRelease, DiscoverySource, PollContext, PollOutcome, SourceRegistry, SourceResult,
 };
@@ -1008,6 +1017,7 @@ async fn scheduler_fires_source_and_provider_jobs_on_schedule() {
         locks: Arc::new(JobLocks::default()),
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
+        job_events: detached_events(),
     };
 
     let mut scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
@@ -1082,6 +1092,7 @@ async fn scheduler_skips_sources_without_cron_or_unknown_registry_entry() {
         locks: Arc::new(JobLocks::default()),
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
+        job_events: detached_events(),
     };
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
     // Only the unconditional review-queue snapshot job lands; source +
@@ -1132,6 +1143,7 @@ async fn scheduler_registers_series_refresh_job_when_cron_set() {
         locks: Arc::new(JobLocks::default()),
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
+        job_events: detached_events(),
     };
 
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
@@ -1178,6 +1190,7 @@ async fn scheduler_skips_series_refresh_when_active_provider_unregistered() {
         locks: Arc::new(JobLocks::default()),
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
+        job_events: detached_events(),
     };
 
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();

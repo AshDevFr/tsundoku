@@ -1756,11 +1756,21 @@
       },
       "InFlight": {
         "type": "object",
-        "description": "Currently-running marker hung off each source / provider listing entry\nso the admin UI can render the \"RUNNING…\" pill straight from the DTO\non a fresh page load, without waiting for the SSE channel to replay\nstate it never had.\n\nHydrated from the matching `*_runs` row whose `status = 'running'`.\nProgress fields land in a later phase; for now only the start time is\nmeaningful and the pill renders the binary \"is in flight\" state.",
+        "description": "Currently-running marker hung off each source / provider listing entry\nso the admin UI can render the \"RUNNING…\" pill straight from the DTO\non a fresh page load, without waiting for the SSE channel to replay\nstate it never had.\n\nHydrated from the matching `*_runs` row whose `status = 'running'`.\n`progress` is populated when the in-flight row's `progress_current` /\n`progress_total` / `progress_phase` columns are non-`NULL` (i.e. the\njob is reporting progress); jobs that don't report leave it `None`\nand the pill shows the binary \"is in flight\" state.",
         "required": [
           "startedAt"
         ],
         "properties": {
+          "progress": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JobProgress"
+              }
+            ]
+          },
           "startedAt": {
             "type": "integer",
             "format": "int64",
@@ -1799,7 +1809,7 @@
       },
       "JobEvent": {
         "type": "object",
-        "description": "Single broadcast frame for the SSE channel. Always has `kind`, `id`,\n`phase`, and `at` (epoch millis); `result` is only populated on\n`Finished` events.",
+        "description": "Single broadcast frame for the SSE channel. Always has `kind`, `id`,\n`phase`, and `at` (epoch millis); `result` is only populated on\n`Finished` events; `progress` is only populated on `Progress` events.",
         "required": [
           "kind",
           "id",
@@ -1819,6 +1829,16 @@
           },
           "phase": {
             "$ref": "#/components/schemas/JobPhase"
+          },
+          "progress": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JobProgress"
+              }
+            ]
           },
           "result": {
             "oneOf": [
@@ -1843,11 +1863,41 @@
       },
       "JobPhase": {
         "type": "string",
-        "description": "Lifecycle phase. `Started` fires after the per-key mutex was\nacquired (so a `skipped` job emits only `Finished`).",
+        "description": "Lifecycle phase. `Started` fires after the per-key mutex was\nacquired (so a `skipped` job emits only `Finished`). `Progress`\nframes fire from inside the work body via\n[`ProgressHandle`](crate::jobs::progress::ProgressHandle); they are\nnot throttled the way DB progress writes are — the broadcast channel\nback-pressure handles laggy consumers by dropping intermediate frames.",
         "enum": [
           "started",
+          "progress",
           "finished"
         ]
+      },
+      "JobProgress": {
+        "type": "object",
+        "description": "Progress payload attached to a `Progress` SSE frame and to the\n`InFlight` DTO when the in-flight row carries a last-checkpoint\nsnapshot.\n\n`total` is optional because some phases of some jobs don't have a\nmeaningful upper bound (e.g. the tar-extract phase of the provider\ncache refresh, which streams files of unknown count); a `current`-only\npayload still lets the UI render \"doing N units\" with no fraction.",
+        "required": [
+          "current"
+        ],
+        "properties": {
+          "current": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Free-text label for multi-stage jobs. Provider cache refresh uses\nit for `\"downloading\"` / `\"extracting\"` / `\"indexing\"`; other jobs\nleave it `None`."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
       "JobResult": {
         "type": "object",
