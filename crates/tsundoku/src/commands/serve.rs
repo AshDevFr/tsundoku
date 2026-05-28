@@ -10,7 +10,30 @@ use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_resolution::query_builder::QueryBuilder;
 use td_scheduler::{JobLocks, Scheduler, SchedulerContext, jobs::refresh_provider_cache};
 
-pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
+pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<()> {
+    // Default-path bootstrap: if the operator ran `serve` without `--config`
+    // and the default file is missing, drop a commented starter template
+    // there so the first run is usable instead of failing on a missing
+    // config or booting with bare defaults that can't poll anything.
+    // An explicit `--config <path>` is treated as a load-or-fail intent.
+    if !config_path.exists() {
+        if explicit_config {
+            // Explicit `--config` is a "load this exact file" directive.
+            // Silently falling back to figment defaults would mask a typo
+            // or a missing mount and produce a binary that boots with no
+            // sources and no admin_token. Fail loudly instead.
+            anyhow::bail!(
+                "config file not found at {} (passed via --config); create the file or omit --config to use the default path",
+                config_path.display()
+            );
+        }
+        eprintln!(
+            "config file not found at {}; writing a starter template (edit it before exposing the API)",
+            config_path.display()
+        );
+        td_config::write_starter(&config_path, false)?;
+    }
+
     let cfg = td_config::load(&config_path)
         .with_context(|| format!("loading config from {}", config_path.display()))?;
     super::init_tracing(&cfg);

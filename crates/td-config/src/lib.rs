@@ -11,10 +11,15 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml, Yaml};
 use serde::{Deserialize, Serialize};
+
+/// The commented starter template shipped alongside the binary. Used by the
+/// `tsundoku init-config` command and by `serve`'s missing-file bootstrap so
+/// operators get a useful, commented file instead of a bare default dump.
+pub const STARTER_CONFIG_TOML: &str = include_str!("../../../config/tsundoku.example.toml");
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -582,6 +587,27 @@ pub fn load(path: &Path) -> anyhow::Result<AppConfig> {
         .context("parsing configuration")
 }
 
+/// Write [`STARTER_CONFIG_TOML`] to `path`. Creates the parent directory if
+/// missing. Refuses to overwrite an existing file unless `force` is set, so
+/// a stray `init-config` cannot clobber a tuned production config.
+pub fn write_starter(path: &Path, force: bool) -> anyhow::Result<()> {
+    if path.exists() && !force {
+        bail!(
+            "refusing to overwrite existing config at {}; pass --force to replace it",
+            path.display()
+        );
+    }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating parent dir {}", parent.display()))?;
+    }
+    std::fs::write(path, STARTER_CONFIG_TOML)
+        .with_context(|| format!("writing starter config to {}", path.display()))?;
+    Ok(())
+}
+
 fn merge_file(fig: Figment, path: &Path) -> Figment {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     match ext {
@@ -1147,6 +1173,48 @@ admin_token = "write-me"
         assert!(cfg.auth.read_requires_auth);
         assert_eq!(cfg.auth.api_key.as_deref(), Some("read-me"));
         assert_eq!(cfg.auth.admin_token.as_deref(), Some("write-me"));
+    }
+
+    #[test]
+    fn starter_template_parses_to_valid_config() {
+        // The embedded template is the file `serve` writes on first boot.
+        // If a documentation edit breaks parsing, the first-run UX breaks
+        // silently for every new operator — this test traps that here.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        std::fs::write(&path, STARTER_CONFIG_TOML).unwrap();
+        let cfg = load(&path).unwrap();
+        assert_eq!(cfg.metadata.active_provider, "mangabaka");
+        assert!(cfg.providers.mangabaka.enabled);
+        assert_eq!(cfg.server.port, 8080);
+    }
+
+    #[test]
+    fn write_starter_creates_parent_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("subdir").join("tsundoku.toml");
+        write_starter(&nested, false).unwrap();
+        assert!(nested.exists());
+        let written = std::fs::read_to_string(&nested).unwrap();
+        assert_eq!(written, STARTER_CONFIG_TOML);
+    }
+
+    #[test]
+    fn write_starter_refuses_to_clobber_without_force() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        std::fs::write(&path, "[server]\nport = 9999\n").unwrap();
+
+        let err = write_starter(&path, false).unwrap_err();
+        assert!(err.to_string().contains("refusing to overwrite"));
+        // Existing content is untouched.
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(after, "[server]\nport = 9999\n");
+
+        // --force replaces it.
+        write_starter(&path, true).unwrap();
+        let after_force = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(after_force, STARTER_CONFIG_TOML);
     }
 
     #[test]

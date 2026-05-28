@@ -1,4 +1,5 @@
 pub mod backfill;
+pub mod init_config;
 pub mod migrate;
 pub mod openapi;
 pub mod poll;

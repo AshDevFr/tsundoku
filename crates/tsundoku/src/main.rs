@@ -22,10 +22,23 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the HTTP server
+    /// Start the HTTP server. When `--config` is omitted and the default
+    /// path (`config/tsundoku.toml`) does not exist, a starter config is
+    /// written there before boot. Passing `--config <path>` explicitly
+    /// disables the auto-write: the named file must already exist.
     Serve {
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+    },
+    /// Write a starter config file. The same template is auto-created by
+    /// `serve` when invoked without `--config` and the default path is
+    /// missing.
+    InitConfig {
         #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
-        config: PathBuf,
+        output: PathBuf,
+        /// Overwrite the file if it already exists.
+        #[arg(short, long)]
+        force: bool,
     },
     /// Run pending database migrations and exit
     Migrate {
@@ -113,7 +126,14 @@ enum Commands {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Serve { config } => commands::serve::run(config).await,
+        Commands::Serve { config } => {
+            let (path, explicit) = match config {
+                Some(p) => (p, true),
+                None => (PathBuf::from(DEFAULT_CONFIG_PATH), false),
+            };
+            commands::serve::run(path, explicit).await
+        }
+        Commands::InitConfig { output, force } => commands::init_config::run(output, force),
         Commands::Migrate { config } => commands::migrate::run(config).await,
         Commands::RefreshProviderCache { config, provider } => {
             commands::refresh_provider_cache::run(config, provider).await
