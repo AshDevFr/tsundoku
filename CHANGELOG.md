@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.1.0] - 2026-05-28
+
+### Bug Fixes
+
+- *(scheduler,api)* Centralize job lock + event lifecycle so manual triggers actually run
+
 ## [1.0.3] - 2026-05-28
 
 ### Features
