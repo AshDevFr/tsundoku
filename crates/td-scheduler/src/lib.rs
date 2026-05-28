@@ -41,6 +41,11 @@ use tokio_cron_scheduler::JobScheduler;
 pub struct JobLocks {
     sources: DashMap<String, Arc<Mutex<()>>>,
     providers: DashMap<String, Arc<Mutex<()>>>,
+    /// Per-provider lock for the bulk series-metadata refresh job. Kept
+    /// separate from `providers` so an ongoing cache refresh doesn't gate
+    /// a series-refresh tick and vice versa (the two jobs touch different
+    /// state).
+    series_refreshes: DashMap<String, Arc<Mutex<()>>>,
     /// Single global lock for the review-queue retry-all operation. Held
     /// for the lifetime of one batch so a second click is reported as
     /// skipped rather than spawning a parallel walk over the same rows.
@@ -58,6 +63,13 @@ impl JobLocks {
     pub fn provider_lock(&self, id: &str) -> Arc<Mutex<()>> {
         self.providers
             .entry(id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    pub fn series_refresh_lock(&self, provider_id: &str) -> Arc<Mutex<()>> {
+        self.series_refreshes
+            .entry(provider_id.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     }
@@ -154,6 +166,28 @@ impl Scheduler {
             register_provider_job(&inner, &ctx, "mangabaka", cron, &mut registered).await?;
         }
 
+        // Bulk series-metadata refresh job. Always against the *active*
+        // provider; non-active providers in the registry are used only for
+        // cross-provider foreign-ID resolution and review-UI search.
+        if let Some(cron) = cfg
+            .metadata
+            .series_refresh
+            .cron
+            .as_deref()
+            .filter(|s| !s.is_empty())
+        {
+            register_series_refresh_job(
+                &inner,
+                &ctx,
+                &cfg.metadata.active_provider,
+                cron,
+                cfg.metadata.series_refresh.batch_size,
+                cfg.metadata.series_refresh.min_age_days,
+                &mut registered,
+            )
+            .await?;
+        }
+
         // Hourly review-queue snapshot. Fires at minute 5 to stagger off
         // both the typical "0 * * * *" provider crons and the more
         // frequent source ticks. Operators don't get a config knob for
@@ -232,6 +266,48 @@ async fn register_provider_job(
         provider = %provider_id,
         cron = %normalized,
         "registered scheduled provider refresh job"
+    );
+    *registered += 1;
+    Ok(())
+}
+
+async fn register_series_refresh_job(
+    inner: &JobScheduler,
+    ctx: &SchedulerContext,
+    active_provider_id: &str,
+    cron: &str,
+    batch_size: u32,
+    min_age_days: u32,
+    registered: &mut usize,
+) -> Result<()> {
+    let Some(provider) = ctx.metadata.get(active_provider_id).cloned() else {
+        tracing::warn!(
+            provider = %active_provider_id,
+            "series_refresh cron set but active provider is not registered; skipping"
+        );
+        return Ok(());
+    };
+    let normalized = normalize_cron(cron).with_context(|| {
+        format!("normalising series_refresh cron for provider {active_provider_id:?}")
+    })?;
+    let min_age_seconds = (min_age_days as i64).saturating_mul(86_400);
+    let job = jobs::refresh_series_metadata::build(
+        &normalized,
+        provider,
+        ctx.db.clone(),
+        ctx.locks.clone(),
+        batch_size,
+        min_age_seconds,
+    )?;
+    inner.add(job).await.map_err(|e| {
+        anyhow!("registering series_refresh job for provider {active_provider_id:?}: {e}")
+    })?;
+    tracing::info!(
+        provider = %active_provider_id,
+        cron = %normalized,
+        batch_size,
+        min_age_days,
+        "registered scheduled series-metadata refresh job"
     );
     *registered += 1;
     Ok(())

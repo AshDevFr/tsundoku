@@ -10,6 +10,7 @@ mod m20260526_000003_series_description;
 mod m20260526_000004_drop_series_genres_json;
 mod m20260527_000001_series_volume_chapter_counts;
 mod m20260527_000002_series_rating;
+mod m20260527_000003_series_refresh_runs;
 
 pub struct Migrator;
 
@@ -29,6 +30,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260526_000004_drop_series_genres_json::Migration),
             Box::new(m20260527_000001_series_volume_chapter_counts::Migration),
             Box::new(m20260527_000002_series_rating::Migration),
+            Box::new(m20260527_000003_series_refresh_runs::Migration),
         ];
         m.extend(td_metadata_mangabaka::migration::migrations());
         m

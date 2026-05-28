@@ -10,7 +10,13 @@
 //! one alone would suffice but the pair makes accidents loud.
 
 use anyhow::Result;
-use sea_orm::{ConnectionTrait, DatabaseConnection, FromQueryResult, Statement};
+use sea_orm::sea_query::Expr;
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
+    Statement,
+};
+
+use crate::entities::series;
 
 /// One row's worth of state needed to drive a refresh. Returned in
 /// `metadata_fetched_at`-ascending order so the oldest rows go first.
@@ -73,6 +79,23 @@ pub async fn select_stale_for_active_provider(
         ],
     );
     Ok(StaleSeriesRow::find_by_statement(stmt).all(db).await?)
+}
+
+/// Advance `series.metadata_fetched_at` on a single row without touching
+/// the metadata content. Used by the bulk refresh tick when the provider
+/// returns `Ok(None)` (series vanished upstream) so that row rotates out
+/// of the next batch instead of dominating it.
+pub async fn bump_metadata_fetched_at(
+    db: &DatabaseConnection,
+    series_id: i32,
+    fetched_at: i64,
+) -> Result<()> {
+    series::Entity::update_many()
+        .filter(series::Column::Id.eq(series_id))
+        .col_expr(series::Column::MetadataFetchedAt, Expr::value(fetched_at))
+        .exec(db)
+        .await?;
+    Ok(())
 }
 
 #[cfg(test)]

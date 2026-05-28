@@ -24,7 +24,7 @@ use sea_orm::{
 };
 use serde::Serialize;
 
-use crate::entities::{poll_runs, provider_refreshes};
+use crate::entities::{poll_runs, provider_refreshes, series_refresh_runs};
 
 /// Status discriminator. Stringly typed to keep the column readable in
 /// SQLite, but tightly bounded so the UI can switch on it cleanly.
@@ -65,6 +65,21 @@ pub struct ProviderRefreshCounts {
     pub bytes_downloaded: Option<i64>,
     pub record_count: Option<i64>,
     /// Wall-clock duration of `MetadataProvider::refresh_cache()` in ms.
+    pub fetch_duration_ms: Option<i64>,
+}
+
+/// Per-tick counters for the bulk series-metadata refresh job. `considered`
+/// is the batch size the selection query returned; the four outcome
+/// counters partition (a subset of) it depending on what
+/// `MetadataProvider::get` returned per row. `fetch_duration_ms` totals
+/// all the per-row provider calls in the tick.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SeriesRefreshCounts {
+    pub considered: Option<i32>,
+    pub refreshed: Option<i32>,
+    pub unchanged: Option<i32>,
+    pub not_found: Option<i32>,
+    pub errored: Option<i32>,
     pub fetch_duration_ms: Option<i64>,
 }
 
@@ -208,6 +223,85 @@ pub async fn finalize_provider_refresh<C: ConnectionTrait>(
         )
         .col_expr(
             provider_refreshes::Column::ErrorKind,
+            Expr::value(error_kind.map(str::to_string)),
+        )
+        .exec(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn start_series_refresh_run<C: ConnectionTrait>(
+    db: &C,
+    provider_id: &str,
+    started_at: i64,
+    trigger: &str,
+) -> Result<i64> {
+    let model = series_refresh_runs::ActiveModel {
+        provider_id: Set(provider_id.to_string()),
+        started_at: Set(started_at),
+        finished_at: Set(None),
+        status: Set(status::RUNNING.into()),
+        trigger: Set(trigger.to_string()),
+        considered_count: Set(None),
+        refreshed_count: Set(None),
+        unchanged_count: Set(None),
+        not_found_count: Set(None),
+        errored_count: Set(None),
+        fetch_duration_ms: Set(None),
+        error_message: Set(None),
+        error_kind: Set(None),
+        ..Default::default()
+    };
+    let res = series_refresh_runs::Entity::insert(model).exec(db).await?;
+    Ok(res.last_insert_id)
+}
+
+pub async fn finalize_series_refresh_run<C: ConnectionTrait>(
+    db: &C,
+    id: i64,
+    finished_at: i64,
+    status: &str,
+    counts: SeriesRefreshCounts,
+    error_message: Option<&str>,
+    error_kind: Option<&str>,
+) -> Result<()> {
+    series_refresh_runs::Entity::update_many()
+        .filter(series_refresh_runs::Column::Id.eq(id))
+        .col_expr(
+            series_refresh_runs::Column::FinishedAt,
+            Expr::value(finished_at),
+        )
+        .col_expr(series_refresh_runs::Column::Status, Expr::value(status))
+        .col_expr(
+            series_refresh_runs::Column::ConsideredCount,
+            Expr::value(counts.considered),
+        )
+        .col_expr(
+            series_refresh_runs::Column::RefreshedCount,
+            Expr::value(counts.refreshed),
+        )
+        .col_expr(
+            series_refresh_runs::Column::UnchangedCount,
+            Expr::value(counts.unchanged),
+        )
+        .col_expr(
+            series_refresh_runs::Column::NotFoundCount,
+            Expr::value(counts.not_found),
+        )
+        .col_expr(
+            series_refresh_runs::Column::ErroredCount,
+            Expr::value(counts.errored),
+        )
+        .col_expr(
+            series_refresh_runs::Column::FetchDurationMs,
+            Expr::value(counts.fetch_duration_ms),
+        )
+        .col_expr(
+            series_refresh_runs::Column::ErrorMessage,
+            Expr::value(error_message.map(str::to_string)),
+        )
+        .col_expr(
+            series_refresh_runs::Column::ErrorKind,
             Expr::value(error_kind.map(str::to_string)),
         )
         .exec(db)
@@ -797,6 +891,79 @@ mod tests {
         assert_eq!(rows.len(), 3);
         assert!(rows[0].started_at >= rows[1].started_at);
         assert!(rows[1].started_at >= rows[2].started_at);
+    }
+
+    #[tokio::test]
+    async fn series_refresh_run_round_trips_through_start_and_finalize() {
+        let db = fresh_db().await;
+        let id = start_series_refresh_run(&db, "mangabaka", 100, trigger::CRON)
+            .await
+            .unwrap();
+        finalize_series_refresh_run(
+            &db,
+            id,
+            150,
+            status::SUCCESS,
+            SeriesRefreshCounts {
+                considered: Some(50),
+                refreshed: Some(40),
+                unchanged: Some(9),
+                not_found: Some(1),
+                errored: Some(0),
+                fetch_duration_ms: Some(8_400),
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let row = series_refresh_runs::Entity::find_by_id(id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "success");
+        assert_eq!(row.finished_at, Some(150));
+        assert_eq!(row.considered_count, Some(50));
+        assert_eq!(row.refreshed_count, Some(40));
+        assert_eq!(row.unchanged_count, Some(9));
+        assert_eq!(row.not_found_count, Some(1));
+        assert_eq!(row.errored_count, Some(0));
+        assert_eq!(row.fetch_duration_ms, Some(8_400));
+        assert_eq!(row.trigger, "cron");
+    }
+
+    #[tokio::test]
+    async fn series_refresh_run_failure_captures_error_fields() {
+        let db = fresh_db().await;
+        let id = start_series_refresh_run(&db, "mangabaka", 200, trigger::MANUAL)
+            .await
+            .unwrap();
+        finalize_series_refresh_run(
+            &db,
+            id,
+            205,
+            status::FAILURE,
+            SeriesRefreshCounts {
+                considered: Some(50),
+                errored: Some(1),
+                ..Default::default()
+            },
+            Some("provider timeout"),
+            Some("network"),
+        )
+        .await
+        .unwrap();
+        let row = series_refresh_runs::Entity::find_by_id(id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "failure");
+        assert_eq!(row.error_message.as_deref(), Some("provider timeout"));
+        assert_eq!(row.error_kind.as_deref(), Some("network"));
+        assert_eq!(row.errored_count, Some(1));
     }
 
     #[tokio::test]

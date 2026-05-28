@@ -5,8 +5,9 @@
 //! work — and one timing-sensitive integration test that drives a real
 //! [`Scheduler`] with a fast cron to prove the cron wiring works.
 
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -15,12 +16,12 @@ use migration::{Migrator, MigratorTrait};
 use sea_orm::{Database, DatabaseConnection, EntityTrait};
 use td_config::{
     AppConfig, IngestionConfig, MangabakaProviderConfig, MetadataConfig, NyaaSourceOptions,
-    ProvidersConfig, SourceConfig,
+    ProvidersConfig, SeriesRefreshConfig, SourceConfig,
 };
 use td_db::repos::{provider_cache_state_repo, sources_repo};
 use td_metadata::{
-    MetadataProvider, MetadataRegistry, MetadataResult, RefreshStatus, RefreshSummary, SearchHit,
-    SeriesMetadata,
+    MetadataError, MetadataProvider, MetadataRegistry, MetadataResult, RefreshStatus,
+    RefreshSummary, SearchHit, SeriesMetadata,
 };
 use td_resolution::ResolutionPath;
 use td_scheduler::{JobLocks, Scheduler, SchedulerContext, jobs};
@@ -70,14 +71,28 @@ impl DiscoverySource for FakeSource {
     }
 }
 
-/// Metadata-provider double. `search`/`get` return empty so the resolver
-/// lands a release at `unresolved` without exercising the persistence
-/// pipeline (already covered by td-resolution's own tests). `refresh_cache`
-/// records its call count and returns whatever status the test configures.
+/// One scripted outcome for `MetadataProvider::get`. Build the
+/// `FakeProvider` with `.with_get` to map an external_id to one of these
+/// variants; unmapped IDs fall back to `Ok(None)` (matching the original
+/// FakeProvider behaviour so the older tests keep working).
+enum GetOutcome {
+    Some(Box<SeriesMetadata>),
+    NotFound,
+    Err(String),
+}
+
+/// Metadata-provider double. `refresh_cache` records its call count and
+/// returns whatever status the test configures. `get` consults the
+/// scripted map (defaults to `Ok(None)` when empty or unmapped).
 struct FakeProvider {
     id: String,
     refresh_count: AtomicUsize,
+    get_count: AtomicUsize,
     status: RefreshStatus,
+    /// `external_id → outcome`. Wrapped in a std `Mutex` because the
+    /// trait method is `&self` and the map is only mutated from test
+    /// setup before any async work starts.
+    get_map: StdMutex<HashMap<String, GetOutcome>>,
 }
 
 impl FakeProvider {
@@ -85,12 +100,27 @@ impl FakeProvider {
         Self {
             id: id.into(),
             refresh_count: AtomicUsize::new(0),
+            get_count: AtomicUsize::new(0),
             status,
+            get_map: StdMutex::new(HashMap::new()),
         }
     }
 
     fn refreshes(&self) -> usize {
         self.refresh_count.load(Ordering::SeqCst)
+    }
+
+    fn gets(&self) -> usize {
+        self.get_count.load(Ordering::SeqCst)
+    }
+
+    /// Script the response for one external_id. Repeat to add more.
+    fn with_get(self, external_id: &str, outcome: GetOutcome) -> Self {
+        self.get_map
+            .lock()
+            .unwrap()
+            .insert(external_id.into(), outcome);
+        self
     }
 }
 
@@ -102,8 +132,18 @@ impl MetadataProvider for FakeProvider {
     fn display_name(&self) -> &str {
         "Fake"
     }
-    async fn get(&self, _external_id: &str) -> MetadataResult<Option<SeriesMetadata>> {
-        Ok(None)
+    async fn get(&self, external_id: &str) -> MetadataResult<Option<SeriesMetadata>> {
+        self.get_count.fetch_add(1, Ordering::SeqCst);
+        let outcome = self.get_map.lock().unwrap().remove(external_id);
+        match outcome {
+            Some(GetOutcome::Some(m)) => Ok(Some(*m)),
+            Some(GetOutcome::NotFound) => Ok(None),
+            Some(GetOutcome::Err(msg)) => Err(MetadataError::Unavailable {
+                provider: self.id.clone(),
+                source: anyhow::anyhow!(msg),
+            }),
+            None => Ok(None),
+        }
     }
     async fn search(&self, _query: &str, _limit: u32) -> MetadataResult<Vec<SearchHit>> {
         Ok(Vec::new())
@@ -482,6 +522,432 @@ async fn refresh_tick_with_held_lock_is_a_noop() {
 }
 
 // -----------------------------------------------------------------------------
+// refresh_series_metadata::run_tick
+// -----------------------------------------------------------------------------
+
+/// Insert a series row + its active-provider external_id mapping. Returns
+/// the new series id. Timestamps are fully explicit so the staleness
+/// query has predictable inputs.
+async fn seed_stale_series(
+    db: &DatabaseConnection,
+    title: &str,
+    fetched_at: i64,
+    metadata_hash: Option<&str>,
+    metadata_source: &str,
+    provider: &str,
+    external_id: &str,
+) -> i32 {
+    use sea_orm::{ActiveValue::Set, EntityTrait};
+    let model = td_db::entities::series::ActiveModel {
+        canonical_title: Set(title.into()),
+        metadata_source: Set(metadata_source.into()),
+        metadata_hash: Set(metadata_hash.map(str::to_string)),
+        metadata_fetched_at: Set(fetched_at),
+        first_seen_at: Set(fetched_at),
+        last_release_at: Set(fetched_at),
+        owned: Set(0),
+        ..Default::default()
+    };
+    let sid = td_db::entities::series::Entity::insert(model)
+        .exec_with_returning(db)
+        .await
+        .unwrap()
+        .id;
+    let mapping = td_db::entities::series_external_ids::ActiveModel {
+        provider: Set(provider.into()),
+        external_id: Set(external_id.into()),
+        series_id: Set(sid),
+        fetched_at: Set(fetched_at),
+    };
+    td_db::entities::series_external_ids::Entity::insert(mapping)
+        .exec(db)
+        .await
+        .unwrap();
+    sid
+}
+
+/// Build a `SeriesMetadata` with a given external_id, title, and
+/// content_hash. The other fields stay at minimal defaults.
+fn series_metadata(external_id: &str, title: &str, content_hash: &str) -> SeriesMetadata {
+    SeriesMetadata {
+        external_id: external_id.into(),
+        canonical_title: title.into(),
+        alternate_titles: Vec::new(),
+        kind: None,
+        status: None,
+        year: None,
+        cover_url: None,
+        total_volumes: None,
+        total_chapters: None,
+        rating: None,
+        description: None,
+        genres: Vec::new(),
+        tags: Vec::new(),
+        foreign_ids: Vec::new(),
+        raw: serde_json::json!({"id": external_id, "title": title}),
+        content_hash: content_hash.into(),
+    }
+}
+
+#[tokio::test]
+async fn series_refresh_tick_refreshes_stale_rows_against_provider() {
+    let db = fresh_db().await;
+    // Two stale series mapped to mangabaka.
+    let s1 = seed_stale_series(
+        &db,
+        "Old One",
+        10,
+        Some("h-old1"),
+        "api",
+        "mangabaka",
+        "mb-1",
+    )
+    .await;
+    let s2 = seed_stale_series(
+        &db,
+        "Old Two",
+        20,
+        Some("h-old2"),
+        "api",
+        "mangabaka",
+        "mb-2",
+    )
+    .await;
+
+    let provider = Arc::new(
+        FakeProvider::new("mangabaka", RefreshStatus::NotSupported)
+            .with_get(
+                "mb-1",
+                GetOutcome::Some(Box::new(series_metadata("mb-1", "Fresh One", "h-fresh1"))),
+            )
+            .with_get(
+                "mb-2",
+                GetOutcome::Some(Box::new(series_metadata("mb-2", "Fresh Two", "h-fresh2"))),
+            ),
+    );
+
+    // now = 1_000_000_000s, min_age = 0 so everything qualifies.
+    let now_ts = chrono::Utc::now().timestamp();
+    assert!(now_ts > 20);
+
+    jobs::refresh_series_metadata::run_tick(
+        provider.clone() as Arc<dyn MetadataProvider>,
+        db.clone(),
+        Arc::new(JobLocks::default()),
+        10,
+        0,
+        "cron",
+    )
+    .await;
+
+    assert_eq!(provider.gets(), 2, "one provider.get per stale row");
+
+    // Both series rows now carry the fresh title + hash.
+    let after = td_db::entities::series::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    let row1 = after.iter().find(|r| r.id == s1).unwrap();
+    let row2 = after.iter().find(|r| r.id == s2).unwrap();
+    assert_eq!(row1.canonical_title, "Fresh One");
+    assert_eq!(row1.metadata_hash.as_deref(), Some("h-fresh1"));
+    assert_eq!(row2.canonical_title, "Fresh Two");
+    assert_eq!(row2.metadata_hash.as_deref(), Some("h-fresh2"));
+
+    // Exactly one series_refresh_runs row, success, with refreshed=2.
+    let runs = td_db::entities::series_refresh_runs::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(runs.len(), 1);
+    let run = &runs[0];
+    assert_eq!(run.status, "success");
+    assert_eq!(run.considered_count, Some(2));
+    assert_eq!(run.refreshed_count, Some(2));
+    assert_eq!(run.unchanged_count, Some(0));
+    assert_eq!(run.not_found_count, Some(0));
+    assert_eq!(run.errored_count, Some(0));
+    assert_eq!(run.trigger, "cron");
+    assert!(run.finished_at.is_some());
+}
+
+#[tokio::test]
+async fn series_refresh_tick_counts_unchanged_when_hash_matches() {
+    let db = fresh_db().await;
+    seed_stale_series(&db, "Same", 10, Some("h-same"), "api", "mangabaka", "mb-1").await;
+
+    // Provider returns identical content_hash so persist short-circuits.
+    let provider = Arc::new(
+        FakeProvider::new("mangabaka", RefreshStatus::NotSupported).with_get(
+            "mb-1",
+            GetOutcome::Some(Box::new(series_metadata(
+                "mb-1",
+                "Renamed but same payload",
+                "h-same",
+            ))),
+        ),
+    );
+
+    jobs::refresh_series_metadata::run_tick(
+        provider as Arc<dyn MetadataProvider>,
+        db.clone(),
+        Arc::new(JobLocks::default()),
+        10,
+        0,
+        "manual",
+    )
+    .await;
+
+    let runs = td_db::entities::series_refresh_runs::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    let run = &runs[0];
+    assert_eq!(run.status, "success");
+    assert_eq!(run.refreshed_count, Some(0));
+    assert_eq!(run.unchanged_count, Some(1));
+    assert_eq!(run.trigger, "manual");
+}
+
+#[tokio::test]
+async fn series_refresh_tick_bumps_fetched_at_when_provider_returns_none() {
+    let db = fresh_db().await;
+    let sid = seed_stale_series(
+        &db,
+        "Gone Upstream",
+        10,
+        Some("h-x"),
+        "api",
+        "mangabaka",
+        "mb-gone",
+    )
+    .await;
+
+    let provider = Arc::new(
+        FakeProvider::new("mangabaka", RefreshStatus::NotSupported)
+            .with_get("mb-gone", GetOutcome::NotFound),
+    );
+
+    let before = chrono::Utc::now().timestamp();
+    jobs::refresh_series_metadata::run_tick(
+        provider as Arc<dyn MetadataProvider>,
+        db.clone(),
+        Arc::new(JobLocks::default()),
+        10,
+        0,
+        "cron",
+    )
+    .await;
+
+    // metadata_fetched_at advanced so the row rotates out of next batch.
+    let row = td_db::entities::series::Entity::find_by_id(sid)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        row.metadata_fetched_at >= before,
+        "got {} expected >= {before}",
+        row.metadata_fetched_at
+    );
+    // Content fields are untouched.
+    assert_eq!(row.canonical_title, "Gone Upstream");
+
+    let runs = td_db::entities::series_refresh_runs::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    let run = &runs[0];
+    assert_eq!(run.status, "success");
+    assert_eq!(run.not_found_count, Some(1));
+    assert_eq!(run.refreshed_count, Some(0));
+}
+
+#[tokio::test]
+async fn series_refresh_tick_aborts_batch_on_provider_error() {
+    let db = fresh_db().await;
+    seed_stale_series(&db, "First", 10, Some("h-1"), "api", "mangabaka", "mb-fail").await;
+    seed_stale_series(&db, "Second", 20, Some("h-2"), "api", "mangabaka", "mb-ok").await;
+
+    // First call errors; the second never happens because the batch breaks.
+    let provider = Arc::new(
+        FakeProvider::new("mangabaka", RefreshStatus::NotSupported)
+            .with_get("mb-fail", GetOutcome::Err("upstream timeout".into())),
+    );
+
+    jobs::refresh_series_metadata::run_tick(
+        provider.clone() as Arc<dyn MetadataProvider>,
+        db.clone(),
+        Arc::new(JobLocks::default()),
+        10,
+        0,
+        "cron",
+    )
+    .await;
+
+    assert_eq!(
+        provider.gets(),
+        1,
+        "tick should abort after the first provider failure"
+    );
+
+    let runs = td_db::entities::series_refresh_runs::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    let run = &runs[0];
+    assert_eq!(run.status, "failure");
+    assert_eq!(run.errored_count, Some(1));
+    assert!(run.error_message.is_some());
+}
+
+#[tokio::test]
+async fn series_refresh_tick_with_held_lock_is_a_noop() {
+    let db = fresh_db().await;
+    seed_stale_series(&db, "X", 10, Some("h-x"), "api", "mangabaka", "mb-x").await;
+
+    let provider = Arc::new(
+        FakeProvider::new("mangabaka", RefreshStatus::NotSupported).with_get(
+            "mb-x",
+            GetOutcome::Some(Box::new(series_metadata("mb-x", "Fresh", "h-fresh"))),
+        ),
+    );
+    let locks = Arc::new(JobLocks::default());
+    let lock = locks.series_refresh_lock("mangabaka");
+    let _guard = lock.lock().await;
+
+    jobs::refresh_series_metadata::run_tick(
+        provider.clone() as Arc<dyn MetadataProvider>,
+        db.clone(),
+        locks.clone(),
+        10,
+        0,
+        "cron",
+    )
+    .await;
+
+    assert_eq!(provider.gets(), 0, "provider must not be called");
+    let runs = td_db::entities::series_refresh_runs::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, "skipped");
+    assert_eq!(
+        runs[0].error_message.as_deref(),
+        Some("previous refresh still running")
+    );
+}
+
+#[tokio::test]
+async fn series_refresh_tick_with_empty_batch_records_success() {
+    let db = fresh_db().await;
+    // No seeded series rows: selection query returns empty.
+    let provider = Arc::new(FakeProvider::new("mangabaka", RefreshStatus::NotSupported));
+
+    jobs::refresh_series_metadata::run_tick(
+        provider.clone() as Arc<dyn MetadataProvider>,
+        db.clone(),
+        Arc::new(JobLocks::default()),
+        50,
+        0,
+        "cron",
+    )
+    .await;
+
+    assert_eq!(provider.gets(), 0);
+    let runs = td_db::entities::series_refresh_runs::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(runs.len(), 1);
+    let run = &runs[0];
+    assert_eq!(run.status, "success");
+    assert_eq!(run.considered_count, Some(0));
+    assert_eq!(run.refreshed_count, Some(0));
+}
+
+#[tokio::test]
+async fn series_refresh_tick_does_not_overwrite_manual_rows() {
+    let db = fresh_db().await;
+    // Manual row that's old enough to qualify but should be excluded by
+    // the selection query. Pair with a non-manual row so the tick has
+    // something to do.
+    seed_stale_series(
+        &db,
+        "Operator-curated",
+        10,
+        Some("operator-stamp"),
+        "manual",
+        "mangabaka",
+        "mb-manual",
+    )
+    .await;
+    seed_stale_series(
+        &db,
+        "Normal",
+        20,
+        Some("h-normal"),
+        "api",
+        "mangabaka",
+        "mb-normal",
+    )
+    .await;
+
+    // Script `mb-manual` to "fresh" data; if the selection ever picks it
+    // up the tick would overwrite the manual row. The scripted outcome
+    // is also a tripwire: we'll assert .gets() == 1 (only mb-normal).
+    let provider = Arc::new(
+        FakeProvider::new("mangabaka", RefreshStatus::NotSupported)
+            .with_get(
+                "mb-manual",
+                GetOutcome::Some(Box::new(series_metadata(
+                    "mb-manual",
+                    "Provider Override",
+                    "h-bad",
+                ))),
+            )
+            .with_get(
+                "mb-normal",
+                GetOutcome::Some(Box::new(series_metadata(
+                    "mb-normal",
+                    "Normal Fresh",
+                    "h-normal-fresh",
+                ))),
+            ),
+    );
+
+    jobs::refresh_series_metadata::run_tick(
+        provider.clone() as Arc<dyn MetadataProvider>,
+        db.clone(),
+        Arc::new(JobLocks::default()),
+        10,
+        0,
+        "cron",
+    )
+    .await;
+
+    assert_eq!(
+        provider.gets(),
+        1,
+        "selection query should exclude manual rows"
+    );
+
+    let manual_after = td_db::entities::series::Entity::find()
+        .all(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.canonical_title == "Operator-curated")
+        .expect("manual row should still exist");
+    assert_eq!(manual_after.metadata_source, "manual");
+    assert_eq!(
+        manual_after.metadata_hash.as_deref(),
+        Some("operator-stamp")
+    );
+}
+
+// -----------------------------------------------------------------------------
 // End-to-end: a real Scheduler driving a real cron schedule.
 // -----------------------------------------------------------------------------
 
@@ -512,7 +978,11 @@ async fn scheduler_fires_source_and_provider_jobs_on_schedule() {
     let cfg = AppConfig {
         metadata: MetadataConfig {
             active_provider: "mangabaka".into(),
-            ..MetadataConfig::default()
+            series_refresh: SeriesRefreshConfig {
+                cron: Some("*/1 * * * * *".into()),
+                batch_size: 50,
+                min_age_days: 0,
+            },
         },
         providers: ProvidersConfig {
             mangabaka: MangabakaProviderConfig {
@@ -541,8 +1011,8 @@ async fn scheduler_fires_source_and_provider_jobs_on_schedule() {
     };
 
     let mut scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
-    // 1 source job + 1 provider refresh job + 1 review-queue snapshot job.
-    assert_eq!(scheduler.job_count(), 3);
+    // 1 source job + 1 provider refresh job + 1 series refresh job + 1 review-queue snapshot job.
+    assert_eq!(scheduler.job_count(), 4);
     scheduler.start().await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(2500)).await;
@@ -616,6 +1086,102 @@ async fn scheduler_skips_sources_without_cron_or_unknown_registry_entry() {
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
     // Only the unconditional review-queue snapshot job lands; source +
     // provider jobs are skipped.
+    assert_eq!(scheduler.job_count(), 1);
+}
+
+/// Series-refresh registration honours the cron toggle: present + active
+/// provider registered → +1 job; absent or unmapped active provider → 0
+/// extra jobs.
+#[tokio::test]
+async fn scheduler_registers_series_refresh_job_when_cron_set() {
+    let db = fresh_db().await;
+    let source = Arc::new(FakeSource::new("trusted", "fake", PollOutcome::default()));
+    let mut sources_builder = SourceRegistry::builder();
+    sources_builder
+        .register(source.clone() as Arc<dyn DiscoverySource>)
+        .unwrap();
+    let sources = Arc::new(sources_builder.build());
+
+    let provider = Arc::new(FakeProvider::new("mangabaka", RefreshStatus::NotSupported));
+    let metadata = build_registry(provider);
+
+    let cfg = AppConfig {
+        metadata: MetadataConfig {
+            active_provider: "mangabaka".into(),
+            series_refresh: SeriesRefreshConfig {
+                cron: Some("*/30 * * * *".into()),
+                batch_size: 25,
+                min_age_days: 7,
+            },
+        },
+        providers: ProvidersConfig {
+            mangabaka: MangabakaProviderConfig {
+                offline_refresh_cron: None,
+                ..MangabakaProviderConfig::default()
+            },
+        },
+        sources: vec![],
+        ..Default::default()
+    };
+
+    let ctx = SchedulerContext {
+        db: db.clone(),
+        sources,
+        metadata,
+        ingestion: IngestionConfig::default(),
+        locks: Arc::new(JobLocks::default()),
+        query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
+        mangaupdates_redirector: None,
+    };
+
+    let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
+    // series-refresh job + the unconditional review-queue snapshot.
+    assert_eq!(scheduler.job_count(), 2);
+}
+
+/// If the active provider isn't registered, the series-refresh job is
+/// skipped with a warning rather than failing boot.
+#[tokio::test]
+async fn scheduler_skips_series_refresh_when_active_provider_unregistered() {
+    let db = fresh_db().await;
+    let sources = Arc::new(SourceRegistry::builder().build());
+
+    // Register "mangabaka" but make the active provider point to a
+    // different (unregistered) id.
+    let provider = Arc::new(FakeProvider::new("mangabaka", RefreshStatus::NotSupported));
+    let metadata = build_registry(provider);
+
+    let cfg = AppConfig {
+        metadata: MetadataConfig {
+            active_provider: "anilist".into(),
+            series_refresh: SeriesRefreshConfig {
+                cron: Some("*/30 * * * *".into()),
+                batch_size: 10,
+                min_age_days: 7,
+            },
+        },
+        providers: ProvidersConfig {
+            mangabaka: MangabakaProviderConfig {
+                offline_refresh_cron: None,
+                ..MangabakaProviderConfig::default()
+            },
+        },
+        sources: vec![],
+        ..Default::default()
+    };
+
+    let ctx = SchedulerContext {
+        db: db.clone(),
+        sources,
+        metadata,
+        ingestion: IngestionConfig::default(),
+        locks: Arc::new(JobLocks::default()),
+        query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
+        mangaupdates_redirector: None,
+    };
+
+    let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
+    // Only the unconditional review-queue snapshot survives.
     assert_eq!(scheduler.job_count(), 1);
 }
 
