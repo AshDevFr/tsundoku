@@ -744,6 +744,20 @@ export const handlers = [
     return HttpResponse.json(detail, { status: 201 });
   }),
 
+  // Static path registered before any `:id`-style sibling so MSW's matcher
+  // can't shadow it (see memory: MSW static vs param route ordering).
+  http.post("/api/v1/series/invalidate-metadata-hashes", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const url = new URL(request.url);
+    const provider = url.searchParams.get("provider");
+    return HttpResponse.json({
+      provider,
+      invalidated: 12,
+      skippedManual: 1,
+    });
+  }),
+
   http.post("/api/v1/series/:id/refresh-metadata", ({ request, params }) => {
     const denied = requireAdmin(request);
     if (denied) return denied;

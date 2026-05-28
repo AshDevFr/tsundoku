@@ -16,6 +16,7 @@ import { ADMIN_TEST_TOKEN } from "@/mocks/handlers";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { useAdminAuth } from "@/stores/auth";
 import { AdminIdMapsPage } from "./IdMaps";
+import { AdminMaintenancePage } from "./Maintenance";
 import { AdminMetricsPage } from "./Metrics";
 import { AdminOverviewPage } from "./Overview";
 import { AdminProviderDetailPage } from "./ProviderDetail";
@@ -70,6 +71,11 @@ function makeRouter(initial: string) {
     path: "id-maps",
     component: AdminIdMapsPage,
   });
+  const maintenance = createRoute({
+    getParentRoute: () => layout,
+    path: "maintenance",
+    component: AdminMaintenancePage,
+  });
   // / is referenced from the overview page; provide a stub route so the
   // router does not blow up resolving Link `to`s.
   const home = createRoute({
@@ -89,6 +95,7 @@ function makeRouter(initial: string) {
         providerDetail,
         metrics,
         idMaps,
+        maintenance,
       ]),
     ]),
     history: createMemoryHistory({ initialEntries: [initial] }),
@@ -332,6 +339,56 @@ describe("admin metrics page", () => {
     expect(
       screen.getByTestId("review-queue-depth-sparkline"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("admin maintenance page", () => {
+  beforeEach(() => useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN));
+  afterEach(() => useAdminAuth.getState().clear());
+
+  it("renders the invalidation card", async () => {
+    renderAt("/admin/maintenance");
+    expect(
+      await screen.findByTestId("maintenance-invalidate-card", undefined, {
+        timeout: 3000,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("maintenance-invalidate-button"),
+    ).toHaveTextContent(/invalidate metadata hashes/i);
+  });
+
+  it("opens a confirm modal before calling the API", async () => {
+    renderAt("/admin/maintenance");
+    const open = await screen.findByTestId(
+      "maintenance-invalidate-button",
+      undefined,
+      { timeout: 3000 },
+    );
+    fireEvent.click(open);
+    // The confirm button only exists once the modal is open; finding it
+    // proves the click opened the modal rather than firing the request.
+    expect(
+      await screen.findByTestId("maintenance-invalidate-confirm"),
+    ).toBeInTheDocument();
+  });
+
+  it("dispatches the invalidation mutation and surfaces the counts", async () => {
+    renderAt("/admin/maintenance");
+    const open = await screen.findByTestId(
+      "maintenance-invalidate-button",
+      undefined,
+      { timeout: 3000 },
+    );
+    fireEvent.click(open);
+    const confirm = await screen.findByTestId("maintenance-invalidate-confirm");
+    fireEvent.click(confirm);
+    // MSW handler returns invalidated=12, skippedManual=1.
+    await waitFor(() => {
+      expect(
+        screen.getByText(/12 cleared, 1 manual row\(s\) left alone/i),
+      ).toBeInTheDocument();
+    });
   });
 });
 

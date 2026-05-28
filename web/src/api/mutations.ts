@@ -251,6 +251,46 @@ export function useRefreshAllProviders() {
   });
 }
 
+/// Clear `metadata_hash` for every provider-backed series row in scope.
+/// The persist layer short-circuits the series UPDATE when the incoming
+/// provider payload hashes to the stored value; that's the right call
+/// for steady-state refreshes, but it strands existing rows whenever a
+/// new denormalized column lands on the `series` table (upstream payload
+/// unchanged → hash matches → write skipped → new column stays NULL
+/// forever). This mutation is the operator escape hatch for that
+/// scenario. Pair it with [`useRefreshSeriesMetadata`] or the
+/// series-refresh cron to actually rewrite the rows.
+///
+/// Manual rows (`metadata_source = 'manual'`) are always left alone;
+/// the response carries `skippedManual` for operator transparency.
+export function useInvalidateMetadataHashes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { provider?: string } = {}) => {
+      const { data, error } = await api.POST(
+        "/api/v1/series/invalidate-metadata-hashes",
+        {
+          params: {
+            query: args.provider ? { provider: args.provider } : {},
+          },
+        },
+      );
+      if (error)
+        throw new Error(
+          describeError(error, "failed to invalidate metadata hashes"),
+        );
+      return data;
+    },
+    onSuccess: () => {
+      // Series rows now have NULL hashes but identical user-visible
+      // fields, so list/detail queries don't need invalidation. The
+      // visible change lands when the next refresh tick rewrites the
+      // rows; that flow already invalidates these query keys.
+      qc.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+}
+
 export function useRefreshSeriesMetadata() {
   const qc = useQueryClient();
   return useMutation({

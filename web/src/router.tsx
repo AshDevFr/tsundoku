@@ -7,6 +7,7 @@ import {
 import { AppShell } from "@/components/AppShell";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { AdminIdMapsPage } from "@/pages/admin/IdMaps";
+import { AdminMaintenancePage } from "@/pages/admin/Maintenance";
 import { AdminMetricsPage } from "@/pages/admin/Metrics";
 import { AdminOverviewPage } from "@/pages/admin/Overview";
 import { AdminProviderDetailPage } from "@/pages/admin/ProviderDetail";
@@ -150,6 +151,12 @@ export const adminIdMapsRoute = createRoute({
   component: AdminIdMapsPage,
 });
 
+export const adminMaintenanceRoute = createRoute({
+  getParentRoute: () => adminLayoutRoute,
+  path: "maintenance",
+  component: AdminMaintenancePage,
+});
+
 const routeTree = rootRoute.addChildren([
   feedRoute,
   seriesDetailRoute,
@@ -163,6 +170,7 @@ const routeTree = rootRoute.addChildren([
     adminProviderDetailRoute,
     adminMetricsRoute,
     adminIdMapsRoute,
+    adminMaintenanceRoute,
   ]),
 ]);
 
