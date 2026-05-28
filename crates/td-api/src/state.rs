@@ -59,6 +59,21 @@ pub struct JobResult {
     pub bytes: Option<i64>,
 }
 
+/// Currently-running marker hung off each source / provider listing entry
+/// so the admin UI can render the "RUNNING…" pill straight from the DTO
+/// on a fresh page load, without waiting for the SSE channel to replay
+/// state it never had.
+///
+/// Hydrated from the matching `*_runs` row whose `status = 'running'`.
+/// Progress fields land in a later phase; for now only the start time is
+/// meaningful and the pill renders the binary "is in flight" state.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InFlight {
+    /// Epoch seconds the in-flight run started at.
+    pub started_at: i64,
+}
+
 /// Single broadcast frame for the SSE channel. Always has `kind`, `id`,
 /// `phase`, and `at` (epoch millis); `result` is only populated on
 /// `Finished` events.

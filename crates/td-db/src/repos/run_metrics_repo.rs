@@ -309,6 +309,20 @@ pub async fn finalize_series_refresh_run<C: ConnectionTrait>(
     Ok(())
 }
 
+/// Latest in-flight run row for a single source / provider / series-refresh
+/// stream. Returned by the `find_in_flight_*` finders so the listing
+/// handlers can hydrate the "currently running" pill without depending on
+/// the in-memory SSE channel (which is per-connection and empty on a
+/// fresh page load).
+///
+/// Carries only the columns the UI needs in Phase 1: when the row started.
+/// Progress columns join here once Phase 2 lands.
+#[derive(Debug, Clone, Copy, Serialize, FromQueryResult)]
+#[serde(rename_all = "camelCase")]
+pub struct InFlightRunRow {
+    pub started_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, FromQueryResult)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceSummaryRow {
@@ -547,6 +561,71 @@ pub async fn provider_refresh_buckets(
     Ok(ProviderRefreshBucketRow::find_by_statement(stmt)
         .all(db)
         .await?)
+}
+
+/// Newest currently-running `poll_runs` row for `source_name`, if any.
+///
+/// Lets the sources listing handler hydrate the "in flight" pill without
+/// depending on the in-memory SSE channel (which is per-connection and
+/// empty on a fresh page load). Two concurrent ticks for the same source
+/// can't exist (per-source mutex), but a stale `running` row from an
+/// aborted process is possible — `ORDER BY started_at DESC` keeps the
+/// freshest row even in that case.
+pub async fn find_in_flight_poll_for_source(
+    db: &DatabaseConnection,
+    source_name: &str,
+) -> Result<Option<InFlightRunRow>> {
+    let sql = "SELECT started_at AS started_at
+        FROM poll_runs
+        WHERE source_name = ?1 AND status = ?2
+        ORDER BY started_at DESC
+        LIMIT 1";
+    let stmt = Statement::from_sql_and_values(
+        db.get_database_backend(),
+        sql,
+        [source_name.into(), status::RUNNING.into()],
+    );
+    Ok(InFlightRunRow::find_by_statement(stmt).one(db).await?)
+}
+
+/// Newest currently-running `provider_refreshes` row for `provider_id`.
+/// Same role as [`find_in_flight_poll_for_source`] but for cache refreshes.
+pub async fn find_in_flight_provider_refresh(
+    db: &DatabaseConnection,
+    provider_id: &str,
+) -> Result<Option<InFlightRunRow>> {
+    let sql = "SELECT started_at AS started_at
+        FROM provider_refreshes
+        WHERE provider_id = ?1 AND status = ?2
+        ORDER BY started_at DESC
+        LIMIT 1";
+    let stmt = Statement::from_sql_and_values(
+        db.get_database_backend(),
+        sql,
+        [provider_id.into(), status::RUNNING.into()],
+    );
+    Ok(InFlightRunRow::find_by_statement(stmt).one(db).await?)
+}
+
+/// Newest currently-running `series_refresh_runs` row for `provider_id`.
+/// Currently exposed for symmetry; v1 doesn't surface a series-refresh pill
+/// in the UI yet, but the finder is cheap and lets the future series-refresh
+/// status DTO hydrate the same way the source / provider DTOs do.
+pub async fn find_in_flight_series_refresh(
+    db: &DatabaseConnection,
+    provider_id: &str,
+) -> Result<Option<InFlightRunRow>> {
+    let sql = "SELECT started_at AS started_at
+        FROM series_refresh_runs
+        WHERE provider_id = ?1 AND status = ?2
+        ORDER BY started_at DESC
+        LIMIT 1";
+    let stmt = Statement::from_sql_and_values(
+        db.get_database_backend(),
+        sql,
+        [provider_id.into(), status::RUNNING.into()],
+    );
+    Ok(InFlightRunRow::find_by_statement(stmt).one(db).await?)
 }
 
 /// Most recent `limit` poll runs for one source, ordered newest-first.
@@ -964,6 +1043,154 @@ mod tests {
         assert_eq!(row.error_message.as_deref(), Some("provider timeout"));
         assert_eq!(row.error_kind.as_deref(), Some("network"));
         assert_eq!(row.errored_count, Some(1));
+    }
+
+    #[tokio::test]
+    async fn find_in_flight_poll_returns_running_row_and_filters_terminals() {
+        let db = fresh_db().await;
+        // No row yet → None.
+        assert!(
+            find_in_flight_poll_for_source(&db, "feed-a")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Start a row but don't finalize → finder returns it.
+        let id = start_poll_run(&db, "feed-a", "nyaa", 100, trigger::CRON)
+            .await
+            .unwrap();
+        let row = find_in_flight_poll_for_source(&db, "feed-a")
+            .await
+            .unwrap()
+            .expect("running row should be found");
+        assert_eq!(row.started_at, 100);
+        // Finalize → finder no longer sees it.
+        finalize_poll_run(
+            &db,
+            id,
+            110,
+            status::SUCCESS,
+            PollRunCounts::default(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            find_in_flight_poll_for_source(&db, "feed-a")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Skipped / failure are likewise terminal and ignored.
+        let _ = start_poll_run(&db, "feed-a", "nyaa", 200, trigger::CRON)
+            .await
+            .unwrap();
+        let last = start_poll_run(&db, "feed-a", "nyaa", 300, trigger::CRON)
+            .await
+            .unwrap();
+        // Older one finalized to skipped; newest stays running → finder
+        // returns the newest by started_at DESC.
+        let older = start_poll_run(&db, "feed-a", "nyaa", 150, trigger::CRON)
+            .await
+            .unwrap();
+        finalize_poll_run(
+            &db,
+            older,
+            151,
+            status::SKIPPED,
+            PollRunCounts::default(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let row = find_in_flight_poll_for_source(&db, "feed-a")
+            .await
+            .unwrap()
+            .expect("a running row exists");
+        assert_eq!(row.started_at, 300);
+        // Different source name → not found.
+        assert!(
+            find_in_flight_poll_for_source(&db, "feed-b")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Keep `last` alive so the compiler doesn't drop the id we never read.
+        let _ = last;
+    }
+
+    #[tokio::test]
+    async fn find_in_flight_provider_refresh_returns_running_row() {
+        let db = fresh_db().await;
+        assert!(
+            find_in_flight_provider_refresh(&db, "mangabaka")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let id = start_provider_refresh(&db, "mangabaka", 500, trigger::CRON)
+            .await
+            .unwrap();
+        let row = find_in_flight_provider_refresh(&db, "mangabaka")
+            .await
+            .unwrap()
+            .expect("running row should be found");
+        assert_eq!(row.started_at, 500);
+        finalize_provider_refresh(
+            &db,
+            id,
+            505,
+            status::SUCCESS,
+            ProviderRefreshCounts::default(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            find_in_flight_provider_refresh(&db, "mangabaka")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn find_in_flight_series_refresh_returns_running_row() {
+        let db = fresh_db().await;
+        assert!(
+            find_in_flight_series_refresh(&db, "mangabaka")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let id = start_series_refresh_run(&db, "mangabaka", 700, trigger::MANUAL)
+            .await
+            .unwrap();
+        let row = find_in_flight_series_refresh(&db, "mangabaka")
+            .await
+            .unwrap()
+            .expect("running row should be found");
+        assert_eq!(row.started_at, 700);
+        finalize_series_refresh_run(
+            &db,
+            id,
+            720,
+            status::SUCCESS,
+            SeriesRefreshCounts::default(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            find_in_flight_series_refresh(&db, "mangabaka")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

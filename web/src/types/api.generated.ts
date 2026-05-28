@@ -829,6 +829,23 @@ export interface components {
             mangaupdatesRedirectCache: components["schemas"]["MangaupdatesRedirectStats"];
         };
         /**
+         * @description Currently-running marker hung off each source / provider listing entry
+         *     so the admin UI can render the "RUNNING…" pill straight from the DTO
+         *     on a fresh page load, without waiting for the SSE channel to replay
+         *     state it never had.
+         *
+         *     Hydrated from the matching `*_runs` row whose `status = 'running'`.
+         *     Progress fields land in a later phase; for now only the start time is
+         *     meaningful and the pill renders the binary "is in flight" state.
+         */
+        InFlight: {
+            /**
+             * Format: int64
+             * @description Epoch seconds the in-flight run started at.
+             */
+            startedAt: number;
+        };
+        /**
          * @description Response from `POST /api/v1/series/invalidate-metadata-hashes`. The
          *     endpoint runs synchronously, so the counts are the actual outcome of
          *     the call (not "queued work").
@@ -992,6 +1009,7 @@ export interface components {
             config?: null | components["schemas"]["ProviderConfigDto"];
             displayName: string;
             id: string;
+            inFlight?: null | components["schemas"]["InFlight"];
             lastRefresh?: null | components["schemas"]["ProviderCacheState"];
         };
         ProviderList: {
@@ -1405,6 +1423,7 @@ export interface components {
         };
         SourceDto: {
             config?: null | components["schemas"]["SourceConfigDto"];
+            inFlight?: null | components["schemas"]["InFlight"];
             kind: string;
             lastError?: string | null;
             /** Format: int64 */

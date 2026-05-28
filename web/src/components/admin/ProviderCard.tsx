@@ -86,7 +86,11 @@ export function ProviderCard({ provider }: { provider: ProviderDto }) {
             align="center"
             style={{ flexShrink: 0 }}
           >
-            <JobStatusPill kind="provider" id={provider.id} />
+            <JobStatusPill
+              kind="provider"
+              id={provider.id}
+              inFlight={provider.inFlight}
+            />
             <Tooltip
               label="Re-download the offline metadata dump and rebuild the indexes"
               withArrow

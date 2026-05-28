@@ -215,6 +215,23 @@ describe("admin sources page", () => {
     });
   });
 
+  it("renders the running pill from the DTO before any SSE event arrives", async () => {
+    // The MSW fixture seeds a second source (`running-on-load`) with
+    // `inFlight` set. Hitting the page is the moral equivalent of a
+    // hard refresh: SSE map is empty, but the DTO carries the in-flight
+    // marker, so the pill must render.
+    renderAt("/admin/sources");
+    expect(
+      await screen.findByTestId("job-pill-source-running-on-load", undefined, {
+        timeout: 3000,
+      }),
+    ).toHaveTextContent(/running/i);
+    // The first source has no `inFlight` and no SSE event yet → no pill.
+    expect(
+      screen.queryByTestId("job-pill-source-english-manga-trusted"),
+    ).not.toBeInTheDocument();
+  });
+
   it("flips the source-card pill when a synthetic SSE event arrives", async () => {
     renderAt("/admin/sources");
     await screen.findByTestId("source-card-english-manga-trusted", undefined, {

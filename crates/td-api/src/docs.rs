@@ -38,7 +38,7 @@ use crate::handlers::tagging::{TagList, TagUsageDto};
 use crate::handlers::{
     events, health, info, metrics, providers, releases, series, sources, stats, tagging,
 };
-use crate::state::{JobEvent, JobKind, JobPhase, JobResult};
+use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobResult};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -145,6 +145,7 @@ use crate::state::{JobEvent, JobKind, JobPhase, JobResult};
         JobKind,
         JobPhase,
         JobResult,
+        InFlight,
     )),
     tags(
         (name = "system", description = "Health and aggregate counters"),

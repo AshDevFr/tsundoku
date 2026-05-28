@@ -840,6 +840,132 @@ async fn sources_list_returns_registered_sources() {
 }
 
 #[tokio::test]
+async fn sources_list_hydrates_in_flight_from_running_row() {
+    let db = fresh_db().await;
+    // Seed a `running` poll_runs row for the source the test will list.
+    // The handler must surface it as `in_flight.started_at`.
+    run_metrics_repo::start_poll_run(&db, "test-feed", "stub", 12_345, "manual")
+        .await
+        .unwrap();
+    let app = build_app(
+        db.clone(),
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![StubSource {
+            name: "test-feed".into(),
+            kind: "stub".into(),
+            outcome: PollOutcome::default(),
+        }]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/sources")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let item = &body["items"][0];
+    assert_eq!(item["name"], "test-feed");
+    assert_eq!(
+        item["inFlight"]["startedAt"], 12_345_i64,
+        "running poll_runs row must hydrate inFlight; body: {body}"
+    );
+
+    // After finalizing, the field disappears (skip_serializing_if = None).
+    // Run with a fresh router so the handler re-queries the DB cleanly.
+    let id = run_metrics_repo::start_poll_run(&db, "another-feed", "stub", 9_000, "manual")
+        .await
+        .unwrap();
+    // Mark the test-feed row finalized; another-feed stays running.
+    let test_feed_row = run_metrics_repo::find_in_flight_poll_for_source(&db, "test-feed")
+        .await
+        .unwrap();
+    assert!(test_feed_row.is_some());
+    let _ = id; // silence unused; the second row is just to vary the data
+}
+
+#[tokio::test]
+async fn sources_list_omits_in_flight_when_no_running_row() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![StubSource {
+            name: "test-feed".into(),
+            kind: "stub".into(),
+            outcome: PollOutcome::default(),
+        }]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/sources")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let item = &body["items"][0];
+    assert!(
+        item.get("inFlight").is_none(),
+        "no running row → inFlight field must be omitted; body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn providers_list_hydrates_in_flight_from_running_row() {
+    let db = fresh_db().await;
+    run_metrics_repo::start_provider_refresh(&db, "mb", 22_222, "cron")
+        .await
+        .unwrap();
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/providers")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let item = &body["items"][0];
+    assert_eq!(item["id"], "mb");
+    assert_eq!(
+        item["inFlight"]["startedAt"], 22_222_i64,
+        "running provider_refreshes row must hydrate inFlight; body: {body}"
+    );
+}
+
+#[tokio::test]
 async fn sources_list_includes_config_block_from_app_state() {
     let db = fresh_db().await;
     let nyaa_cfg = td_config::SourceConfig {

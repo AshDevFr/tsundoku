@@ -1754,6 +1754,20 @@
           }
         }
       },
+      "InFlight": {
+        "type": "object",
+        "description": "Currently-running marker hung off each source / provider listing entry\nso the admin UI can render the \"RUNNING…\" pill straight from the DTO\non a fresh page load, without waiting for the SSE channel to replay\nstate it never had.\n\nHydrated from the matching `*_runs` row whose `status = 'running'`.\nProgress fields land in a later phase; for now only the start time is\nmeaningful and the pill renders the binary \"is in flight\" state.",
+        "required": [
+          "startedAt"
+        ],
+        "properties": {
+          "startedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch seconds the in-flight run started at."
+          }
+        }
+      },
       "InvalidateMetadataHashesResponse": {
         "type": "object",
         "description": "Response from `POST /api/v1/series/invalidate-metadata-hashes`. The\nendpoint runs synchronously, so the counts are the actual outcome of\nthe call (not \"queued work\").",
@@ -2111,6 +2125,17 @@
           },
           "id": {
             "type": "string"
+          },
+          "inFlight": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InFlight",
+                "description": "Set when a `provider_refreshes` row for this provider is currently\n`status = 'running'`. Lets the admin UI render the \"RUNNING…\" pill\nfrom a fresh page load instead of waiting for an SSE event the\nchannel doesn't replay."
+              }
+            ]
           },
           "lastRefresh": {
             "oneOf": [
@@ -3230,6 +3255,17 @@
               {
                 "$ref": "#/components/schemas/SourceConfigDto",
                 "description": "Static config block snapshotted at boot. `None` when a source is in\nthe registry but its config entry isn't, which today only happens in\ntests using a hand-built `SourceRegistry`."
+              }
+            ]
+          },
+          "inFlight": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InFlight",
+                "description": "Set when a `poll_runs` row for this source is currently in\n`status = 'running'`. Lets the admin UI render the \"RUNNING…\" pill\nfrom a fresh page load instead of waiting for an SSE event the\nchannel doesn't replay."
               }
             ]
           },

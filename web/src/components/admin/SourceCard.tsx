@@ -92,7 +92,11 @@ export function SourceCard({ source }: { source: SourceDto }) {
             align="center"
             style={{ flexShrink: 0 }}
           >
-            <JobStatusPill kind="source" id={source.name} />
+            <JobStatusPill
+              kind="source"
+              id={source.name}
+              inFlight={source.inFlight}
+            />
             <BackfillButton source={source} />
             <Button
               size="xs"

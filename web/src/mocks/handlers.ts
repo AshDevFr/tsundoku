@@ -466,6 +466,26 @@ export const handlers = [
             maxPages: 1,
           },
         },
+        // Second source carries `inFlight` so component tests can exercise
+        // the DTO-driven pill path (page mount with no SSE replay).
+        {
+          kind: "nyaa",
+          name: "running-on-load",
+          lastPolledAt: NOW - 86_400,
+          lastSuccessAt: NOW - 86_400,
+          lastError: null,
+          lastSummary: "10 new releases",
+          config: {
+            enabled: true,
+            cron: "0 */6 * * *",
+            feedUrl: "https://nyaa.si/?page=rss&u=someone",
+            fetchDetails: true,
+            timeoutSeconds: 30,
+            siteBaseUrl: "https://nyaa.si",
+            maxPages: 1,
+          },
+          inFlight: { startedAt: NOW - 30 },
+        },
       ],
     }),
   ),

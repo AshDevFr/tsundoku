@@ -1,21 +1,43 @@
 import { Badge, Loader, Tooltip } from "@mantine/core";
 import { useJobEventFor } from "@/api/jobEventsContext";
 import { formatAbsolute, formatRelative } from "@/api/utils";
+import type { components } from "@/types/api.generated";
 
-/// Inline status badge driven by the SSE event stream. Renders nothing
-/// before the first event arrives. Once a `started` lands the badge
-/// flips to "Running…" with a spinner; the matching `finished` flips
-/// it to "Done" (or "Skipped" / "Failed") and stays there. The user
-/// can ignore it; the next trigger replaces the badge in-place.
+type InFlight = components["schemas"]["InFlight"];
+
+/// Inline status badge driven by the SSE event stream AND the DTO's
+/// `inFlight` field, so the pill survives a hard refresh while a job is
+/// still running (the SSE channel only replays events received in the
+/// current session). Precedence: a live SSE event wins (it's fresher
+/// than the list query), the DTO is the fallback that hydrates the pill
+/// on a fresh page load.
 export function JobStatusPill({
   kind,
   id,
+  inFlight,
 }: {
   kind: "source" | "provider";
   id: string;
+  inFlight?: InFlight | null;
 }) {
   const event = useJobEventFor(kind, id);
-  if (!event) return null;
+  // SSE wins when present. Otherwise, hydrate from the DTO's inFlight row.
+  if (!event) {
+    if (inFlight) {
+      return (
+        <Badge
+          size="xs"
+          variant="light"
+          color="blue"
+          leftSection={<Loader size="xs" color="blue" />}
+          data-testid={`job-pill-${kind}-${id}`}
+        >
+          Running…
+        </Badge>
+      );
+    }
+    return null;
+  }
   if (event.phase === "started") {
     return (
       <Badge

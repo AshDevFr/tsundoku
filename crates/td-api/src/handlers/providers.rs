@@ -7,14 +7,14 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 use td_config::{MangabakaProviderConfig, ProvidersConfig};
-use td_db::repos::provider_cache_state_repo;
+use td_db::repos::{provider_cache_state_repo, run_metrics_repo};
 use td_metadata::{MetadataProvider, SeriesKind, SeriesStatus};
 use td_resolution::scoring::dice;
 use td_scheduler::jobs::refresh_provider_cache;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
-use crate::state::{AppState, JobKind, JobResult};
+use crate::state::{AppState, InFlight, JobKind, JobResult};
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +37,12 @@ pub struct ProviderDto {
     /// be `None` for providers that don't have a typed config block (today
     /// this only happens for test doubles).
     pub config: Option<ProviderConfigDto>,
+    /// Set when a `provider_refreshes` row for this provider is currently
+    /// `status = 'running'`. Lets the admin UI render the "RUNNING…" pill
+    /// from a fresh page load instead of waiting for an SSE event the
+    /// channel doesn't replay.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_flight: Option<InFlight>,
 }
 
 /// Per-provider config exposed to the admin UI. The api_key is reported as
@@ -138,6 +144,12 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<ProviderList>
             .await
             .map_err(ApiError::Internal)?;
         let config = build_provider_config_dto(id, provider, &state.providers_config).await;
+        let in_flight = run_metrics_repo::find_in_flight_provider_refresh(&state.db, id)
+            .await
+            .map_err(ApiError::Internal)?
+            .map(|r| InFlight {
+                started_at: r.started_at,
+            });
         items.push(ProviderDto {
             id: id.to_string(),
             display_name: provider.display_name().to_string(),
@@ -150,6 +162,7 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<ProviderList>
                 source_url: r.source_url,
             }),
             config,
+            in_flight,
         });
     }
     items.sort_by(|a, b| a.id.cmp(&b.id));

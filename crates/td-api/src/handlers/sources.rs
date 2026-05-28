@@ -6,13 +6,13 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 use td_config::SourceConfig;
-use td_db::repos::sources_repo;
+use td_db::repos::{run_metrics_repo, sources_repo};
 use td_scheduler::jobs::backfill_source::{self, BackfillOutcome};
 use td_scheduler::jobs::poll_source;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
-use crate::state::{AppState, JobKind, JobResult};
+use crate::state::{AppState, InFlight, JobKind, JobResult};
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +27,12 @@ pub struct SourceDto {
     /// the registry but its config entry isn't, which today only happens in
     /// tests using a hand-built `SourceRegistry`.
     pub config: Option<SourceConfigDto>,
+    /// Set when a `poll_runs` row for this source is currently in
+    /// `status = 'running'`. Lets the admin UI render the "RUNNING…" pill
+    /// from a fresh page load instead of waiting for an SSE event the
+    /// channel doesn't replay.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_flight: Option<InFlight>,
 }
 
 /// Operator-facing snapshot of the per-source config (the bits visible in
@@ -117,6 +123,12 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<SourceList>> 
             .await
             .map_err(ApiError::Internal)?;
         let config = find_source_config(&state.sources_config, name).map(build_config_dto);
+        let in_flight = run_metrics_repo::find_in_flight_poll_for_source(&state.db, name)
+            .await
+            .map_err(ApiError::Internal)?
+            .map(|r| InFlight {
+                started_at: r.started_at,
+            });
         items.push(SourceDto {
             name: name.to_string(),
             kind: source.kind().to_string(),
@@ -125,6 +137,7 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<SourceList>> 
             last_error: row.as_ref().and_then(|r| r.last_error.clone()),
             last_summary: row.as_ref().and_then(|r| r.last_summary.clone()),
             config,
+            in_flight,
         });
     }
     // Stable ordering for snapshot tests / UI sort.
