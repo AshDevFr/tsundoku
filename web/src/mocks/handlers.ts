@@ -801,6 +801,20 @@ export const handlers = [
     });
   }),
 
+  // Stub the cover-proxy invalidate endpoint so the Maintenance card has
+  // something to talk to in mock + test runs. The proxy GETs themselves
+  // (`/api/v1/covers/{id}`, `/api/v1/covers/by-url`) are intentionally
+  // not mocked: in dev the Vite proxy reaches the real backend, and in
+  // tests the component tree we exercise never renders a cover.
+  http.post("/api/v1/covers/invalidate-cache", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({
+      filesDeleted: 7,
+      bytesFreed: 245_678,
+    });
+  }),
+
   http.post("/api/v1/series/refresh-all", ({ request }) => {
     const denied = requireAdmin(request);
     if (denied) return denied;

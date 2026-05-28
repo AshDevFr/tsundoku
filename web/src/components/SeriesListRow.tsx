@@ -11,7 +11,7 @@ import {
 } from "@mantine/core";
 import { Link } from "@tanstack/react-router";
 import type { SeriesListItem } from "@/api/queries";
-import { formatRelative } from "@/api/utils";
+import { coverProxyForSeries, formatRelative } from "@/api/utils";
 
 const COVER_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
@@ -42,7 +42,11 @@ export function SeriesListRow({ series }: { series: SeriesListItem }) {
           <Box w={120} style={{ flexShrink: 0 }}>
             <AspectRatio ratio={3 / 4}>
               <Image
-                src={series.coverUrl ?? COVER_PLACEHOLDER}
+                src={
+                  series.coverUrl
+                    ? coverProxyForSeries(series.id)
+                    : COVER_PLACEHOLDER
+                }
                 fallbackSrc={COVER_PLACEHOLDER}
                 alt={series.canonicalTitle}
                 loading="lazy"

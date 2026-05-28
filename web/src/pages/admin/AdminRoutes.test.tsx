@@ -1,5 +1,5 @@
 import { MantineProvider } from "@mantine/core";
-import { Notifications } from "@mantine/notifications";
+import { Notifications, notifications } from "@mantine/notifications";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -411,7 +411,13 @@ describe("admin metrics page", () => {
 });
 
 describe("admin maintenance page", () => {
-  beforeEach(() => useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN));
+  beforeEach(() => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    // Mantine's notification store is a module-level singleton; prior
+    // describes (sources, providers, ...) leave their notifications in
+    // it and the default limit=5 makes later assertions miss new ones.
+    notifications.clean();
+  });
   afterEach(() => useAdminAuth.getState().clear());
 
   it("renders the invalidation card", async () => {
@@ -483,6 +489,40 @@ describe("admin maintenance page", () => {
     await waitFor(() => {
       expect(
         screen.getByText(/mangabaka: up to 25 row\(s\), min age 7d/i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("renders the invalidate-covers card", async () => {
+    renderAt("/admin/maintenance");
+    expect(
+      await screen.findByTestId(
+        "maintenance-invalidate-covers-card",
+        undefined,
+        { timeout: 3000 },
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("maintenance-invalidate-covers-button"),
+    ).toHaveTextContent(/invalidate cover cache/i);
+  });
+
+  it("dispatches the invalidate-covers mutation and surfaces the counts", async () => {
+    renderAt("/admin/maintenance");
+    const open = await screen.findByTestId(
+      "maintenance-invalidate-covers-button",
+      undefined,
+      { timeout: 3000 },
+    );
+    fireEvent.click(open);
+    const confirm = await screen.findByTestId(
+      "maintenance-invalidate-covers-confirm",
+    );
+    fireEvent.click(confirm);
+    // MSW handler returns filesDeleted=7, bytesFreed=245678.
+    await waitFor(() => {
+      expect(
+        screen.getByText(/7 file\(s\) deleted, 239\.9 KB freed/i),
       ).toBeInTheDocument();
     });
   });

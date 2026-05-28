@@ -41,7 +41,12 @@ import {
   useSources,
   useUnresolvedReleases,
 } from "@/api/queries";
-import { formatAbsolute, formatRelative, providerUrl } from "@/api/utils";
+import {
+  coverProxyForSeries,
+  formatAbsolute,
+  formatRelative,
+  providerUrl,
+} from "@/api/utils";
 import {
   ExtractedLinks,
   ReleaseDescription,
@@ -1086,7 +1091,11 @@ function CandidateList({
               >
                 <Box w={56} miw={56} h={76}>
                   <Image
-                    src={c.seriesCoverUrl ?? CANDIDATE_PLACEHOLDER}
+                    src={
+                      c.seriesCoverUrl
+                        ? coverProxyForSeries(c.seriesId)
+                        : CANDIDATE_PLACEHOLDER
+                    }
                     fallbackSrc={CANDIDATE_PLACEHOLDER}
                     alt={c.seriesTitle}
                     radius="sm"

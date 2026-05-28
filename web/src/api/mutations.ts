@@ -310,6 +310,31 @@ export function useRefreshSeriesMetadata() {
   });
 }
 
+/// Wipe the on-disk cover-image cache served by `/api/v1/covers/*`.
+/// Files come back into existence on demand as the UI requests covers
+/// again, so the cost is bandwidth, not correctness. Use this when an
+/// upstream cover was corrected and you want the proxy to pull the new
+/// bytes immediately instead of waiting for the URL to rotate.
+export function useInvalidateCoverCache() {
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/api/v1/covers/invalidate-cache",
+        {},
+      );
+      if (error)
+        throw new Error(
+          describeError(error, "failed to invalidate cover cache"),
+        );
+      return data;
+    },
+    // No query invalidation: the proxy URLs the UI renders haven't
+    // changed (still `/api/v1/covers/{id}`); only the on-disk cache
+    // entries did. The next render uses the browser cache until its
+    // own TTL expires; a hard refresh forces fresh proxy hits.
+  });
+}
+
 /// Manually trigger a series-metadata refresh tick against the active
 /// provider. Same locking semantics as the scheduled job: an in-flight
 /// tick causes the request to no-op with `triggered: false, skipped: true`.

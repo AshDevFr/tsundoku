@@ -29,7 +29,12 @@ import {
   useSeriesDetail,
   useSeriesReleases,
 } from "@/api/queries";
-import { formatAbsolute, formatRelative, providerUrl } from "@/api/utils";
+import {
+  coverProxyForSeries,
+  formatAbsolute,
+  formatRelative,
+  providerUrl,
+} from "@/api/utils";
 import {
   LinkExistingPanel,
   ProviderSearchPanel,
@@ -99,7 +104,7 @@ export function SeriesDetailPage() {
         <Grid.Col span={{ base: 12, sm: 4, md: 3 }}>
           <AspectRatio ratio={3 / 4}>
             <Image
-              src={s.coverUrl ?? COVER_PLACEHOLDER}
+              src={s.coverUrl ? coverProxyForSeries(s.id) : COVER_PLACEHOLDER}
               fallbackSrc={COVER_PLACEHOLDER}
               alt={s.canonicalTitle}
               radius="md"

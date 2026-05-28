@@ -12,6 +12,7 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import {
+  useInvalidateCoverCache,
   useInvalidateMetadataHashes,
   useRefreshAllSeries,
 } from "@/api/mutations";
@@ -33,6 +34,7 @@ export function AdminMaintenancePage() {
       </Stack>
       <InvalidateMetadataHashesCard />
       <RefreshAllSeriesCard />
+      <InvalidateCoverCacheCard />
     </Stack>
   );
 }
@@ -158,6 +160,123 @@ function InvalidateMetadataHashesCard() {
       </Modal>
     </Card>
   );
+}
+
+function InvalidateCoverCacheCard() {
+  const [opened, { open, close }] = useDisclosure(false);
+  const invalidate = useInvalidateCoverCache();
+
+  const handleConfirm = () => {
+    invalidate.mutate(undefined, {
+      onSuccess: (data) => {
+        close();
+        const files = data?.filesDeleted ?? 0;
+        const bytes = data?.bytesFreed ?? 0;
+        notifications.show({
+          color: files > 0 ? "blue" : "gray",
+          title: "Cover cache invalidated",
+          message:
+            files > 0
+              ? `${files} file(s) deleted, ${formatBytes(bytes)} freed`
+              : "Cache was already empty.",
+        });
+      },
+      onError: (e) =>
+        notifications.show({
+          color: "red",
+          title: "Cover cache invalidation failed",
+          message: (e as Error).message,
+        }),
+    });
+  };
+
+  return (
+    <Card
+      withBorder
+      radius="md"
+      p="md"
+      data-testid="maintenance-invalidate-covers-card"
+    >
+      <Stack gap="sm">
+        <Stack gap={2}>
+          <Title order={4}>Invalidate cover cache</Title>
+          <Text size="sm" c="dimmed">
+            Delete every file under the cover-proxy cache directory. Covers are
+            re-fetched on demand the next time the UI requests them; in-flight
+            browser tabs may continue to show cached bytes until their own cache
+            TTL expires.
+          </Text>
+        </Stack>
+        <Text size="xs" c="dimmed">
+          Use this when:
+        </Text>
+        <List size="xs" c="dimmed" withPadding>
+          <List.Item>
+            An upstream cover was corrected and the proxy is still serving the
+            old bytes.
+          </List.Item>
+          <List.Item>You want to reclaim disk space.</List.Item>
+        </List>
+        <Group justify="flex-end">
+          <Button
+            color="orange"
+            variant="light"
+            size="xs"
+            onClick={open}
+            data-testid="maintenance-invalidate-covers-button"
+          >
+            Invalidate cover cache
+          </Button>
+        </Group>
+      </Stack>
+
+      <Modal
+        opened={opened}
+        onClose={close}
+        title="Invalidate cover cache?"
+        centered
+      >
+        <Stack gap="md">
+          <Alert color="orange" variant="light">
+            This deletes every file under the cover-proxy cache directory.
+            Covers come back into existence on the next request, at the cost of
+            one upstream fetch per series.
+          </Alert>
+          <Group justify="flex-end" gap="xs">
+            <Button
+              variant="default"
+              size="xs"
+              onClick={close}
+              disabled={invalidate.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="orange"
+              size="xs"
+              onClick={handleConfirm}
+              loading={invalidate.isPending}
+              data-testid="maintenance-invalidate-covers-confirm"
+            >
+              Invalidate
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </Card>
+  );
+}
+
+// Compact human-readable byte formatter. Used only by the cover-cache
+// invalidation notification; keep it local rather than promoting to a
+// shared util until a second caller appears.
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 function RefreshAllSeriesCard() {

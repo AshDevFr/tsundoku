@@ -23,7 +23,11 @@ import {
   useProviders,
   useSeriesList,
 } from "@/api/queries";
-import { providerUrl } from "@/api/utils";
+import {
+  coverProxyForSeries,
+  coverProxyForUrl,
+  providerUrl,
+} from "@/api/utils";
 
 export const CANDIDATE_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
@@ -173,7 +177,11 @@ function ExistingSeriesResults({
               <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
                 <Box w={42} miw={42} h={56}>
                   <Image
-                    src={s.coverUrl ?? CANDIDATE_PLACEHOLDER}
+                    src={
+                      s.coverUrl
+                        ? coverProxyForSeries(s.id)
+                        : CANDIDATE_PLACEHOLDER
+                    }
                     fallbackSrc={CANDIDATE_PLACEHOLDER}
                     alt={s.canonicalTitle}
                     radius="sm"
@@ -396,7 +404,11 @@ function SearchResults({
               <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
                 <Box w={42} miw={42} h={56}>
                   <Image
-                    src={h.coverUrl ?? CANDIDATE_PLACEHOLDER}
+                    src={
+                      h.coverUrl
+                        ? coverProxyForUrl(h.coverUrl)
+                        : CANDIDATE_PLACEHOLDER
+                    }
                     fallbackSrc={CANDIDATE_PLACEHOLDER}
                     alt={h.title}
                     radius="sm"
