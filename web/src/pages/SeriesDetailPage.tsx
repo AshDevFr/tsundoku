@@ -12,18 +12,28 @@ import {
   Group,
   Image,
   Loader,
+  Modal,
+  SegmentedControl,
   Stack,
   Text,
   Title,
+  Tooltip,
 } from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
 import { Link } from "@tanstack/react-router";
+import { useState } from "react";
 import {
   type ReleaseDto,
   useSeriesDetail,
   useSeriesReleases,
 } from "@/api/queries";
 import { formatAbsolute, formatRelative, providerUrl } from "@/api/utils";
+import {
+  LinkExistingPanel,
+  ProviderSearchPanel,
+} from "@/components/ReleaseLinking";
 import { seriesDetailRoute } from "@/router";
+import { useAdminAuth } from "@/stores/auth";
 
 const COVER_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
@@ -80,9 +90,21 @@ export function SeriesDetailPage() {
           <Stack gap="sm">
             <Title order={2}>{s.canonicalTitle}</Title>
             {s.alternateTitles.length > 0 && (
-              <Text c="dimmed" size="sm" lineClamp={2}>
-                {s.alternateTitles.join(" · ")}
-              </Text>
+              <Group gap={6}>
+                {s.alternateTitles.map((t) => (
+                  <Badge
+                    key={t}
+                    size="sm"
+                    radius="sm"
+                    variant="default"
+                    tt="none"
+                    fw={400}
+                    title={t}
+                  >
+                    {t}
+                  </Badge>
+                ))}
+              </Group>
             )}
             <Group gap="xs">
               {s.kind && <Badge variant="light">{s.kind}</Badge>}
@@ -111,6 +133,16 @@ export function SeriesDetailPage() {
                 {s.genres.map((g) => (
                   <Badge key={g} size="sm" variant="outline" color="grape">
                     {g}
+                  </Badge>
+                ))}
+              </Group>
+            )}
+
+            {s.tags.length > 0 && (
+              <Group gap={4}>
+                {s.tags.map((t) => (
+                  <Badge key={t} size="sm" variant="light" color="blue">
+                    {t}
                   </Badge>
                 ))}
               </Group>
@@ -232,6 +264,12 @@ function ReleaseList({ items }: { items: ReleaseDto[] }) {
 }
 
 function ReleaseRow({ release }: { release: ReleaseDto }) {
+  // The relink ("Move") action calls a write endpoint, so only offer it when
+  // an admin token is present — the series detail page is otherwise a public
+  // browse view.
+  const isAdmin = useAdminAuth((s) => Boolean(s.token));
+  const [moveOpen, { open: openMove, close: closeMove }] = useDisclosure(false);
+
   return (
     <Card withBorder padding="xs" radius="sm">
       <Group justify="space-between" wrap="nowrap" align="flex-start">
@@ -262,7 +300,7 @@ function ReleaseRow({ release }: { release: ReleaseDto }) {
             )}
           </Group>
         </Stack>
-        <Group gap={4}>
+        <Group gap={8} wrap="nowrap" align="center">
           {release.magnet && (
             <Anchor href={release.magnet} size="xs" rel="noreferrer">
               magnet
@@ -288,8 +326,81 @@ function ReleaseRow({ release }: { release: ReleaseDto }) {
               DDL
             </Anchor>
           )}
+          {isAdmin && (
+            <Tooltip label="Wrong series? Move this release to the correct one.">
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                color="gray"
+                onClick={openMove}
+                data-testid={`move-release-${release.id}`}
+              >
+                Move
+              </Button>
+            </Tooltip>
+          )}
         </Group>
       </Group>
+
+      {moveOpen && <MoveReleaseModal release={release} onClose={closeMove} />}
     </Card>
+  );
+}
+
+/// Relink a release that landed on the wrong series. Hosts the same catalog
+/// and provider search the review queue uses, behind a tab toggle. The link
+/// endpoint re-points the release regardless of its current status, so a
+/// successful pick moves it off this series; query invalidation then drops it
+/// from the list.
+function MoveReleaseModal({
+  release,
+  onClose,
+}: {
+  release: ReleaseDto;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState("catalog");
+
+  return (
+    <Modal
+      opened
+      onClose={onClose}
+      title="Move release to another series"
+      size="lg"
+      centered
+    >
+      <Stack gap="md">
+        <Text size="sm" c="dimmed" lineClamp={2} title={release.title}>
+          {release.title}
+        </Text>
+        <SegmentedControl
+          value={tab}
+          onChange={setTab}
+          fullWidth
+          data={[
+            { label: "Catalog", value: "catalog" },
+            { label: "Provider search", value: "provider" },
+          ]}
+        />
+        {tab === "catalog" ? (
+          <LinkExistingPanel
+            releaseId={release.id}
+            seedQuery={release.title}
+            onLinked={onClose}
+          />
+        ) : (
+          <ProviderSearchPanel
+            releaseId={release.id}
+            seedQuery={release.title}
+            onLinked={onClose}
+          />
+        )}
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>
+            Close
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
   );
 }

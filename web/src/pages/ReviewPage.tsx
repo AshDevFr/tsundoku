@@ -1169,15 +1169,10 @@ function CandidateList({
   );
 }
 
-/// Modal for linking a review-queue release to a provider series. Two
-/// paths share one UI:
-///
-/// - Paste an external ID → exact lookup, single result, one click.
-/// - Type a title → debounced search, scrollable result list,
-///   click-to-link.
-///
-/// External ID takes priority when both are filled; the helper text
-/// makes that explicit.
+/// Modal for linking a review-queue release to a provider series. Thin
+/// wrapper over the shared [`ProviderSearchPanel`]; mounted only while open
+/// so the panel resets its inputs on each open and never searches in the
+/// background.
 function ProviderSearchModal({
   opened,
   onClose,
@@ -1189,75 +1184,6 @@ function ProviderSearchModal({
   releaseId: string;
   seedQuery: string;
 }) {
-  const providers = useProviders();
-  const link = useLinkRelease();
-  const [provider, setProvider] = useState<string | null>(null);
-  const [title, setTitle] = useState(seedQuery);
-  const [externalId, setExternalId] = useState("");
-  // Debounce the title input so each keystroke doesn't fire a search.
-  const [debouncedTitle, setDebouncedTitle] = useState(seedQuery);
-
-  // Reset state when the modal opens against a new release.
-  useEffect(() => {
-    if (opened) {
-      setTitle(seedQuery);
-      setDebouncedTitle(seedQuery);
-      setExternalId("");
-      setProvider(null);
-    }
-  }, [opened, seedQuery]);
-
-  useEffect(() => {
-    const handle = window.setTimeout(() => setDebouncedTitle(title), 300);
-    return () => window.clearTimeout(handle);
-  }, [title]);
-
-  const options =
-    providers.data?.items.map((p) => ({
-      value: p.id,
-      label: p.active ? `${p.displayName} (active)` : p.displayName,
-    })) ?? [];
-
-  const activeId =
-    providers.data?.items.find((p) => p.active)?.id ??
-    options[0]?.value ??
-    null;
-
-  const effectiveProvider = provider ?? activeId;
-
-  const search = useProviderSearch({
-    providerId: effectiveProvider,
-    q: debouncedTitle,
-    externalId,
-    enabled: opened,
-  });
-
-  const handleLink = (chosenExternalId: string, displayLabel: string) => {
-    if (!effectiveProvider) return;
-    link.mutate(
-      {
-        releaseId,
-        body: { provider: effectiveProvider, externalId: chosenExternalId },
-      },
-      {
-        onSuccess: () => {
-          notifications.show({
-            color: "green",
-            message: `Linked to ${displayLabel}`,
-          });
-          onClose();
-        },
-        onError: (e) => {
-          notifications.show({
-            color: "red",
-            title: "Link failed",
-            message: (e as Error).message,
-          });
-        },
-      },
-    );
-  };
-
   return (
     <Modal
       opened={opened}
@@ -1266,187 +1192,20 @@ function ProviderSearchModal({
       size="lg"
       centered
     >
-      <Stack gap="md">
-        <Select
-          label="Provider"
-          data={options}
-          value={effectiveProvider}
-          onChange={setProvider}
-          allowDeselect={false}
-          searchable={options.length > 5}
-        />
-        <TextInput
-          label="External ID"
-          description="Paste a provider ID to look up directly (takes priority over title)"
-          placeholder="e.g. 12345"
-          value={externalId}
-          onChange={(e) => setExternalId(e.currentTarget.value)}
-          data-testid="search-external-id"
-        />
-        <TextInput
-          label="Title"
-          placeholder="Search by series title"
-          value={title}
-          onChange={(e) => setTitle(e.currentTarget.value)}
-          disabled={externalId.trim().length > 0}
-          data-testid="search-title"
-        />
-
-        <SearchResults
-          provider={effectiveProvider}
-          hits={search.data?.hits ?? []}
-          loading={search.isFetching}
-          enabled={Boolean(
-            effectiveProvider && (debouncedTitle.trim() || externalId.trim()),
-          )}
-          disabled={link.isPending}
-          onPick={handleLink}
-        />
-
-        <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>
-            Close
-          </Button>
-        </Group>
-      </Stack>
+      {opened && (
+        <Stack gap="md">
+          <ProviderSearchPanel
+            releaseId={releaseId}
+            seedQuery={seedQuery}
+            onLinked={onClose}
+          />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>
+              Close
+            </Button>
+          </Group>
+        </Stack>
+      )}
     </Modal>
-  );
-}
-
-function SearchResults({
-  provider,
-  hits,
-  loading,
-  enabled,
-  disabled,
-  onPick,
-}: {
-  provider: string | null;
-  hits: ProviderSearchHit[];
-  loading: boolean;
-  enabled: boolean;
-  disabled: boolean;
-  onPick: (externalId: string, displayLabel: string) => void;
-}) {
-  if (!enabled) {
-    return (
-      <Text size="xs" c="dimmed">
-        Enter a title or external ID above to search.
-      </Text>
-    );
-  }
-  if (loading && hits.length === 0) {
-    return (
-      <Center py="md">
-        <Loader size="sm" />
-      </Center>
-    );
-  }
-  if (hits.length === 0) {
-    return (
-      <Text size="xs" c="dimmed">
-        No results.
-      </Text>
-    );
-  }
-  return (
-    <Stack gap={6} data-testid="search-results">
-      <Text size="xs" fw={500} c="dimmed" tt="uppercase">
-        {hits.length} result{hits.length === 1 ? "" : "s"}
-      </Text>
-      <Stack gap={6} mah={400} style={{ overflowY: "auto" }}>
-        {hits.map((h) => (
-          <Card
-            key={`${h.externalId}-${h.title}`}
-            withBorder
-            padding="xs"
-            radius="sm"
-            data-testid={`search-hit-${h.externalId}`}
-            style={{ flexShrink: 0 }}
-          >
-            <Group justify="space-between" wrap="nowrap" align="center">
-              <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
-                <Box w={42} miw={42} h={56}>
-                  <Image
-                    src={h.coverUrl ?? CANDIDATE_PLACEHOLDER}
-                    fallbackSrc={CANDIDATE_PLACEHOLDER}
-                    alt={h.title}
-                    radius="sm"
-                    h={56}
-                    fit="cover"
-                  />
-                </Box>
-                <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
-                  <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-                    <Text
-                      size="sm"
-                      fw={500}
-                      lineClamp={1}
-                      title={h.title}
-                      style={{ minWidth: 0, flex: 1 }}
-                    >
-                      {h.title}
-                    </Text>
-                    {provider &&
-                      (() => {
-                        const href = providerUrl(provider, h.externalId);
-                        return href ? (
-                          <Anchor
-                            href={href}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                            size="xs"
-                            title="Open on provider"
-                          >
-                            view ↗
-                          </Anchor>
-                        ) : null;
-                      })()}
-                  </Group>
-                  {h.nativeTitle && (
-                    <Text size="xs" c="dimmed" lineClamp={1}>
-                      {h.nativeTitle}
-                    </Text>
-                  )}
-                  <Group gap={6} wrap="wrap">
-                    <Badge size="xs" variant="default">
-                      score {h.score.toFixed(2)}
-                    </Badge>
-                    <MetadataCounts
-                      totalVolumes={h.totalVolumes}
-                      totalChapters={h.totalChapters}
-                    />
-                    {h.year && (
-                      <Badge size="xs" variant="light" color="gray">
-                        {h.year}
-                      </Badge>
-                    )}
-                    {h.kind && (
-                      <Badge size="xs" variant="light" color="indigo">
-                        {h.kind}
-                      </Badge>
-                    )}
-                    {h.status && (
-                      <Badge size="xs" variant="light" color="teal">
-                        {h.status}
-                      </Badge>
-                    )}
-                  </Group>
-                </Stack>
-              </Group>
-              <Button
-                size="xs"
-                variant="light"
-                onClick={() => onPick(h.externalId, h.title)}
-                disabled={disabled}
-                data-testid={`link-hit-${h.externalId}`}
-              >
-                Link
-              </Button>
-            </Group>
-          </Card>
-        ))}
-      </Stack>
-    </Stack>
   );
 }

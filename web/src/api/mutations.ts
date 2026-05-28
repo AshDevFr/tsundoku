@@ -23,6 +23,11 @@ function invalidateReleaseQueries(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["releases-kept"] });
   qc.invalidateQueries({ queryKey: ["stats"] });
   qc.invalidateQueries({ queryKey: ["series-list"] });
+  // A relink moves a release between series; refresh both the per-series
+  // release lists and the detail headers so the source series drops it and
+  // the target picks it up without a manual reload.
+  qc.invalidateQueries({ queryKey: ["series-releases"] });
+  qc.invalidateQueries({ queryKey: ["series-detail"] });
 }
 
 export function useLinkRelease() {
