@@ -174,6 +174,7 @@ pub async fn poll(
     let locks = state.locks.clone();
     let query_builder = state.query_builder.clone();
     let mu_redirector = state.mangaupdates_redirector.clone();
+    let events = state.job_events.clone();
     let triggered = state.try_dispatch(lock, JobKind::Source, &name, move || async move {
         poll_source::run_tick(
             source,
@@ -183,6 +184,7 @@ pub async fn poll(
             locks,
             query_builder,
             mu_redirector,
+            events,
             "manual",
         )
         .await;
@@ -228,6 +230,7 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
         let locks = state.locks.clone();
         let query_builder = state.query_builder.clone();
         let mu_redirector = state.mangaupdates_redirector.clone();
+        let events = state.job_events.clone();
         let spawned: Arc<dyn td_source::DiscoverySource> = source;
         let triggered = state.try_dispatch(lock, JobKind::Source, &name, move || async move {
             poll_source::run_tick(
@@ -238,6 +241,7 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
                 locks,
                 query_builder,
                 mu_redirector,
+                events,
                 "manual",
             )
             .await;
@@ -334,6 +338,7 @@ pub async fn backfill(
     let locks = state.locks.clone();
     let query_builder = state.query_builder.clone();
     let mu_redirector = state.mangaupdates_redirector.clone();
+    let events = state.job_events.clone();
     let event_name = name.clone();
     let triggered = state.try_dispatch(lock, JobKind::Source, &name, move || async move {
         let result = backfill_source::run(
@@ -344,6 +349,7 @@ pub async fn backfill(
             locks,
             query_builder,
             mu_redirector,
+            events,
             pages,
             "manual",
         )

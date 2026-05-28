@@ -52,12 +52,16 @@ pub async fn run(
     );
 
     let locks = Arc::new(JobLocks::default());
+    // CLI has no SSE consumer; a detached sender keeps the tick signature
+    // consistent with the API/cron paths.
+    let (events, _) = tokio::sync::broadcast::channel(16);
     refresh_series_metadata::run_tick(
         provider,
         db.clone(),
         locks,
         batch_size,
         min_age_seconds,
+        events,
         run_metrics_repo::trigger::MANUAL,
     )
     .await;

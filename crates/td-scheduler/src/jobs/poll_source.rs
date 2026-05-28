@@ -23,7 +23,7 @@ use chrono::{TimeZone, Utc};
 use sea_orm::{DatabaseConnection, Set};
 use td_config::IngestionConfig;
 use td_db::entities::source_state;
-use td_db::repos::run_metrics_repo::{self, PollRunCounts};
+use td_db::repos::run_metrics_repo::{self, PollRunCounts, ProgressTable};
 use td_db::repos::{releases_repo, sources_repo};
 use td_metadata::MetadataRegistry;
 use td_resolution::Resolver;
@@ -31,10 +31,13 @@ use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_resolution::pipeline::{ResolutionOutcome, ResolutionPath, ResolutionStatus};
 use td_resolution::query_builder::QueryBuilder;
 use td_source::{DiscoverySource, PollContext, PollOutcome};
+use tokio::sync::broadcast;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
 use crate::JobLocks;
 use crate::error_kind;
+use crate::events::{JobEvent, JobKind};
+use crate::jobs::progress::ProgressHandle;
 
 /// Build a scheduled poll job for `source`. The cron must already be in
 /// the 6- or 7-field form expected by tokio-cron-scheduler (the bootstrap
@@ -50,6 +53,7 @@ pub fn build(
     locks: Arc<JobLocks>,
     query_builder: Arc<QueryBuilder>,
     mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
+    events: broadcast::Sender<JobEvent>,
 ) -> Result<Job> {
     let job = Job::new_async(cron, move |_uuid, _scheduler| {
         let source = source.clone();
@@ -59,6 +63,7 @@ pub fn build(
         let locks = locks.clone();
         let query_builder = query_builder.clone();
         let mu_redirector = mangaupdates_redirector.clone();
+        let events = events.clone();
         Box::pin(async move {
             run_tick(
                 source,
@@ -68,6 +73,7 @@ pub fn build(
                 locks,
                 query_builder,
                 mu_redirector,
+                events,
                 run_metrics_repo::trigger::CRON,
             )
             .await;
@@ -90,6 +96,7 @@ pub async fn run_tick(
     locks: Arc<JobLocks>,
     query_builder: Arc<QueryBuilder>,
     mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
+    events: broadcast::Sender<JobEvent>,
     trigger: &str,
 ) {
     let kind = source.kind().to_string();
@@ -117,6 +124,17 @@ pub async fn run_tick(
                 None
             }
         };
+
+    // Live progress: SSE every tick, DB writes throttled. `metrics_id =
+    // None` (insert failed) builds a no-op handle so the loop still runs.
+    let progress = ProgressHandle::new(
+        db.clone(),
+        ProgressTable::PollRuns,
+        metrics_id,
+        events,
+        JobKind::Source,
+        &name,
+    );
 
     let prev_state = match sources_repo::get(&db, &kind, &name).await {
         Ok(s) => s,
@@ -174,6 +192,7 @@ pub async fn run_tick(
         not_modified = outcome.not_modified,
         "feed parsed; starting enrich + persist + resolve"
     );
+    progress.set_total(fetched as u64).await;
 
     // Enrich + persist + resolve per release. Each iteration commits to
     // SQLite before moving on, so a mid-loop crash leaves the work done
@@ -230,6 +249,7 @@ pub async fn run_tick(
             }
         }
         let processed = idx + 1;
+        progress.tick_to(processed as u64).await;
         if processed % PROGRESS_EVERY == 0 && processed < fetched {
             tracing::info!(
                 source = %name,
@@ -239,6 +259,7 @@ pub async fn run_tick(
             );
         }
     }
+    progress.flush().await;
 
     let summary = build_summary(
         fetched,

@@ -97,7 +97,12 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
     // does not have to wait for the next cron tick. The job goes through the
     // same locked code path as the scheduler tick, so a concurrently firing
     // cron just `try_lock`s and skips. Errors are logged inside `run_tick`.
-    spawn_startup_refreshes(metadata.clone(), db.clone(), locks.clone());
+    spawn_startup_refreshes(
+        metadata.clone(),
+        db.clone(),
+        locks.clone(),
+        job_events.clone(),
+    );
 
     let state = AppState {
         db,
@@ -135,19 +140,21 @@ fn spawn_startup_refreshes(
     metadata: Arc<MetadataRegistry>,
     db: DatabaseConnection,
     locks: Arc<JobLocks>,
+    events: tokio::sync::broadcast::Sender<td_scheduler::JobEvent>,
 ) {
     for (id, provider) in metadata.iter() {
         let id = id.to_string();
         let provider = provider.clone();
         let db = db.clone();
         let locks = locks.clone();
+        let events = events.clone();
         tokio::spawn(async move {
             if provider.offline_cache_loaded().await {
                 tracing::debug!(provider = %id, "offline cache already loaded; skipping startup refresh");
                 return;
             }
             tracing::info!(provider = %id, "no offline cache on disk; refreshing at startup");
-            refresh_provider_cache::run_tick(provider, db, locks, trigger::STARTUP).await;
+            refresh_provider_cache::run_tick(provider, db, locks, events, trigger::STARTUP).await;
         });
     }
 }

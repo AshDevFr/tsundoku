@@ -63,6 +63,9 @@ pub async fn run(config_path: PathBuf, source_name: String, pages: u32) -> Resul
     let locks = Arc::new(JobLocks::default());
 
     let kind = source.kind().to_string();
+    // CLI has no SSE consumer; detached sender for signature parity with
+    // the API path.
+    let (events, _) = tokio::sync::broadcast::channel(16);
     let outcome = backfill_source::run(
         source,
         db,
@@ -71,6 +74,7 @@ pub async fn run(config_path: PathBuf, source_name: String, pages: u32) -> Resul
         locks,
         query_builder,
         mu_redirector,
+        events,
         pages,
         "cli",
     )

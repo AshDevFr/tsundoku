@@ -803,6 +803,7 @@ pub async fn refresh_all(
     let lock = state.locks.series_refresh_lock(&active_id);
     let db = state.db.clone();
     let locks = state.locks.clone();
+    let events = state.job_events.clone();
     let triggered = state.try_dispatch(
         lock,
         JobKind::SeriesRefresh,
@@ -814,6 +815,7 @@ pub async fn refresh_all(
                 locks,
                 batch_size,
                 min_age_seconds,
+                events,
                 "manual",
             )
             .await;

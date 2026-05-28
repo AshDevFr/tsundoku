@@ -194,8 +194,9 @@ pub async fn refresh_cache(
     let lock = state.locks.provider_lock(&id);
     let db = state.db.clone();
     let locks = state.locks.clone();
+    let events = state.job_events.clone();
     let triggered = state.try_dispatch(lock, JobKind::Provider, &id, move || async move {
-        refresh_provider_cache::run_tick(provider, db, locks, "manual").await;
+        refresh_provider_cache::run_tick(provider, db, locks, events, "manual").await;
         JobResult {
             triggered: true,
             skipped: false,
@@ -236,8 +237,9 @@ pub async fn refresh_all(State(state): State<AppState>) -> ApiResult<Json<Refres
         let lock = state.locks.provider_lock(&id);
         let db = state.db.clone();
         let locks = state.locks.clone();
+        let events = state.job_events.clone();
         let triggered = state.try_dispatch(lock, JobKind::Provider, &id, move || async move {
-            refresh_provider_cache::run_tick(provider, db, locks, "manual").await;
+            refresh_provider_cache::run_tick(provider, db, locks, events, "manual").await;
             JobResult {
                 triggered: true,
                 skipped: false,

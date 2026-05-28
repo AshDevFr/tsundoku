@@ -18,25 +18,30 @@ use std::time::Instant;
 use anyhow::{Result, anyhow};
 use sea_orm::DatabaseConnection;
 use td_db::repos::provider_cache_state_repo;
-use td_db::repos::run_metrics_repo::{self, ProviderRefreshCounts};
+use td_db::repos::run_metrics_repo::{self, ProgressTable, ProviderRefreshCounts};
 use td_metadata::{MetadataProvider, RefreshStatus};
+use tokio::sync::broadcast;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
 use crate::JobLocks;
 use crate::error_kind;
+use crate::events::{JobEvent, JobKind};
+use crate::jobs::progress::ProgressHandle;
 
 pub fn build(
     cron: &str,
     provider: Arc<dyn MetadataProvider>,
     db: DatabaseConnection,
     locks: Arc<JobLocks>,
+    events: broadcast::Sender<JobEvent>,
 ) -> Result<Job> {
     let job = Job::new_async(cron, move |_uuid, _scheduler| {
         let provider = provider.clone();
         let db = db.clone();
         let locks = locks.clone();
+        let events = events.clone();
         Box::pin(async move {
-            run_tick(provider, db, locks, run_metrics_repo::trigger::CRON).await;
+            run_tick(provider, db, locks, events, run_metrics_repo::trigger::CRON).await;
         })
     })
     .map_err(|e: JobSchedulerError| anyhow!("building refresh-provider-cache job: {e}"))?;
@@ -49,6 +54,7 @@ pub async fn run_tick(
     provider: Arc<dyn MetadataProvider>,
     db: DatabaseConnection,
     locks: Arc<JobLocks>,
+    events: broadcast::Sender<JobEvent>,
     trigger: &str,
 ) {
     let id = provider.id().to_string();
@@ -75,6 +81,22 @@ pub async fn run_tick(
             None
         }
     };
+
+    // Live progress. The trait surface for `refresh_cache` is one async
+    // call with no inner-phase callback, so we can't (yet) emit
+    // download/extract/index phase transitions or byte counts — that
+    // requires extending `MetadataProvider`. For now the pill renders
+    // "Running... (refreshing)" so the operator at least sees a phase
+    // label distinct from the binary in-flight state.
+    let progress = ProgressHandle::new(
+        db.clone(),
+        ProgressTable::ProviderRefreshes,
+        metrics_id,
+        events,
+        JobKind::Provider,
+        &id,
+    );
+    progress.set_phase("refreshing").await;
 
     // Stopwatch the refresh call so the admin metrics view can plot dump
     // download latency over time.

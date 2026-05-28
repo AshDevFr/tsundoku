@@ -31,15 +31,19 @@ use std::time::Instant;
 use anyhow::{Result, anyhow};
 use chrono::Utc;
 use sea_orm::DatabaseConnection;
-use td_db::repos::run_metrics_repo::{self, SeriesRefreshCounts};
+use td_db::repos::run_metrics_repo::{self, ProgressTable, SeriesRefreshCounts};
 use td_db::repos::series_refresh_repo;
 use td_metadata::MetadataProvider;
 use td_resolution::persist;
+use tokio::sync::broadcast;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
 use crate::JobLocks;
 use crate::error_kind;
+use crate::events::{JobEvent, JobKind};
+use crate::jobs::progress::ProgressHandle;
 
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     cron: &str,
     provider: Arc<dyn MetadataProvider>,
@@ -47,11 +51,13 @@ pub fn build(
     locks: Arc<JobLocks>,
     batch_size: u32,
     min_age_seconds: i64,
+    events: broadcast::Sender<JobEvent>,
 ) -> Result<Job> {
     let job = Job::new_async(cron, move |_uuid, _scheduler| {
         let provider = provider.clone();
         let db = db.clone();
         let locks = locks.clone();
+        let events = events.clone();
         Box::pin(async move {
             run_tick(
                 provider,
@@ -59,6 +65,7 @@ pub fn build(
                 locks,
                 batch_size,
                 min_age_seconds,
+                events,
                 run_metrics_repo::trigger::CRON,
             )
             .await;
@@ -70,12 +77,14 @@ pub fn build(
 
 /// One refresh tick. Public so tests and the manual API trigger can drive
 /// it directly without going through the cron loop.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_tick(
     provider: Arc<dyn MetadataProvider>,
     db: DatabaseConnection,
     locks: Arc<JobLocks>,
     batch_size: u32,
     min_age_seconds: i64,
+    events: broadcast::Sender<JobEvent>,
     trigger: &str,
 ) {
     let provider_id = provider.id().to_string();
@@ -147,6 +156,19 @@ pub async fn run_tick(
         "series-refresh tick: walking stale rows"
     );
 
+    // Live progress. Built after the batch select so set_total carries
+    // the actual row count (the config batch_size is the upper bound,
+    // not the realized work).
+    let progress = ProgressHandle::new(
+        db.clone(),
+        ProgressTable::SeriesRefreshRuns,
+        metrics_id,
+        events,
+        JobKind::SeriesRefresh,
+        &provider_id,
+    );
+    progress.set_total(considered as u64).await;
+
     let mut refreshed = 0i32;
     let mut unchanged = 0i32;
     let mut not_found = 0i32;
@@ -155,7 +177,7 @@ pub async fn run_tick(
     let mut error_kind_class: Option<&'static str> = None;
     let fetch_started = Instant::now();
 
-    for row in &batch {
+    for (idx, row) in batch.iter().enumerate() {
         let fetch_one_started = Instant::now();
         let outcome = provider.get(&row.external_id).await;
         let elapsed_ms = fetch_one_started.elapsed().as_millis() as u64;
@@ -235,10 +257,13 @@ pub async fn run_tick(
                 );
                 error_message = Some(format!("error: {err}"));
                 error_kind_class = Some(error_kind::classify_anyhow(&err));
+                progress.tick_to((idx + 1) as u64).await;
                 break;
             }
         }
+        progress.tick_to((idx + 1) as u64).await;
     }
+    progress.flush().await;
 
     let fetch_duration_ms = fetch_started.elapsed().as_millis() as i64;
     let status = if errored == 0 {

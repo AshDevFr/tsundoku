@@ -246,6 +246,7 @@ async fn poll_tick_persists_releases_and_updates_source_state() {
         locks,
         Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         None,
+        detached_events(),
         "cron",
     )
     .await;
@@ -283,6 +284,11 @@ async fn poll_tick_persists_releases_and_updates_source_state() {
     assert_eq!(run.new_count, Some(2));
     assert!(run.finished_at.is_some());
     assert_eq!(run.trigger, "cron");
+    // Progress columns: set_total from `fetched`, tick_to bumped on every
+    // iteration, flush wrote the final value. Two releases means
+    // total=2/current=2 at the end of the tick.
+    assert_eq!(run.progress_total, Some(2));
+    assert_eq!(run.progress_current, Some(2));
 }
 
 #[tokio::test]
@@ -310,6 +316,7 @@ async fn poll_tick_with_held_lock_is_a_noop() {
         locks.clone(),
         Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         None,
+        detached_events(),
         "cron",
     )
     .await;
@@ -359,6 +366,7 @@ async fn poll_tick_handles_source_failure_without_panicking() {
         locks,
         Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         None,
+        detached_events(),
         "cron",
     )
     .await;
@@ -393,6 +401,7 @@ async fn refresh_tick_appends_provider_cache_state_on_refreshed_status() {
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
         locks,
+        detached_events(),
         "cron",
     )
     .await;
@@ -415,6 +424,10 @@ async fn refresh_tick_appends_provider_cache_state_on_refreshed_status() {
     assert_eq!(refreshes[0].status, "success");
     assert_eq!(refreshes[0].record_count, Some(12345));
     assert_eq!(refreshes[0].trigger, "cron");
+    // Phase string was set before the refresh call, so the in-flight
+    // pill shows "Running... (refreshing)". No total / current because
+    // the trait gives no inner-phase signal yet.
+    assert_eq!(refreshes[0].progress_phase.as_deref(), Some("refreshing"));
 }
 
 #[tokio::test]
@@ -461,6 +474,7 @@ async fn refresh_tick_leaves_manual_series_untouched() {
         provider as Arc<dyn MetadataProvider>,
         db.clone(),
         locks,
+        detached_events(),
         "cron",
     )
     .await;
@@ -488,6 +502,7 @@ async fn refresh_tick_skips_persistence_for_not_supported() {
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
         locks,
+        detached_events(),
         "cron",
     )
     .await;
@@ -519,6 +534,7 @@ async fn refresh_tick_with_held_lock_is_a_noop() {
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
         locks.clone(),
+        detached_events(),
         "cron",
     )
     .await;
@@ -645,6 +661,7 @@ async fn series_refresh_tick_refreshes_stale_rows_against_provider() {
         Arc::new(JobLocks::default()),
         10,
         0,
+        detached_events(),
         "cron",
     )
     .await;
@@ -678,6 +695,10 @@ async fn series_refresh_tick_refreshes_stale_rows_against_provider() {
     assert_eq!(run.errored_count, Some(0));
     assert_eq!(run.trigger, "cron");
     assert!(run.finished_at.is_some());
+    // Progress: set_total after batch select, tick_to per row, flush at
+    // end. Both rows walked → total=2, current=2.
+    assert_eq!(run.progress_total, Some(2));
+    assert_eq!(run.progress_current, Some(2));
 }
 
 #[tokio::test]
@@ -703,6 +724,7 @@ async fn series_refresh_tick_counts_unchanged_when_hash_matches() {
         Arc::new(JobLocks::default()),
         10,
         0,
+        detached_events(),
         "manual",
     )
     .await;
@@ -744,6 +766,7 @@ async fn series_refresh_tick_bumps_fetched_at_when_provider_returns_none() {
         Arc::new(JobLocks::default()),
         10,
         0,
+        detached_events(),
         "cron",
     )
     .await;
@@ -790,6 +813,7 @@ async fn series_refresh_tick_aborts_batch_on_provider_error() {
         Arc::new(JobLocks::default()),
         10,
         0,
+        detached_events(),
         "cron",
     )
     .await;
@@ -831,6 +855,7 @@ async fn series_refresh_tick_with_held_lock_is_a_noop() {
         locks.clone(),
         10,
         0,
+        detached_events(),
         "cron",
     )
     .await;
@@ -860,6 +885,7 @@ async fn series_refresh_tick_with_empty_batch_records_success() {
         Arc::new(JobLocks::default()),
         50,
         0,
+        detached_events(),
         "cron",
     )
     .await;
@@ -932,6 +958,7 @@ async fn series_refresh_tick_does_not_overwrite_manual_rows() {
         Arc::new(JobLocks::default()),
         10,
         0,
+        detached_events(),
         "cron",
     )
     .await;

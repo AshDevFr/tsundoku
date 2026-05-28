@@ -151,6 +151,7 @@ impl Scheduler {
                 ctx.locks.clone(),
                 ctx.query_builder.clone(),
                 ctx.mangaupdates_redirector.clone(),
+                ctx.job_events.clone(),
             )?;
             inner
                 .add(job)
@@ -264,6 +265,7 @@ async fn register_provider_job(
         provider,
         ctx.db.clone(),
         ctx.locks.clone(),
+        ctx.job_events.clone(),
     )?;
     inner
         .add(job)
@@ -305,6 +307,7 @@ async fn register_series_refresh_job(
         ctx.locks.clone(),
         batch_size,
         min_age_seconds,
+        ctx.job_events.clone(),
     )?;
     inner.add(job).await.map_err(|e| {
         anyhow!("registering series_refresh job for provider {active_provider_id:?}: {e}")

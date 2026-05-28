@@ -21,13 +21,17 @@ use chrono::Utc;
 use sea_orm::DatabaseConnection;
 use td_config::IngestionConfig;
 use td_db::repos::releases_repo::{self, id_for};
+use td_db::repos::run_metrics_repo::{self, PollRunCounts, ProgressTable};
 use td_metadata::MetadataRegistry;
 use td_resolution::Resolver;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_resolution::query_builder::QueryBuilder;
 use td_source::DiscoverySource;
+use tokio::sync::broadcast;
 
 use crate::JobLocks;
+use crate::events::{JobEvent, JobKind};
+use crate::jobs::progress::ProgressHandle;
 
 /// Per-run tallies, surfaced by the CLI summary and the API's progress event.
 #[derive(Debug, Clone, Default)]
@@ -69,6 +73,7 @@ pub async fn run(
     locks: Arc<JobLocks>,
     query_builder: Arc<QueryBuilder>,
     mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
+    events: broadcast::Sender<JobEvent>,
     pages: u32,
     trigger: &str,
 ) -> Result<BackfillOutcome> {
@@ -101,6 +106,38 @@ pub async fn run(
         .expect("as_backfillable checked Some above");
 
     tracing::info!(source = %name, kind = %kind, pages, trigger = %trigger, "backfill starting");
+
+    // Backfill borrows the per-source `poll_runs` lane for its progress
+    // checkpoint. Insert a running row up front so the in-flight pill
+    // shows "Running... X / N pages" both during the walk and (with
+    // status='running' as the tell) after a crash. Failure to insert is
+    // non-fatal; the loop still runs and emits SSE frames only.
+    let started_at_ts = Utc::now().timestamp();
+    let metrics_id = match run_metrics_repo::start_poll_run(
+        &db,
+        &name,
+        &kind,
+        started_at_ts,
+        trigger,
+    )
+    .await
+    {
+        Ok(id) => Some(id),
+        Err(e) => {
+            tracing::warn!(error = ?e, source = %name, "failed to record backfill poll_run start");
+            None
+        }
+    };
+    let progress = ProgressHandle::new(
+        db.clone(),
+        ProgressTable::PollRuns,
+        metrics_id,
+        events,
+        JobKind::Source,
+        &name,
+    );
+    progress.set_total(pages as u64).await;
+    progress.set_phase("backfilling").await;
 
     let mut totals = BackfillSummary::default();
     for page in 1..=pages {
@@ -176,6 +213,35 @@ pub async fn run(
         totals.new += page_new;
         totals.already_known += page_skipped;
         totals.errors += page_errors;
+        progress.tick_to(page as u64).await;
+    }
+    progress.flush().await;
+
+    // Finalize the backfill's poll_runs row so it transitions out of
+    // `running` and the in-flight pill clears. We pass the tallied
+    // `fetched`/`new` numbers so the metrics view stays consistent with
+    // a real poll tick.
+    if let Some(id) = metrics_id {
+        let finished_at = Utc::now().timestamp();
+        if let Err(e) = run_metrics_repo::finalize_poll_run(
+            &db,
+            id,
+            finished_at,
+            run_metrics_repo::status::SUCCESS,
+            PollRunCounts {
+                fetched: Some(totals.total as i32),
+                new: Some(totals.new as i32),
+                resolved: Some(totals.new.saturating_sub(totals.errors) as i32),
+                fetch_duration_ms: None,
+                ..Default::default()
+            },
+            None,
+            None,
+        )
+        .await
+        {
+            tracing::warn!(error = ?e, source = %name, "failed to finalize backfill poll_run row");
+        }
     }
 
     Ok(BackfillOutcome::Ran(totals))
