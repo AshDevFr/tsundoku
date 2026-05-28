@@ -458,6 +458,34 @@ describe("admin maintenance page", () => {
       ).toBeInTheDocument();
     });
   });
+
+  it("renders the refresh-all card", async () => {
+    renderAt("/admin/maintenance");
+    expect(
+      await screen.findByTestId("maintenance-refresh-card", undefined, {
+        timeout: 3000,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("maintenance-refresh-button")).toHaveTextContent(
+      /refresh all series metadata/i,
+    );
+  });
+
+  it("dispatches the refresh-all mutation and surfaces the result", async () => {
+    renderAt("/admin/maintenance");
+    const button = await screen.findByTestId(
+      "maintenance-refresh-button",
+      undefined,
+      { timeout: 3000 },
+    );
+    fireEvent.click(button);
+    // MSW handler returns provider=mangabaka, batchSize=25, minAgeDays=7.
+    await waitFor(() => {
+      expect(
+        screen.getByText(/mangabaka: up to 25 row\(s\), min age 7d/i),
+      ).toBeInTheDocument();
+    });
+  });
 });
 
 describe("admin id-maps page", () => {

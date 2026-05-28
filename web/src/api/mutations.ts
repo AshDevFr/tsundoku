@@ -309,3 +309,28 @@ export function useRefreshSeriesMetadata() {
     },
   });
 }
+
+/// Manually trigger a series-metadata refresh tick against the active
+/// provider. Same locking semantics as the scheduled job: an in-flight
+/// tick causes the request to no-op with `triggered: false, skipped: true`.
+/// Paired with [`useInvalidateMetadataHashes`] from the Maintenance page
+/// so the operator can clear hashes and immediately rewrite the rows
+/// instead of waiting for the next cron tick.
+export function useRefreshAllSeries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST("/api/v1/series/refresh-all", {});
+      if (error)
+        throw new Error(
+          describeError(error, "failed to refresh series metadata"),
+        );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["series-list"] });
+      qc.invalidateQueries({ queryKey: ["series-detail"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+}

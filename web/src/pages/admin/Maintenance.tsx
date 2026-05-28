@@ -11,12 +11,14 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { useInvalidateMetadataHashes } from "@/api/mutations";
+import {
+  useInvalidateMetadataHashes,
+  useRefreshAllSeries,
+} from "@/api/mutations";
 
 /// Admin maintenance page. Hosts cross-provider operational actions that
-/// don't fit on a per-provider or per-source surface. Today it carries
-/// one card (invalidate metadata hashes); the page is designed to grow
-/// siblings (rebuild FTS, clear negative cache, etc.) without
+/// don't fit on a per-provider or per-source surface. The page is designed
+/// to grow siblings (rebuild FTS, clear negative cache, etc.) without
 /// restructuring.
 export function AdminMaintenancePage() {
   return (
@@ -30,6 +32,7 @@ export function AdminMaintenancePage() {
         </Text>
       </Stack>
       <InvalidateMetadataHashesCard />
+      <RefreshAllSeriesCard />
     </Stack>
   );
 }
@@ -98,9 +101,9 @@ function InvalidateMetadataHashesCard() {
         <Text size="xs" c="dimmed">
           Manual rows are always left untouched. After clearing, trigger{" "}
           <Text component="span" fw={600}>
-            Refresh all
+            Refresh all series metadata
           </Text>{" "}
-          from the Providers page (or wait for the next cron tick) to actually
+          below (or wait for the next series-refresh cron tick) to actually
           rewrite the rows.
         </Text>
         <Group justify="flex-end">
@@ -153,6 +156,64 @@ function InvalidateMetadataHashesCard() {
           </Group>
         </Stack>
       </Modal>
+    </Card>
+  );
+}
+
+function RefreshAllSeriesCard() {
+  const refresh = useRefreshAllSeries();
+
+  const handleClick = () => {
+    refresh.mutate(undefined, {
+      onSuccess: (data) => {
+        if (data?.triggered) {
+          notifications.show({
+            color: "blue",
+            title: "Series refresh triggered",
+            message: `${data.provider}: up to ${data.batchSize} row(s), min age ${data.minAgeDays}d`,
+          });
+        } else {
+          notifications.show({
+            color: "gray",
+            title: "Refresh already running",
+            message: `${data?.provider ?? "active provider"}: a tick is already in flight`,
+          });
+        }
+      },
+      onError: (e) =>
+        notifications.show({
+          color: "red",
+          title: "Refresh-all failed",
+          message: (e as Error).message,
+        }),
+    });
+  };
+
+  return (
+    <Card withBorder radius="md" p="md" data-testid="maintenance-refresh-card">
+      <Stack gap="sm">
+        <Stack gap={2}>
+          <Title order={4}>Refresh all series metadata</Title>
+          <Text size="sm" c="dimmed">
+            Run a series-metadata refresh tick against the active provider now,
+            instead of waiting for the next cron tick. Honors the configured
+            batch size and minimum row age; manual rows are skipped. Pair with
+            the invalidate card above when adding a denormalized column to the
+            series table.
+          </Text>
+        </Stack>
+        <Group justify="flex-end">
+          <Button
+            size="xs"
+            variant="light"
+            onClick={handleClick}
+            loading={refresh.isPending}
+            data-testid="maintenance-refresh-button"
+          >
+            Refresh all series metadata
+          </Button>
+        </Group>
+      </Stack>
     </Card>
   );
 }

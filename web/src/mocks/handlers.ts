@@ -801,6 +801,18 @@ export const handlers = [
     });
   }),
 
+  http.post("/api/v1/series/refresh-all", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({
+      provider: "mangabaka",
+      triggered: true,
+      skipped: false,
+      batchSize: 25,
+      minAgeDays: 7,
+    });
+  }),
+
   http.post("/api/v1/series/:id/refresh-metadata", ({ request, params }) => {
     const denied = requireAdmin(request);
     if (denied) return denied;
