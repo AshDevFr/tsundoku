@@ -86,7 +86,12 @@ export function SourceCard({ source }: { source: SourceDto }) {
             </Group>
             <SourceStatusLine source={source} />
           </Stack>
-          <Group gap="xs" wrap="nowrap" align="center">
+          <Group
+            gap="xs"
+            wrap="nowrap"
+            align="center"
+            style={{ flexShrink: 0 }}
+          >
             <JobStatusPill kind="source" id={source.name} />
             <BackfillButton source={source} />
             <Button

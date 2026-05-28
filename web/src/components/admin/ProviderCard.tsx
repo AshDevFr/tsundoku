@@ -80,7 +80,12 @@ export function ProviderCard({ provider }: { provider: ProviderDto }) {
             </Group>
             <ProviderStatusLine provider={provider} />
           </Stack>
-          <Group gap="xs" wrap="nowrap" align="center">
+          <Group
+            gap="xs"
+            wrap="nowrap"
+            align="center"
+            style={{ flexShrink: 0 }}
+          >
             <JobStatusPill kind="provider" id={provider.id} />
             <Tooltip
               label="Re-download the offline metadata dump and rebuild the indexes"
