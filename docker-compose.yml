@@ -84,6 +84,81 @@ services:
     networks:
       - tsundoku-net
 
+  # ── Screenshot automation (Playwright) ────────────────────────────────────
+  # Usage: make screenshots
+  #        (or `docker compose --profile screenshots up -d --build`, then
+  #         `docker compose --profile screenshots exec playwright npm run capture`)
+  #
+  # The backend uses the prebuilt image so cold-start is ~10s instead of
+  # ~10min. Override with TSUNDOKU_IMAGE=tsundoku:latest in your shell
+  # (or .env) to capture against a locally-built image.
+  tsundoku-screenshots:
+    image: ${TSUNDOKU_IMAGE:-ghcr.io/ashdevfr/tsundoku:latest}
+    container_name: tsundoku-screenshots
+    command:
+      ["tsundoku", "serve", "--config", "/app/config/tsundoku.screenshots.toml"]
+    volumes:
+      - ./config:/app/config:ro
+      # tmpfs-style: a named volume so SQLite WAL works inside the VM,
+      # but a fresh one each `down -v` so screenshots are reproducible.
+      - tsundoku_screenshots_data:/app/data
+    environment:
+      RUST_BACKTRACE: "1"
+      RUST_LOG: info
+      # Wired so the per-host MangaBaka offline dump + live fallback
+      # match the prod profile. Set TSUNDOKU_PROVIDERS__MANGABAKA__API_KEY
+      # in your .env to unlock the live API fallback during screenshots.
+      TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_DUMP_URL: https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz
+      TSUNDOKU_PROVIDERS__MANGABAKA__API_FALLBACK: "true"
+      # Admin token override hook — bumping it here automatically lines
+      # up with ADMIN_TOKEN on the playwright service below, since both
+      # read the same env var.
+      TSUNDOKU_AUTH__ADMIN_TOKEN: ${SCREENSHOTS_ADMIN_TOKEN:-screenshots-admin-token}
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/health > /dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    ports:
+      - "8082:8080"
+    profiles:
+      - screenshots
+    networks:
+      - tsundoku-net
+
+  playwright:
+    build:
+      context: ./screenshots
+      dockerfile: Dockerfile
+    container_name: tsundoku-playwright
+    working_dir: /work
+    volumes:
+      - ./screenshots:/work
+      - ./screenshots/output:/work/output
+      - playwright_node_modules:/work/node_modules
+    environment:
+      BASE_URL: http://tsundoku-screenshots:8080
+      VIEWPORT_WIDTH: "1440"
+      VIEWPORT_HEIGHT: "900"
+      COLOR_SCHEME: dark
+      # Same value as TSUNDOKU_AUTH__ADMIN_TOKEN above so the
+      # localStorage seed and Authorization header match.
+      ADMIN_TOKEN: ${SCREENSHOTS_ADMIN_TOKEN:-screenshots-admin-token}
+      # Set POLL_ON_START=false to skip the Nyaa poll (empty-state run).
+      POLL_ON_START: ${POLL_ON_START:-true}
+      POLL_WAIT_MAX_SECONDS: ${POLL_WAIT_MAX_SECONDS:-300}
+    depends_on:
+      tsundoku-screenshots:
+        condition: service_healthy
+    profiles:
+      - screenshots
+    networks:
+      - tsundoku-net
+
 volumes:
   cargo_cache:
   target_cache:
@@ -93,6 +168,9 @@ volumes:
   # so a dev wipe never touches prod data.
   tsundoku_data:
   tsundoku_data_dev:
+  # Screenshot profile: ephemeral DB + cached npm install for Playwright.
+  tsundoku_screenshots_data:
+  playwright_node_modules:
 
 networks:
   tsundoku-net:

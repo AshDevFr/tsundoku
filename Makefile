@@ -13,6 +13,9 @@
 	dev-shell dev-shell-frontend \
 	prod-up prod-up-d prod-down prod-logs \
 	docker-build docker-build-clean-cache docker-run docker-push \
+	screenshots screenshots-fresh screenshots-up screenshots-down screenshots-down-v \
+	screenshots-run screenshots-logs screenshots-shell \
+	screenshots-clean screenshots-move-to-docs \
 	changelog changelog-unreleased changelog-release release-prepare \
 	dist-install dist-plan dist-build dist-build-local \
 	clean clean-docker clean-all setup-hooks
@@ -238,6 +241,57 @@ docker-push: ## Push to a registry (usage: make docker-push REGISTRY=ghcr.io/you
 	fi
 	docker tag tsundoku:latest $(REGISTRY)/tsundoku:latest
 	docker push $(REGISTRY)/tsundoku:latest
+
+# ── Screenshot automation (Playwright) ───────────────────────────────────────
+# Captures documentation/marketing screenshots against a fresh, isolated
+# stack (prebuilt image + ephemeral SQLite volume). The capture script
+# triggers a one-shot Nyaa poll so the browse/series-detail pages render
+# with real data; set POLL_ON_START=false for an empty-state run.
+
+screenshots: ## Run the full screenshot workflow (up, capture, down)
+	@echo "$(BLUE)Starting screenshot environment...$(NC)"
+	@$(MAKE) screenshots-up
+	@echo "$(YELLOW)Waiting for the backend to be ready...$(NC)"
+	@sleep 5
+	@$(MAKE) screenshots-run || ($(MAKE) screenshots-down && exit 1)
+	@$(MAKE) screenshots-down
+	@echo "$(GREEN)Screenshots complete! See screenshots/output/$(NC)"
+
+screenshots-fresh: ## Wipe previous output, ephemeral volumes, then re-run
+	@$(MAKE) screenshots-clean
+	@$(MAKE) screenshots-down-v
+	@$(MAKE) screenshots
+
+screenshots-up: ## Start the screenshot stack (backend + playwright)
+	docker compose --profile screenshots up -d --build
+	@echo "$(GREEN)Screenshot environment started$(NC)"
+
+screenshots-down: ## Stop the screenshot stack
+	docker compose --profile screenshots down
+	@echo "$(GREEN)Screenshot environment stopped$(NC)"
+
+screenshots-down-v: ## Stop the screenshot stack and discard volumes
+	docker compose --profile screenshots down -v
+	@echo "$(GREEN)Screenshot environment stopped (volumes removed)$(NC)"
+
+screenshots-run: ## Run the capture script against the running stack
+	@echo "$(YELLOW)Running screenshot capture...$(NC)"
+	docker compose --profile screenshots exec playwright npm run capture
+
+screenshots-logs: ## Tail logs from the screenshot stack
+	docker compose --profile screenshots logs -f
+
+screenshots-shell: ## Open a shell in the Playwright container
+	docker compose --profile screenshots exec playwright sh
+
+screenshots-clean: ## Remove generated screenshot files
+	rm -rf screenshots/output/*
+	@echo "$(GREEN)screenshots/output/ cleared$(NC)"
+
+screenshots-move-to-docs: ## Copy generated screenshots into docs/static/img/screenshots/
+	mkdir -p docs/static/img/screenshots
+	cp -r screenshots/output/* docs/static/img/screenshots/
+	@echo "$(GREEN)Screenshots copied to docs/static/img/screenshots/$(NC)"
 
 # ── Changelog (git-cliff) ────────────────────────────────────────────────────
 

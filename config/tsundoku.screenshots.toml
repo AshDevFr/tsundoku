@@ -1,0 +1,51 @@
+# Config used by the screenshot automation profile
+# (docker compose --profile screenshots). Mirrors tsundoku.docker.toml
+# but enables the admin token (so the capture script can drive write
+# endpoints) and ships a default Nyaa source so the browse/review pages
+# have something to show.
+#
+# The admin token is a fixed value — this profile is never exposed
+# outside the compose network.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[storage]
+data_dir = "/app/data"
+
+[logging]
+level = "info"
+json = false
+
+[api]
+docs = true
+
+# Same value baked into screenshots/playwright.config.ts as the default
+# ADMIN_TOKEN, so the AuthGate's localStorage seed and the API calls
+# both line up. Override both via TSUNDOKU_AUTH__ADMIN_TOKEN +
+# ADMIN_TOKEN in docker-compose.yml.
+[auth]
+read_requires_auth = false
+admin_token = "screenshots-admin-token"
+
+[metadata]
+active_provider = "mangabaka"
+
+[providers.mangabaka]
+enabled = true
+api_base_url = "https://api.mangabaka.dev"
+negative_cache_ttl_days = 7
+timeout_seconds = 60
+
+# Broad English-translated-manga feed, trusted uploaders only — mirrors
+# the dev profile so screenshots come from the same realistic feed.
+[[sources]]
+kind = "nyaa"
+name = "nyaa-english-trusted"
+# No cron: the capture script triggers a one-shot poll via
+# POST /api/v1/sources/<name>/poll instead. Leaving cron empty avoids a
+# background poll racing the screenshot pass.
+enabled = true
+  [sources.nyaa]
+  feed_url = "https://nyaa.si/?page=rss&c=3_1&f=2"
