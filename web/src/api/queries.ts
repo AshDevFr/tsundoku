@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { components } from "@/types/api.generated";
 
+export type AppInfo = components["schemas"]["AppInfo"];
 export type SeriesListItem = components["schemas"]["SeriesListItem"];
 export type SeriesListPage = components["schemas"]["SeriesListPage"];
 export type SeriesDetail = components["schemas"]["SeriesDetail"];
@@ -161,6 +162,24 @@ export function useSources() {
       return data;
     },
     staleTime: 60_000,
+  });
+}
+
+/// App name + semver. The value can't change without a fresh page load
+/// (the binary would have to be redeployed and the SPA reloaded), so
+/// fetch once per session and never refetch.
+export function useAppInfo() {
+  return useQuery({
+    queryKey: ["app-info"],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/info");
+      if (error) throw new Error("failed to load app info");
+      return data;
+    },
+    staleTime: Number.POSITIVE_INFINITY,
+    gcTime: Number.POSITIVE_INFINITY,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 }
 

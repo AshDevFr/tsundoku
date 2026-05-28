@@ -13,7 +13,7 @@ import {
 } from "@mantine/core";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { useStats } from "@/api/queries";
+import { useAppInfo, useStats } from "@/api/queries";
 
 function ColorSchemeToggle() {
   const { setColorScheme } = useMantineColorScheme();
@@ -74,6 +74,7 @@ function ColorSchemeToggle() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const stats = useStats();
+  const appInfo = useAppInfo();
   const reviewCount =
     (stats.data?.releases.unresolved ?? 0) +
     (stats.data?.releases.ambiguous ?? 0) +
@@ -90,6 +91,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Text size="xs" c="dimmed">
                   discovery
                 </Text>
+                {appInfo.data?.version && (
+                  <Text size="xs" c="dimmed" fw={400}>
+                    v{appInfo.data.version}
+                  </Text>
+                )}
               </Group>
             </Anchor>
             <Group gap="md" align="center" wrap="nowrap">

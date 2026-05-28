@@ -36,7 +36,7 @@ use crate::handlers::sources::{
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
 use crate::handlers::{
-    events, health, metrics, providers, releases, series, sources, stats, tagging,
+    events, health, info, metrics, providers, releases, series, sources, stats, tagging,
 };
 use crate::state::{JobEvent, JobKind, JobPhase, JobResult};
 
@@ -49,6 +49,7 @@ use crate::state::{JobEvent, JobKind, JobPhase, JobResult};
     ),
     paths(
         health::health,
+        info::info,
         stats::stats,
         series::list,
         series::get,
@@ -85,6 +86,7 @@ use crate::state::{JobEvent, JobKind, JobPhase, JobResult};
     components(schemas(
         ApiErrorBody,
         health::Health,
+        info::AppInfo,
         StatsResponse,
         ReleaseCounts,
         SeriesListItem,

@@ -86,6 +86,34 @@ async fn health_returns_ok() {
 }
 
 #[tokio::test]
+async fn info_returns_name_and_version() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/info")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["name"], "tsundoku");
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[tokio::test]
 async fn series_list_paginates_and_filters_by_kind() {
     let db = fresh_db().await;
     let _m_id = seed_series(&db, "Manga A", "manga").await;

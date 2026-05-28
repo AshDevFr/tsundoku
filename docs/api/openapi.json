@@ -77,6 +77,27 @@
         }
       }
     },
+    "/api/v1/info": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Returns the running binary's name and semver. Cheap, public, cache-forever.",
+        "operationId": "info",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/metrics/id-maps": {
       "get": {
         "tags": [
@@ -1415,6 +1436,21 @@
             "type": "string"
           },
           "message": {
+            "type": "string"
+          }
+        }
+      },
+      "AppInfo": {
+        "type": "object",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
             "type": "string"
           }
         }

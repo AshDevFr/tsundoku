@@ -17,7 +17,7 @@ use crate::auth;
 use crate::docs::ApiDoc;
 use crate::embed::serve_static;
 use crate::handlers::{
-    events, health, metrics, providers, releases, series, sources, stats, tagging,
+    events, health, info, metrics, providers, releases, series, sources, stats, tagging,
 };
 use crate::state::AppState;
 
@@ -53,6 +53,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
 
     let reads = Router::new()
         .route("/health", get(health::health))
+        .route("/info", get(info::info))
         .route("/stats", get(stats::stats))
         .route("/series", get(series::list))
         .route("/series/{id}", get(series::get))
