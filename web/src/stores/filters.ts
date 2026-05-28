@@ -13,6 +13,10 @@ export interface FilterSearch {
   kind?: string;
   status?: string;
   owned?: boolean;
+  /// Has-releases filter: `true` keeps only series with ≥1 linked
+  /// release, `false` keeps only orphans (zero releases, typically the
+  /// residue of a manual re-link). Absent means "no constraint".
+  hasReleases?: boolean;
   /// Single genre name (case-insensitive against the backend).
   genre?: string;
   /// Single tag name (case-insensitive against the backend).

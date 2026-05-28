@@ -44,6 +44,10 @@ export const feedRoute = createRoute({
     if (typeof raw.order === "string" && raw.order) search.order = raw.order;
     if (raw.owned === true || raw.owned === "true") search.owned = true;
     else if (raw.owned === false || raw.owned === "false") search.owned = false;
+    if (raw.hasReleases === true || raw.hasReleases === "true")
+      search.hasReleases = true;
+    else if (raw.hasReleases === false || raw.hasReleases === "false")
+      search.hasReleases = false;
     const page = Number(raw.page);
     if (Number.isFinite(page) && page > 0) search.page = Math.floor(page);
     if (typeof raw.q === "string" && raw.q.trim()) search.q = raw.q;

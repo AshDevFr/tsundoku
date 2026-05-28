@@ -27,6 +27,10 @@ pub struct Model {
     /// `highest_chapter`, which track the highest span seen across releases.
     pub total_volumes: Option<i32>,
     pub total_chapters: Option<i32>,
+    /// Provider rating on the canonical 0-10 scale (normalized by the
+    /// provider's mapping layer). Denormalized for display alongside the
+    /// counts; not used by the resolver.
+    pub rating: Option<f64>,
     pub owned: i32,
 }
 

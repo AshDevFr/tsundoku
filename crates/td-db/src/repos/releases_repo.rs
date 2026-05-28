@@ -3,8 +3,8 @@
 use anyhow::Result;
 use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
-    TransactionTrait,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
+    QueryOrder, QuerySelect, Set, TransactionTrait,
 };
 use td_source::{DiscoveredRelease, detect_formats};
 
@@ -258,6 +258,39 @@ pub async fn list_formats(db: &DatabaseConnection, release_id: &str) -> Result<V
         .all(db)
         .await?;
     Ok(rows.into_iter().map(|r| r.format).collect())
+}
+
+#[derive(Debug, FromQueryResult)]
+struct SeriesIdCount {
+    series_id: i32,
+    n: i64,
+}
+
+/// Batch count releases per series id, returned as a map. Series ids with
+/// no releases are omitted from the map (callers should treat absence as
+/// zero). One SELECT used by the series list endpoint to avoid N+1.
+///
+/// The COUNT includes every release linked to the series row regardless
+/// of `resolution_status`, matching what `GET /releases?seriesId=…`
+/// returns (which is what the detail page renders) so the badge and the
+/// detail page can't disagree.
+pub async fn count_by_series_ids(
+    db: &DatabaseConnection,
+    series_ids: &[i32],
+) -> Result<std::collections::HashMap<i32, i64>> {
+    if series_ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let placeholders = vec!["?"; series_ids.len()].join(",");
+    let sql = format!(
+        "SELECT series_id AS series_id, COUNT(*) AS n FROM releases \
+         WHERE series_id IN ({placeholders}) GROUP BY series_id"
+    );
+    let backend = db.get_database_backend();
+    let values: Vec<sea_orm::Value> = series_ids.iter().map(|id| (*id as i64).into()).collect();
+    let stmt = sea_orm::Statement::from_sql_and_values(backend, &sql, values);
+    let rows = SeriesIdCount::find_by_statement(stmt).all(db).await?;
+    Ok(rows.into_iter().map(|r| (r.series_id, r.n)).collect())
 }
 
 pub use releases::{ActiveModel, Column, Entity};

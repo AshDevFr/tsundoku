@@ -973,6 +973,15 @@
             }
           },
           {
+            "name": "hasReleases",
+            "in": "query",
+            "description": "Filter by whether any releases are linked to the series. `true`\nkeeps only series with ≥1 release; `false` keeps only orphaned\nseries (zero releases — often the residue of a manual re-link).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "genre",
             "in": "query",
             "description": "Filter by a single genre name. AND-combined with the other filters.",
@@ -993,7 +1002,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "Sort field. Supports `last_release_at` (default) and `first_seen_at`.\nIgnored when `q` is present (results are ranked by relevance instead).",
+            "description": "Sort field. Supports `last_release_at` (default), `first_seen_at`,\n`total_volumes`, and `total_chapters`. The count sorts are\nnullable-aware: rows without a provider value sink to the end\nregardless of direction. Ignored when `q` is present (results\nare ranked by relevance instead).",
             "required": false,
             "schema": {
               "type": "string"
@@ -2769,6 +2778,14 @@
           "owned": {
             "type": "boolean"
           },
+          "rating": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Provider rating on a 0-10 scale (normalized in the provider's\nmapping layer). `None` when the provider has no rating."
+          },
           "status": {
             "type": [
               "string",
@@ -2780,6 +2797,22 @@
             "items": {
               "type": "string"
             }
+          },
+          "totalChapters": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Published total chapter count from provider metadata. See\n[`Self::total_volumes`] for how this differs from `highest_chapter`."
+          },
+          "totalVolumes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Published total volume count from provider metadata. Distinct from\n[`Self::highest_volume`], which tracks the highest span observed\nacross releases. `None` if the provider has no value for this row."
           },
           "year": {
             "type": [
@@ -2800,6 +2833,7 @@
           "metadataSource",
           "lastReleaseAt",
           "firstSeenAt",
+          "releaseCount",
           "owned"
         ],
         "properties": {
@@ -2850,6 +2884,19 @@
           "owned": {
             "type": "boolean"
           },
+          "rating": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Provider rating on a 0-10 scale; surfaced on the list view so a\nfuture sort-by-rating has a number to display."
+          },
+          "releaseCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of releases currently linked to this series. Surfaced as a\nbadge in the feed so manual re-links that orphan a series (zero\nreleases) are visible at a glance. Matches what\n`GET /releases?seriesId=…` returns."
+          },
           "status": {
             "type": [
               "string",
@@ -2861,6 +2908,22 @@
             "items": {
               "type": "string"
             }
+          },
+          "totalChapters": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Published total chapter count from provider metadata; pair to\n[`Self::total_volumes`] for sort-by-chapter results."
+          },
+          "totalVolumes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Published total volume count from provider metadata; surfaced on\nthe list view so sort-by-volume results have a number to display."
           },
           "year": {
             "type": [

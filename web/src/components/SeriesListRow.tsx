@@ -80,6 +80,18 @@ export function SeriesListRow({ series }: { series: SeriesListItem }) {
                   owned
                 </Badge>
               )}
+              <Badge
+                size="xs"
+                variant="light"
+                color={series.releaseCount === 0 ? "red" : "teal"}
+                title={
+                  series.releaseCount === 0
+                    ? "No releases linked to this series"
+                    : `${series.releaseCount} release${series.releaseCount === 1 ? "" : "s"}`
+                }
+              >
+                {series.releaseCount} rel
+              </Badge>
             </Group>
             {series.description && (
               <Text size="sm" c="dimmed" lineClamp={3}>

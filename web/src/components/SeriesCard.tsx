@@ -67,6 +67,18 @@ export function SeriesCard({ series }: { series: SeriesListItem }) {
                 manual
               </Badge>
             )}
+            <Badge
+              size="xs"
+              variant="light"
+              color={series.releaseCount === 0 ? "red" : "teal"}
+              title={
+                series.releaseCount === 0
+                  ? "No releases linked to this series"
+                  : `${series.releaseCount} release${series.releaseCount === 1 ? "" : "s"}`
+              }
+            >
+              {series.releaseCount} rel
+            </Badge>
           </Group>
         </Stack>
       </Card>

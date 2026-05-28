@@ -210,6 +210,7 @@ pub fn sample_metadata(provider: &str, id: &str, title: &str) -> SeriesMetadata 
         cover_url: None,
         total_volumes: Some(7),
         total_chapters: Some(42),
+        rating: Some(8.0),
         description: None,
         genres: vec![],
         tags: vec![],

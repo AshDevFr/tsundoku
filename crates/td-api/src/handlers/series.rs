@@ -6,13 +6,16 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use chrono::Utc;
+use sea_orm::sea_query::Expr;
 use sea_orm::{
     ColumnTrait, EntityTrait, JoinType, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
     RelationTrait, Set,
 };
 use serde::{Deserialize, Serialize};
-use td_db::entities::{genres, series, series_external_ids, series_genres, series_tags, tags};
-use td_db::repos::{series_external_ids_repo, series_repo, tagging_repo};
+use td_db::entities::{
+    genres, releases, series, series_external_ids, series_genres, series_tags, tags,
+};
+use td_db::repos::{releases_repo, series_external_ids_repo, series_repo, tagging_repo};
 use td_metadata::SeriesMetadata;
 use td_metadata::scoring::best_dice;
 use td_resolution::persist;
@@ -42,6 +45,20 @@ pub struct SeriesListItem {
     pub metadata_source: String,
     pub last_release_at: i64,
     pub first_seen_at: i64,
+    /// Number of releases currently linked to this series. Surfaced as a
+    /// badge in the feed so manual re-links that orphan a series (zero
+    /// releases) are visible at a glance. Matches what
+    /// `GET /releases?seriesId=…` returns.
+    pub release_count: i64,
+    /// Published total volume count from provider metadata; surfaced on
+    /// the list view so sort-by-volume results have a number to display.
+    pub total_volumes: Option<i32>,
+    /// Published total chapter count from provider metadata; pair to
+    /// [`Self::total_volumes`] for sort-by-chapter results.
+    pub total_chapters: Option<i32>,
+    /// Provider rating on a 0-10 scale; surfaced on the list view so a
+    /// future sort-by-rating has a number to display.
+    pub rating: Option<f64>,
     pub owned: bool,
 }
 
@@ -81,6 +98,16 @@ pub struct SeriesDetail {
     pub last_release_at: i64,
     pub highest_volume: Option<f64>,
     pub highest_chapter: Option<f64>,
+    /// Published total volume count from provider metadata. Distinct from
+    /// [`Self::highest_volume`], which tracks the highest span observed
+    /// across releases. `None` if the provider has no value for this row.
+    pub total_volumes: Option<i32>,
+    /// Published total chapter count from provider metadata. See
+    /// [`Self::total_volumes`] for how this differs from `highest_chapter`.
+    pub total_chapters: Option<i32>,
+    /// Provider rating on a 0-10 scale (normalized in the provider's
+    /// mapping layer). `None` when the provider has no rating.
+    pub rating: Option<f64>,
     pub owned: bool,
     pub external_ids: Vec<ExternalIdDto>,
 }
@@ -97,12 +124,19 @@ pub struct SeriesListQuery {
     pub status: Option<String>,
     /// Filter by ownership flag (true = owned by Codex, false = discoverable).
     pub owned: Option<bool>,
+    /// Filter by whether any releases are linked to the series. `true`
+    /// keeps only series with ≥1 release; `false` keeps only orphaned
+    /// series (zero releases — often the residue of a manual re-link).
+    pub has_releases: Option<bool>,
     /// Filter by a single genre name. AND-combined with the other filters.
     pub genre: Option<String>,
     /// Filter by a single tag name. AND-combined with the other filters.
     pub tag: Option<String>,
-    /// Sort field. Supports `last_release_at` (default) and `first_seen_at`.
-    /// Ignored when `q` is present (results are ranked by relevance instead).
+    /// Sort field. Supports `last_release_at` (default), `first_seen_at`,
+    /// `total_volumes`, and `total_chapters`. The count sorts are
+    /// nullable-aware: rows without a provider value sink to the end
+    /// regardless of direction. Ignored when `q` is present (results
+    /// are ranked by relevance instead).
     pub sort: Option<String>,
     /// `asc` or `desc` (default).
     pub order: Option<String>,
@@ -120,6 +154,7 @@ impl Default for SeriesListQuery {
             kind: None,
             status: None,
             owned: None,
+            has_releases: None,
             genre: None,
             tag: None,
             sort: None,
@@ -180,9 +215,23 @@ pub async fn list(
     let mut select = apply_series_filters(series::Entity::find(), &q);
     let sort_col = match q.sort.as_deref() {
         Some("first_seen_at") => series::Column::FirstSeenAt,
+        Some("total_volumes") => series::Column::TotalVolumes,
+        Some("total_chapters") => series::Column::TotalChapters,
         _ => series::Column::LastReleaseAt,
     };
     let desc = !matches!(q.order.as_deref(), Some("asc"));
+    // Nullable count columns: prefix the order with `IS NULL ASC` so rows
+    // without a provider value sink to the bottom for both directions —
+    // otherwise SQLite puts NULLs first on DESC and a "longest first"
+    // sort would lead with rows of unknown length. The default
+    // `last_release_at` / `first_seen_at` columns are NOT NULL and need
+    // no such prefix.
+    if matches!(
+        sort_col,
+        series::Column::TotalVolumes | series::Column::TotalChapters
+    ) {
+        select = select.order_by_asc(Expr::col(sort_col).is_null());
+    }
     select = if desc {
         select.order_by_desc(sort_col)
     } else {
@@ -206,8 +255,8 @@ pub async fn list(
     }))
 }
 
-/// Hydrate a page of series rows with their normalized genres + tags via
-/// a single SELECT per join table.
+/// Hydrate a page of series rows with their normalized genres + tags +
+/// release counts via a single SELECT per relation.
 async fn decorate_list_items(
     state: &AppState,
     rows: Vec<series::Model>,
@@ -219,12 +268,16 @@ async fn decorate_list_items(
     let tags_map = tagging_repo::tags_by_series_ids(&state.db, &ids)
         .await
         .map_err(anyhow_err)?;
+    let counts_map = releases_repo::count_by_series_ids(&state.db, &ids)
+        .await
+        .map_err(anyhow_err)?;
     Ok(rows
         .into_iter()
         .map(|m| {
             let genres = genres_map.get(&m.id).cloned().unwrap_or_default();
             let tags = tags_map.get(&m.id).cloned().unwrap_or_default();
-            model_to_list_item(m, genres, tags)
+            let release_count = counts_map.get(&m.id).copied().unwrap_or(0);
+            model_to_list_item(m, genres, tags, release_count)
         })
         .collect())
 }
@@ -246,6 +299,25 @@ fn apply_series_filters(
     if let Some(owned) = q.owned {
         let flag = if owned { 1 } else { 0 };
         select = select.filter(series::Column::Owned.eq(flag));
+    }
+    if let Some(has_releases) = q.has_releases {
+        // Subquery rather than a JOIN so the outer count stays correct
+        // even for series with many releases (a JOIN would multiply rows).
+        // `series_id` on the releases table is NULL for unresolved rows,
+        // so the IS NOT NULL guard is what makes "has releases" mean
+        // "linked to this series specifically" and not "exists in the
+        // releases table somewhere".
+        let linked_ids = sea_orm::sea_query::Query::select()
+            .column(releases::Column::SeriesId)
+            .from(releases::Entity)
+            .distinct()
+            .and_where(releases::Column::SeriesId.is_not_null())
+            .take();
+        select = if has_releases {
+            select.filter(series::Column::Id.in_subquery(linked_ids))
+        } else {
+            select.filter(series::Column::Id.not_in_subquery(linked_ids))
+        };
     }
     // Genre/tag filters: AND-combined via two semi-join clauses. Names are
     // matched case-insensitively because the underlying UNIQUE constraints
@@ -582,7 +654,12 @@ pub async fn refresh_metadata(
     )))
 }
 
-fn model_to_list_item(m: series::Model, genres: Vec<String>, tags: Vec<String>) -> SeriesListItem {
+fn model_to_list_item(
+    m: series::Model,
+    genres: Vec<String>,
+    tags: Vec<String>,
+    release_count: i64,
+) -> SeriesListItem {
     SeriesListItem {
         id: m.id,
         canonical_title: m.canonical_title,
@@ -596,6 +673,10 @@ fn model_to_list_item(m: series::Model, genres: Vec<String>, tags: Vec<String>) 
         metadata_source: m.metadata_source,
         last_release_at: m.last_release_at,
         first_seen_at: m.first_seen_at,
+        release_count,
+        total_volumes: m.total_volumes,
+        total_chapters: m.total_chapters,
+        rating: m.rating,
         owned: m.owned != 0,
     }
 }
@@ -628,6 +709,9 @@ fn model_to_detail(
         last_release_at: m.last_release_at,
         highest_volume: m.highest_volume,
         highest_chapter: m.highest_chapter,
+        total_volumes: m.total_volumes,
+        total_chapters: m.total_chapters,
+        rating: m.rating,
         owned: m.owned != 0,
         external_ids: mappings
             .into_iter()

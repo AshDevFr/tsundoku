@@ -1152,8 +1152,27 @@ export interface components {
             metadataFetchedAt: number;
             metadataSource: string;
             owned: boolean;
+            /**
+             * Format: double
+             * @description Provider rating on a 0-10 scale (normalized in the provider's
+             *     mapping layer). `None` when the provider has no rating.
+             */
+            rating?: number | null;
             status?: string | null;
             tags: string[];
+            /**
+             * Format: int32
+             * @description Published total chapter count from provider metadata. See
+             *     [`Self::total_volumes`] for how this differs from `highest_chapter`.
+             */
+            totalChapters?: number | null;
+            /**
+             * Format: int32
+             * @description Published total volume count from provider metadata. Distinct from
+             *     [`Self::highest_volume`], which tracks the highest span observed
+             *     across releases. `None` if the provider has no value for this row.
+             */
+            totalVolumes?: number | null;
             /** Format: int32 */
             year?: number | null;
         };
@@ -1180,8 +1199,34 @@ export interface components {
              */
             metadataSource: string;
             owned: boolean;
+            /**
+             * Format: double
+             * @description Provider rating on a 0-10 scale; surfaced on the list view so a
+             *     future sort-by-rating has a number to display.
+             */
+            rating?: number | null;
+            /**
+             * Format: int64
+             * @description Number of releases currently linked to this series. Surfaced as a
+             *     badge in the feed so manual re-links that orphan a series (zero
+             *     releases) are visible at a glance. Matches what
+             *     `GET /releases?seriesId=…` returns.
+             */
+            releaseCount: number;
             status?: string | null;
             tags: string[];
+            /**
+             * Format: int32
+             * @description Published total chapter count from provider metadata; pair to
+             *     [`Self::total_volumes`] for sort-by-chapter results.
+             */
+            totalChapters?: number | null;
+            /**
+             * Format: int32
+             * @description Published total volume count from provider metadata; surfaced on
+             *     the list view so sort-by-volume results have a number to display.
+             */
+            totalVolumes?: number | null;
             /** Format: int32 */
             year?: number | null;
         };
@@ -1957,13 +2002,22 @@ export interface operations {
                 status?: string;
                 /** @description Filter by ownership flag (true = owned by Codex, false = discoverable). */
                 owned?: boolean;
+                /**
+                 * @description Filter by whether any releases are linked to the series. `true`
+                 *     keeps only series with ≥1 release; `false` keeps only orphaned
+                 *     series (zero releases — often the residue of a manual re-link).
+                 */
+                hasReleases?: boolean;
                 /** @description Filter by a single genre name. AND-combined with the other filters. */
                 genre?: string;
                 /** @description Filter by a single tag name. AND-combined with the other filters. */
                 tag?: string;
                 /**
-                 * @description Sort field. Supports `last_release_at` (default) and `first_seen_at`.
-                 *     Ignored when `q` is present (results are ranked by relevance instead).
+                 * @description Sort field. Supports `last_release_at` (default), `first_seen_at`,
+                 *     `total_volumes`, and `total_chapters`. The count sorts are
+                 *     nullable-aware: rows without a provider value sink to the end
+                 *     regardless of direction. Ignored when `q` is present (results
+                 *     are ranked by relevance instead).
                  */
                 sort?: string;
                 /** @description `asc` or `desc` (default). */

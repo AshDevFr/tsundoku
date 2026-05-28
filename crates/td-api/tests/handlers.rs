@@ -1831,6 +1831,7 @@ async fn provider_search_title_returns_dice_rescored_hits() {
                 title: "Solo Leveling Side Stories".into(),
                 year: Some(2020),
                 cover_url: None,
+                kind: None,
                 score: None,
             },
             SearchHit {
@@ -1838,6 +1839,7 @@ async fn provider_search_title_returns_dice_rescored_hits() {
                 title: "Solo Leveling".into(),
                 year: Some(2018),
                 cover_url: None,
+                kind: None,
                 score: None,
             },
         ],

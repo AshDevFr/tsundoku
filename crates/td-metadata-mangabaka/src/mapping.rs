@@ -43,6 +43,7 @@ pub fn series_to_canonical(series: MbSeries) -> SeriesMetadata {
         cover_url,
         total_volumes: parse_count(series.final_volume.as_deref()),
         total_chapters: parse_count(series.total_chapters.as_deref()),
+        rating: normalize_rating(series.rating),
         description: series.description.filter(|s| !s.is_empty()),
         genres: series.genres.unwrap_or_default(),
         tags: series.tags.unwrap_or_default(),
@@ -59,8 +60,21 @@ pub fn series_to_search_hit(series: &MbSeries) -> SearchHit {
         title: series.title.clone(),
         year: series.year,
         cover_url: pick_cover(series.cover.as_ref()),
+        kind: series.kind.as_deref().map(parse_kind),
         score: None, // MangaBaka doesn't return a relevance score.
     }
+}
+
+/// MangaBaka publishes ratings on a 0-100 scale (e.g. `85.06`); the
+/// canonical [`SeriesMetadata::rating`] is on 0-10 so the UI can format
+/// it uniformly across providers. Out-of-range values (negative, NaN,
+/// or above 100) are dropped rather than displayed as junk.
+pub(crate) fn normalize_rating(raw: Option<f64>) -> Option<f64> {
+    let r = raw?;
+    if !r.is_finite() || !(0.0..=100.0).contains(&r) {
+        return None;
+    }
+    Some(r / 10.0)
 }
 
 /// MangaBaka returns `final_volume` / `total_chapters` as nullable JSON
@@ -210,6 +224,7 @@ mod tests {
             "year": 2018,
             "final_volume": "11",
             "total_chapters": "97",
+            "rating": 85.0,
             "type": "manga",
             "status": "releasing",
             "secondary_titles": {
@@ -243,6 +258,19 @@ mod tests {
         assert!(m.genres.contains(&"action".to_string()));
         assert_eq!(m.total_volumes, Some(11));
         assert_eq!(m.total_chapters, Some(97));
+        // 0-100 raw value normalized to the canonical 0-10 scale.
+        assert_eq!(m.rating, Some(8.5));
+    }
+
+    #[test]
+    fn normalize_rating_drops_out_of_range_and_non_finite() {
+        assert_eq!(normalize_rating(Some(85.0)), Some(8.5));
+        assert_eq!(normalize_rating(Some(0.0)), Some(0.0));
+        assert_eq!(normalize_rating(Some(100.0)), Some(10.0));
+        assert_eq!(normalize_rating(Some(-1.0)), None);
+        assert_eq!(normalize_rating(Some(100.1)), None);
+        assert_eq!(normalize_rating(Some(f64::NAN)), None);
+        assert_eq!(normalize_rating(None), None);
     }
 
     #[test]

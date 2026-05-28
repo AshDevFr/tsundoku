@@ -26,6 +26,7 @@ function base(overrides: Partial<SeriesListItem>): SeriesListItem {
     metadataSource: "offline_cache",
     lastReleaseAt: Math.floor(Date.now() / 1000),
     firstSeenAt: Math.floor(Date.now() / 1000),
+    releaseCount: 1,
     owned: false,
     ...overrides,
   };

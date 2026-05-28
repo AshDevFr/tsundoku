@@ -49,7 +49,25 @@ const STATUS_OPTIONS = [
 const SORT_OPTIONS = [
   { value: "last_release_at", label: "Last release" },
   { value: "first_seen_at", label: "First seen" },
+  { value: "total_volumes", label: "Volume count" },
+  { value: "total_chapters", label: "Chapter count" },
 ];
+
+/// "Newest first / Oldest first" reads as nonsense for a numeric sort like
+/// "Volume count", so the Order dropdown swaps its labels based on which
+/// sort field is active. Date columns keep the recency wording; numeric
+/// columns get "Highest first / Lowest first" instead.
+type OrderLabels = { desc: string; asc: string };
+const ORDER_LABELS_BY_SORT: Record<string, OrderLabels> = {
+  last_release_at: { desc: "Newest first", asc: "Oldest first" },
+  first_seen_at: { desc: "Newest first", asc: "Oldest first" },
+  total_volumes: { desc: "Highest first", asc: "Lowest first" },
+  total_chapters: { desc: "Highest first", asc: "Lowest first" },
+};
+const DEFAULT_ORDER_LABELS: OrderLabels = {
+  desc: "Highest first",
+  asc: "Lowest first",
+};
 
 export function FilterPanel({ search, onChange }: FilterPanelProps) {
   const presets = useFilterPresets((s) => s.presets);
@@ -86,7 +104,11 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     Boolean(search.genre) ||
     Boolean(search.tag) ||
     Boolean(search.q) ||
-    typeof search.owned === "boolean";
+    typeof search.owned === "boolean" ||
+    typeof search.hasReleases === "boolean";
+
+  const activeSort = search.sort ?? "last_release_at";
+  const orderLabels = ORDER_LABELS_BY_SORT[activeSort] ?? DEFAULT_ORDER_LABELS;
 
   const genreOptions = (genres.data?.items ?? []).map((i) => ({
     value: i.name,
@@ -253,6 +275,34 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
           </Group>
         </Box>
 
+        <Box>
+          <Text size="sm" fw={500} mb={4}>
+            Releases
+          </Text>
+          <Group gap="xs">
+            <Switch
+              size="sm"
+              label="Has releases"
+              checked={search.hasReleases === true}
+              onChange={(e) =>
+                merge({
+                  hasReleases: e.currentTarget.checked ? true : undefined,
+                })
+              }
+            />
+            <Switch
+              size="sm"
+              label="Orphans only"
+              checked={search.hasReleases === false}
+              onChange={(e) =>
+                merge({
+                  hasReleases: e.currentTarget.checked ? false : undefined,
+                })
+              }
+            />
+          </Group>
+        </Box>
+
         <Select
           label="Sort by"
           data={SORT_OPTIONS}
@@ -263,8 +313,8 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
         <Select
           label="Order"
           data={[
-            { value: "desc", label: "Newest first" },
-            { value: "asc", label: "Oldest first" },
+            { value: "desc", label: orderLabels.desc },
+            { value: "asc", label: orderLabels.asc },
           ]}
           value={search.order ?? "desc"}
           onChange={(v) => merge({ order: v ?? undefined })}

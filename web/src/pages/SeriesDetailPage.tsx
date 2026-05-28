@@ -116,6 +116,13 @@ export function SeriesDetailPage() {
               {typeof s.year === "number" && (
                 <Badge variant="default">{s.year}</Badge>
               )}
+              {typeof s.rating === "number" && (
+                <Tooltip label="Provider rating, normalized to 0-10">
+                  <Badge variant="light" color="yellow">
+                    ★ {s.rating.toFixed(1)}
+                  </Badge>
+                </Tooltip>
+              )}
               {s.owned && (
                 <Badge variant="filled" color="green">
                   owned
@@ -127,6 +134,20 @@ export function SeriesDetailPage() {
                 </Badge>
               )}
             </Group>
+
+            {(typeof s.totalVolumes === "number" ||
+              typeof s.totalChapters === "number") && (
+              <Text size="sm">
+                {typeof s.totalVolumes === "number" && `${s.totalVolumes} vol`}
+                {typeof s.totalVolumes === "number" &&
+                  typeof s.totalChapters === "number" &&
+                  " · "}
+                {typeof s.totalChapters === "number" && `${s.totalChapters} ch`}{" "}
+                <Text component="span" c="dimmed" size="xs">
+                  published
+                </Text>
+              </Text>
+            )}
 
             {s.genres.length > 0 && (
               <Group gap={4}>
@@ -163,7 +184,7 @@ export function SeriesDetailPage() {
               {(typeof s.highestVolume === "number" ||
                 typeof s.highestChapter === "number") && (
                 <Text size="sm" c="dimmed">
-                  Highest{" "}
+                  Highest seen across releases:{" "}
                   {typeof s.highestVolume === "number" &&
                     `vol ${s.highestVolume}`}
                   {typeof s.highestVolume === "number" &&

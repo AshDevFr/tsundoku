@@ -162,11 +162,13 @@ impl OfflineStore {
                     titles.push(s);
                 }
                 let score = best_dice(query, titles);
+                let kind = r.kind.as_deref().map(parse_kind);
                 let hit = SearchHit {
                     external_id: r.id.to_string(),
                     title: r.title.clone(),
                     year: r.year,
                     cover_url: pick_cover_from_row(&r),
+                    kind,
                     score: Some(score),
                 };
                 (hit, score)
@@ -192,8 +194,12 @@ impl OfflineStore {
 // (manga_updates, anime_planet slugs). The cast lets sqlx decode each as
 // `Option<String>` uniformly. `type` is aliased to `kind` because
 // `FromQueryResult` does not honor `#[sea_orm(column_name = ...)]`.
+// `rating` is CAST to REAL because the dump occasionally stores it as
+// TEXT alongside the numeric form; the CAST keeps sqlx decoding into
+// `Option<f64>` uniform regardless of the per-row physical type.
 const SELECT_BY_ID: &str = "SELECT id, title, native_title, romanized_title, \
         titles, type AS kind, status, year, final_volume, total_chapters, \
+        CAST(rating AS REAL) AS rating, \
         description, state, genres, tags, \
         cover_x350_x2, cover_x350_x1, cover_x250_x2, cover_x250_x1, cover_raw_url, \
         CAST(source_anilist_id AS TEXT) AS source_anilist_id, \
@@ -207,6 +213,7 @@ const SELECT_BY_ID: &str = "SELECT id, title, native_title, romanized_title, \
 
 const SELECT_FTS: &str = "SELECT s.id, s.title, s.native_title, s.romanized_title, \
         s.titles, s.type AS kind, s.status, s.year, s.final_volume, s.total_chapters, \
+        CAST(s.rating AS REAL) AS rating, \
         s.description, s.state, s.genres, s.tags, \
         s.cover_x350_x2, s.cover_x350_x1, s.cover_x250_x2, s.cover_x250_x1, s.cover_raw_url, \
         CAST(s.source_anilist_id AS TEXT) AS source_anilist_id, \
@@ -270,6 +277,10 @@ struct RawRow {
     final_volume: Option<String>,
     /// Total chapter count, stored as TEXT in the dump (nullable).
     total_chapters: Option<String>,
+    /// Average user rating on the dump's native 0-100 scale (nullable).
+    /// `CAST(rating AS REAL)` in the SELECT keeps decoding stable when
+    /// the dump occasionally stores it as TEXT.
+    rating: Option<f64>,
     description: Option<String>,
     state: Option<String>,
     /// JSON array of genre names (e.g. `["Action", "Comedy"]`). The HTTP
@@ -312,6 +323,7 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
     let tags = parse_string_array(row.tags.as_deref());
     let total_volumes = crate::mapping::parse_count(row.final_volume.as_deref());
     let total_chapters = crate::mapping::parse_count(row.total_chapters.as_deref());
+    let rating = crate::mapping::normalize_rating(row.rating);
     // Build a deterministic blob from the dump row so the resolver can
     // hash + dedupe writes. The dump itself doesn't expose a per-row
     // version; the SHA stays stable as long as the row stays stable.
@@ -327,6 +339,7 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
         cover_url: cover_url.clone(),
         total_volumes,
         total_chapters,
+        rating,
         alternate_titles: alternate_titles.clone(),
         foreign_ids: foreign_ids.clone(),
         genres: genres.clone(),
@@ -346,6 +359,7 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
         cover_url,
         total_volumes,
         total_chapters,
+        rating,
         description,
         genres,
         tags,
@@ -378,6 +392,7 @@ struct SerializedRow {
     cover_url: Option<String>,
     total_volumes: Option<i32>,
     total_chapters: Option<i32>,
+    rating: Option<f64>,
     alternate_titles: Vec<String>,
     foreign_ids: Vec<ForeignId>,
     genres: Vec<String>,
@@ -488,6 +503,7 @@ mod tests {
                 year INTEGER,
                 final_volume TEXT,
                 total_chapters TEXT,
+                rating REAL,
                 description TEXT,
                 state TEXT,
                 genres TEXT,
@@ -514,14 +530,14 @@ mod tests {
             backend,
             "INSERT INTO series (
                 id, title, native_title, romanized_title, titles, type, status, year,
-                final_volume, total_chapters, state,
+                final_volume, total_chapters, rating, state,
                 genres, tags,
                 cover_x350_x2, source_anilist_id, source_my_anime_list_id,
                 source_manga_updates_id, source_kitsu_id, source_anime_planet_id
             ) VALUES (
                 1677, 'Chainsaw Man', 'チェンソーマン', 'Chainsaw Man',
                 '[{\"title\":\"Chainsaw-Man\",\"language\":\"en\"},{\"title\":\"CSM\",\"language\":\"en\"}]',
-                'manga', 'releasing', 2018, '24', '232', 'active',
+                'manga', 'releasing', 2018, '24', '232', 85.0, 'active',
                 '[\"Action\", \"Horror\"]', '[\"Chainsaws\", \"Devils\"]',
                 'https://mb/350@2x.jpg', 105778, 116778,
                 'ylx5wzn', 54139, 'chainsaw-man'
@@ -592,6 +608,8 @@ mod tests {
         assert_eq!(m.tags, vec!["Chainsaws".to_string(), "Devils".to_string()]);
         assert_eq!(m.total_volumes, Some(24));
         assert_eq!(m.total_chapters, Some(232));
+        // Rating is normalized from MangaBaka's 0-100 scale to 0-10.
+        assert_eq!(m.rating, Some(8.5));
     }
 
     #[test]

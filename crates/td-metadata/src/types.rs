@@ -30,6 +30,12 @@ pub struct SeriesMetadata {
     /// `total_chapters`). Display-only, same purpose as [`Self::total_volumes`].
     #[serde(default)]
     pub total_chapters: Option<i32>,
+    /// Provider rating normalized to a 0-10 scale. Sources publish ratings
+    /// on different scales (MangaBaka's API returns 0-100); the canonical
+    /// value here is always 0-10 so the UI can format it uniformly. `None`
+    /// when the provider doesn't expose a rating or has none for this row.
+    #[serde(default)]
+    pub rating: Option<f64>,
     /// Long-form synopsis as provided by the source. Surfaced in the
     /// detail view and (clamped) in the list view; not used for matching.
     #[serde(default)]
@@ -93,6 +99,11 @@ pub struct SearchHit {
     pub title: String,
     pub year: Option<i32>,
     pub cover_url: Option<String>,
+    /// Provider's kind classification, when known. The resolver uses this
+    /// alongside the release's format set to filter format-incompatible
+    /// candidates (e.g. drop a `Novel` hit for a CBZ release) before
+    /// picking a winner.
+    pub kind: Option<SeriesKind>,
     /// Relevance, normalized to `[0.0, 1.0]` if the provider supplies one.
     pub score: Option<f32>,
 }

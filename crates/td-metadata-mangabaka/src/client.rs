@@ -76,6 +76,11 @@ pub struct MbSeries {
     /// Total chapter count. MangaBaka returns this as a nullable string.
     #[serde(default)]
     pub total_chapters: Option<String>,
+    /// Average user rating on a 0-100 scale (e.g. `85.06` ≈ 8.5/10). May
+    /// be missing for sparsely-reviewed series; the mapping layer divides
+    /// by 10 so the canonical value is always on a 0-10 scale.
+    #[serde(default)]
+    pub rating: Option<f64>,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]

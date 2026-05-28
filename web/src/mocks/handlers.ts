@@ -38,6 +38,7 @@ const SERIES: (SeriesListItem & {
     tags: ["devil hunter", "gore"],
     alternateTitles: ["チェンソーマン"],
     metadataSource: "offline_cache",
+    releaseCount: 5,
   },
   {
     id: 2,
@@ -55,6 +56,9 @@ const SERIES: (SeriesListItem & {
     tags: ["time loop"],
     alternateTitles: ["リゼロ"],
     metadataSource: "offline_cache",
+    // Zero releases linked so the "Orphans only" filter has something
+    // to surface in the mock UI.
+    releaseCount: 0,
   },
   {
     id: 3,
@@ -72,6 +76,7 @@ const SERIES: (SeriesListItem & {
     tags: ["hunters", "leveling"],
     alternateTitles: [],
     metadataSource: "offline_cache",
+    releaseCount: 3,
   },
 ];
 
@@ -689,6 +694,9 @@ export const handlers = [
       tags: [],
       alternateTitles: [],
       metadataSource: "manual",
+      // Manually-created series start with no linked releases; the
+      // operator may relink existing ones from the review queue.
+      releaseCount: 0,
     });
     const detail: SeriesDetail = {
       id,
@@ -718,6 +726,7 @@ export const handlers = [
     const kind = url.searchParams.get("kind");
     const status = url.searchParams.get("status");
     const owned = url.searchParams.get("owned");
+    const hasReleases = url.searchParams.get("hasReleases");
     const genre = url.searchParams.get("genre");
     const tag = url.searchParams.get("tag");
     const q = url.searchParams.get("q");
@@ -729,6 +738,10 @@ export const handlers = [
     if (status) filtered = filtered.filter((s) => s.status === status);
     if (owned === "true") filtered = filtered.filter((s) => s.owned === true);
     if (owned === "false") filtered = filtered.filter((s) => s.owned === false);
+    if (hasReleases === "true")
+      filtered = filtered.filter((s) => s.releaseCount > 0);
+    if (hasReleases === "false")
+      filtered = filtered.filter((s) => s.releaseCount === 0);
     if (genre) {
       const needle = genre.toLowerCase();
       filtered = filtered.filter((s) =>
