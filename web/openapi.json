@@ -358,7 +358,7 @@
           "providers"
         ],
         "summary": "Fan-out cache refresh for every registered provider. Returns a per-id\ntriggered/skipped breakdown so the admin UI can render each result.",
-        "operationId": "refresh_all",
+        "operationId": "refresh_all_providers",
         "responses": {
           "202": {
             "description": "",
@@ -1115,7 +1115,7 @@
         ],
         "summary": "Trigger a bulk refresh of stale series rows against the active\nmetadata provider. The spawned tick reads `batch_size` and\n`min_age_days` from `metadata.series_refresh`; the same selection\nquery backs the cron, so a manual click and a cron tick are\nbehaviourally identical (and they share a per-provider mutex, so\nthey can't race).",
         "description": "Returns immediately with `triggered: true` once the tick is spawned,\nor `triggered: false, skipped: true` when a refresh is already in\nflight for the active provider.",
-        "operationId": "refresh_all",
+        "operationId": "refresh_all_series",
         "responses": {
           "202": {
             "description": "",

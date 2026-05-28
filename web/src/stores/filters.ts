@@ -9,6 +9,8 @@ export interface FilterPreset {
   search: FilterSearch;
 }
 
+export type TagFilterMode = "any" | "all";
+
 export interface FilterSearch {
   kind?: string;
   status?: string;
@@ -17,10 +19,15 @@ export interface FilterSearch {
   /// release, `false` keeps only orphans (zero releases, typically the
   /// residue of a manual re-link). Absent means "no constraint".
   hasReleases?: boolean;
-  /// Single genre name (case-insensitive against the backend).
-  genre?: string;
-  /// Single tag name (case-insensitive against the backend).
-  tag?: string;
+  /// Selected genre names. Case-insensitive on the backend.
+  genres?: string[];
+  /// `any` (default) keeps series matching at least one selected genre;
+  /// `all` requires every selected genre.
+  genresMode?: TagFilterMode;
+  /// Selected tag names. Case-insensitive on the backend.
+  tags?: string[];
+  /// `any` (default) or `all`. See [[genresMode]].
+  tagsMode?: TagFilterMode;
   sort?: string;
   order?: string;
   page?: number;

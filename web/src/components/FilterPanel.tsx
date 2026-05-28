@@ -2,11 +2,13 @@ import {
   ActionIcon,
   Box,
   Button,
+  Chip,
   CloseButton,
   Group,
   Menu,
   Modal,
   Paper,
+  ScrollArea,
   SegmentedControl,
   Select,
   Stack,
@@ -17,9 +19,13 @@ import {
 } from "@mantine/core";
 import { useDebouncedCallback, useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useGenres, useTags } from "@/api/queries";
-import { type FilterSearch, useFilterPresets } from "@/stores/filters";
+import {
+  type FilterSearch,
+  type TagFilterMode,
+  useFilterPresets,
+} from "@/stores/filters";
 
 const SEARCH_DEBOUNCE_MS = 250;
 
@@ -116,8 +122,8 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
   const hasActiveFilters =
     Boolean(search.kind) ||
     Boolean(search.status) ||
-    Boolean(search.genre) ||
-    Boolean(search.tag) ||
+    (search.genres?.length ?? 0) > 0 ||
+    (search.tags?.length ?? 0) > 0 ||
     Boolean(search.q) ||
     typeof search.owned === "boolean" ||
     typeof search.hasReleases === "boolean";
@@ -125,14 +131,27 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
   const activeSort = search.sort ?? "last_release_at";
   const orderLabels = ORDER_LABELS_BY_SORT[activeSort] ?? DEFAULT_ORDER_LABELS;
 
-  const genreOptions = (genres.data?.items ?? []).map((i) => ({
-    value: i.name,
-    label: i.seriesCount > 0 ? `${i.name} (${i.seriesCount})` : `${i.name} (—)`,
-  }));
-  const tagOptions = (tags.data?.items ?? []).map((i) => ({
-    value: i.name,
-    label: i.seriesCount > 0 ? `${i.name} (${i.seriesCount})` : `${i.name} (—)`,
-  }));
+  // Sort vocab alphabetically (case-insensitive) — the backend returns
+  // these sorted by usage which is great for an autocomplete but reads
+  // as scrambled when you display every option as a chip.
+  const genreItems = useMemo(
+    () =>
+      (genres.data?.items ?? [])
+        .slice()
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+        ),
+    [genres.data?.items],
+  );
+  const tagItems = useMemo(
+    () =>
+      (tags.data?.items ?? [])
+        .slice()
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+        ),
+    [tags.data?.items],
+  );
 
   const handleSave = () => {
     const trimmed = presetName.trim();
@@ -242,28 +261,32 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
           searchable
         />
 
-        <Select
-          label="Genre"
-          placeholder={genres.isLoading ? "loading…" : "Any"}
-          data={genreOptions}
-          value={search.genre ?? null}
-          onChange={(v) => merge({ genre: v ?? undefined })}
-          clearable
-          searchable
-          nothingFoundMessage="No matches"
-          data-testid="filter-genre-select"
+        <ChipFilterGroup
+          label="Genres"
+          testId="filter-genres"
+          items={genreItems}
+          loading={genres.isLoading}
+          selected={search.genres ?? []}
+          mode={search.genresMode ?? "any"}
+          onSelectedChange={(genres) =>
+            merge({ genres: genres.length > 0 ? genres : undefined })
+          }
+          onModeChange={(m) =>
+            merge({ genresMode: m === "any" ? undefined : m })
+          }
         />
 
-        <Select
-          label="Tag"
-          placeholder={tags.isLoading ? "loading…" : "Any"}
-          data={tagOptions}
-          value={search.tag ?? null}
-          onChange={(v) => merge({ tag: v ?? undefined })}
-          clearable
-          searchable
-          nothingFoundMessage="No matches"
-          data-testid="filter-tag-select"
+        <ChipFilterGroup
+          label="Tags"
+          testId="filter-tags"
+          items={tagItems}
+          loading={tags.isLoading}
+          selected={search.tags ?? []}
+          mode={search.tagsMode ?? "any"}
+          onSelectedChange={(tags) =>
+            merge({ tags: tags.length > 0 ? tags : undefined })
+          }
+          onModeChange={(m) => merge({ tagsMode: m === "any" ? undefined : m })}
         />
 
         {/*
@@ -364,5 +387,116 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
         </Stack>
       </Modal>
     </Paper>
+  );
+}
+
+interface ChipFilterItem {
+  name: string;
+  seriesCount: number;
+}
+
+interface ChipFilterGroupProps {
+  label: string;
+  testId: string;
+  items: ChipFilterItem[];
+  loading: boolean;
+  selected: string[];
+  mode: TagFilterMode;
+  onSelectedChange: (next: string[]) => void;
+  onModeChange: (next: TagFilterMode) => void;
+}
+
+/// Multi-select chip grid for genres or tags. Keeps the picker compact
+/// by scrolling the body, surfaces the current `any`/`all` mode inline,
+/// and supports a typeahead filter against the rendered chips.
+function ChipFilterGroup({
+  label,
+  testId,
+  items,
+  loading,
+  selected,
+  mode,
+  onSelectedChange,
+  onModeChange,
+}: ChipFilterGroupProps) {
+  const [filter, setFilter] = useState("");
+  const visible = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return items;
+    return items.filter((i) => i.name.toLowerCase().includes(needle));
+  }, [items, filter]);
+
+  // Mantine's Chip.Group with `multiple` is the natural fit: it owns the
+  // value array and just calls back with the next selection.
+  const hasSelection = selected.length > 0;
+
+  return (
+    <Box data-testid={testId}>
+      <Group justify="space-between" align="center" mb={6} wrap="nowrap">
+        <Group gap={6} align="center" wrap="nowrap">
+          <Text size="sm" fw={500}>
+            {label}
+          </Text>
+          {hasSelection && (
+            <Tooltip label={`Clear ${label.toLowerCase()}`} withinPortal>
+              <CloseButton
+                size="xs"
+                aria-label={`Clear ${label.toLowerCase()}`}
+                onClick={() => onSelectedChange([])}
+              />
+            </Tooltip>
+          )}
+        </Group>
+        <SegmentedControl
+          size="xs"
+          value={mode}
+          onChange={(v) => onModeChange(v === "all" ? "all" : "any")}
+          data={[
+            { label: "All", value: "all" },
+            { label: "Any", value: "any" },
+          ]}
+          disabled={selected.length < 2}
+        />
+      </Group>
+      <TextInput
+        size="xs"
+        placeholder={loading ? "loading…" : `Search ${label.toLowerCase()}…`}
+        value={filter}
+        onChange={(e) => setFilter(e.currentTarget.value)}
+        mb="xs"
+        rightSection={
+          filter ? (
+            <CloseButton
+              size="xs"
+              aria-label="Clear search"
+              onClick={() => setFilter("")}
+            />
+          ) : null
+        }
+      />
+      <ScrollArea.Autosize mah={220} type="auto" offsetScrollbars>
+        <Chip.Group
+          multiple
+          value={selected}
+          onChange={(v) => onSelectedChange(v as string[])}
+        >
+          <Group gap={6}>
+            {visible.map((item) => (
+              <Chip key={item.name} value={item.name} size="xs" variant="light">
+                {item.name}
+                <Text component="span" c="dimmed" ml={4} size="xs">
+                  {item.seriesCount}
+                </Text>
+              </Chip>
+            ))}
+            {!loading && visible.length === 0 && (
+              <Text size="xs" c="dimmed">
+                No matches
+              </Text>
+            )}
+          </Group>
+        </Chip.Group>
+      </ScrollArea.Autosize>
+    </Box>
   );
 }

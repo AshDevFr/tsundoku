@@ -32,8 +32,26 @@ function makeTestRouter(initialPath: string) {
       const out: Record<string, unknown> = {};
       if (typeof raw.kind === "string") out.kind = raw.kind;
       if (typeof raw.status === "string") out.status = raw.status;
-      if (typeof raw.genre === "string") out.genre = raw.genre;
-      if (typeof raw.tag === "string") out.tag = raw.tag;
+      const splitList = (v: unknown): string[] | undefined => {
+        if (Array.isArray(v))
+          return (v as unknown[]).filter(
+            (x): x is string => typeof x === "string" && x.length > 0,
+          );
+        if (typeof v === "string" && v.length > 0)
+          return v
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+        return undefined;
+      };
+      const genres = splitList(raw.genres);
+      if (genres && genres.length > 0) out.genres = genres;
+      if (raw.genresMode === "all" || raw.genresMode === "any")
+        out.genresMode = raw.genresMode;
+      const tags = splitList(raw.tags);
+      if (tags && tags.length > 0) out.tags = tags;
+      if (raw.tagsMode === "all" || raw.tagsMode === "any")
+        out.tagsMode = raw.tagsMode;
       if (typeof raw.owned === "string")
         out.owned =
           raw.owned === "true"
@@ -101,7 +119,7 @@ describe("FeedPage", () => {
   });
 
   it("filters by genre via URL search param", async () => {
-    renderWithProviders("/?genre=isekai");
+    renderWithProviders("/?genres=isekai");
     expect(
       await screen.findByText(
         "Re:Zero - Starting Life in Another World",
@@ -115,7 +133,7 @@ describe("FeedPage", () => {
 
   it("AND-combines genre and tag filters", async () => {
     // Chainsaw Man is the only series tagged "gore" inside the "action" genre.
-    renderWithProviders("/?genre=action&tag=gore");
+    renderWithProviders("/?genres=action&tags=gore");
     expect(
       await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 }),
     ).toBeInTheDocument();

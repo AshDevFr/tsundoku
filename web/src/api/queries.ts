@@ -56,8 +56,12 @@ export interface SeriesFilters {
   /// `true` keeps only series with ≥1 linked release; `false` keeps only
   /// orphans. Absent means "no constraint". Mirrors the backend filter.
   hasReleases?: boolean;
-  genre?: string;
-  tag?: string;
+  /// Selected genre names. Joined into a CSV before being sent — the
+  /// backend re-splits on the comma.
+  genres?: string[];
+  genresMode?: "any" | "all";
+  tags?: string[];
+  tagsMode?: "any" | "all";
   sort?: string;
   order?: string;
   page?: number;
@@ -71,6 +75,10 @@ const DEFAULT_PAGE_SIZE = 24;
 
 export function useSeriesList(filters: SeriesFilters) {
   const trimmedQ = filters.q?.trim();
+  const genresCsv = filters.genres?.length
+    ? filters.genres.join(",")
+    : undefined;
+  const tagsCsv = filters.tags?.length ? filters.tags.join(",") : undefined;
   const query = {
     page: filters.page ?? 1,
     pageSize: filters.pageSize ?? DEFAULT_PAGE_SIZE,
@@ -81,8 +89,13 @@ export function useSeriesList(filters: SeriesFilters) {
       typeof filters.hasReleases === "boolean"
         ? filters.hasReleases
         : undefined,
-    genre: filters.genre || undefined,
-    tag: filters.tag || undefined,
+    genres: genresCsv,
+    // The backend defaults to `any`; only send a mode when there's a
+    // selection to scope it to, and never when the mode is already the
+    // default (keeps the URL/cache key clean).
+    genresMode: genresCsv && filters.genresMode === "all" ? "all" : undefined,
+    tags: tagsCsv,
+    tagsMode: tagsCsv && filters.tagsMode === "all" ? "all" : undefined,
     sort: filters.sort || undefined,
     order: filters.order || undefined,
     q: trimmedQ || undefined,

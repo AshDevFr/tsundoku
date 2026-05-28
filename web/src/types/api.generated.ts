@@ -207,7 +207,7 @@ export interface paths {
          * Fan-out cache refresh for every registered provider. Returns a per-id
          *     triggered/skipped breakdown so the admin UI can render each result.
          */
-        post: operations["refresh_all"];
+        post: operations["refresh_all_providers"];
         delete?: never;
         options?: never;
         head?: never;
@@ -503,7 +503,7 @@ export interface paths {
          *     or `triggered: false, skipped: true` when a refresh is already in
          *     flight for the active provider.
          */
-        post: operations["refresh_all"];
+        post: operations["refresh_all_series"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1691,7 +1691,7 @@ export interface operations {
             };
         };
     };
-    refresh_all: {
+    refresh_all_providers: {
         parameters: {
             query?: never;
             header?: never;
@@ -2152,7 +2152,7 @@ export interface operations {
             };
         };
     };
-    refresh_all: {
+    refresh_all_series: {
         parameters: {
             query?: never;
             header?: never;

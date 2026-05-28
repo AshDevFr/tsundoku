@@ -19,6 +19,23 @@ import { ReviewPage } from "@/pages/ReviewPage";
 import { SeriesDetailPage } from "@/pages/SeriesDetailPage";
 import type { FilterSearch } from "@/stores/filters";
 
+/// Accept either an array (from a repeated query param) or a CSV string
+/// (from a pasted link or older URL) and normalize to a deduped list of
+/// non-empty entries. Used by both `genres` and `tags`.
+function parseStringList(raw: unknown): string[] {
+  const out: string[] = [];
+  const push = (s: string) => {
+    const t = s.trim();
+    if (t && !out.includes(t)) out.push(t);
+  };
+  if (Array.isArray(raw)) {
+    for (const v of raw) if (typeof v === "string") push(v);
+  } else if (typeof raw === "string") {
+    for (const part of raw.split(",")) push(part);
+  }
+  return out;
+}
+
 // Code-based routing keeps the scaffold self-contained (no router codegen
 // plugin). Switch to file-based routing later if the route tree grows.
 const rootRoute = createRootRoute({
@@ -38,8 +55,14 @@ export const feedRoute = createRoute({
     if (typeof raw.kind === "string" && raw.kind) search.kind = raw.kind;
     if (typeof raw.status === "string" && raw.status)
       search.status = raw.status;
-    if (typeof raw.genre === "string" && raw.genre) search.genre = raw.genre;
-    if (typeof raw.tag === "string" && raw.tag) search.tag = raw.tag;
+    const genres = parseStringList(raw.genres);
+    if (genres.length > 0) search.genres = genres;
+    if (raw.genresMode === "all" || raw.genresMode === "any")
+      search.genresMode = raw.genresMode;
+    const tags = parseStringList(raw.tags);
+    if (tags.length > 0) search.tags = tags;
+    if (raw.tagsMode === "all" || raw.tagsMode === "any")
+      search.tagsMode = raw.tagsMode;
     if (typeof raw.sort === "string" && raw.sort) search.sort = raw.sort;
     if (typeof raw.order === "string" && raw.order) search.order = raw.order;
     if (raw.owned === true || raw.owned === "true") search.owned = true;

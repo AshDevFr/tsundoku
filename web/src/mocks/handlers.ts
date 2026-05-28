@@ -727,8 +727,11 @@ export const handlers = [
     const status = url.searchParams.get("status");
     const owned = url.searchParams.get("owned");
     const hasReleases = url.searchParams.get("hasReleases");
-    const genre = url.searchParams.get("genre");
-    const tag = url.searchParams.get("tag");
+    const genresCsv = url.searchParams.get("genres");
+    const genresMode =
+      url.searchParams.get("genresMode") === "all" ? "all" : "any";
+    const tagsCsv = url.searchParams.get("tags");
+    const tagsMode = url.searchParams.get("tagsMode") === "all" ? "all" : "any";
     const q = url.searchParams.get("q");
     const page = Number(url.searchParams.get("page") ?? "1");
     const pageSize = Number(url.searchParams.get("pageSize") ?? "24");
@@ -742,17 +745,28 @@ export const handlers = [
       filtered = filtered.filter((s) => s.releaseCount > 0);
     if (hasReleases === "false")
       filtered = filtered.filter((s) => s.releaseCount === 0);
-    if (genre) {
-      const needle = genre.toLowerCase();
-      filtered = filtered.filter((s) =>
-        s.genres.some((g) => g.toLowerCase() === needle),
-      );
+    const splitCsv = (s: string | null) =>
+      s
+        ?.split(",")
+        .map((p) => p.trim().toLowerCase())
+        .filter((p) => p.length > 0) ?? [];
+    const genreNeedles = splitCsv(genresCsv);
+    if (genreNeedles.length > 0) {
+      filtered = filtered.filter((s) => {
+        const owned = s.genres.map((g) => g.toLowerCase());
+        return genresMode === "all"
+          ? genreNeedles.every((n) => owned.includes(n))
+          : genreNeedles.some((n) => owned.includes(n));
+      });
     }
-    if (tag) {
-      const needle = tag.toLowerCase();
-      filtered = filtered.filter((s) =>
-        s.tags.some((t) => t.toLowerCase() === needle),
-      );
+    const tagNeedles = splitCsv(tagsCsv);
+    if (tagNeedles.length > 0) {
+      filtered = filtered.filter((s) => {
+        const owned = s.tags.map((t) => t.toLowerCase());
+        return tagsMode === "all"
+          ? tagNeedles.every((n) => owned.includes(n))
+          : tagNeedles.some((n) => owned.includes(n));
+      });
     }
     // Loose substring match against canonical + alternate titles. The
     // real backend reranks by Dice; for the mock we just need *some*

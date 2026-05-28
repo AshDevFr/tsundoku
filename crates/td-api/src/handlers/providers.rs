@@ -233,6 +233,7 @@ pub async fn refresh_cache(
     post,
     path = "/api/v1/providers/refresh-all",
     tag = "providers",
+    operation_id = "refresh_all_providers",
     responses((status = 202, body = RefreshAllResponse)),
     security(("admin" = []))
 )]

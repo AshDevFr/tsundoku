@@ -8,7 +8,8 @@ use axum::http::StatusCode;
 use chrono::Utc;
 use sea_orm::sea_query::Expr;
 use sea_orm::{
-    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait,
+    Set,
 };
 use serde::{Deserialize, Serialize};
 use td_db::entities::{
@@ -335,30 +336,12 @@ fn apply_series_filters(
     // UNIQUE constraints collate NOCASE.
     let genre_names = parse_csv(q.genres.as_deref());
     if !genre_names.is_empty() {
-        let sub = build_tag_semijoin_subquery(
-            series_genres::Entity,
-            series_genres::Column::SeriesId,
-            series_genres::Column::GenreId,
-            genres::Entity,
-            genres::Column::Id,
-            genres::Column::Name,
-            &genre_names,
-            is_all_mode(q.genres_mode.as_deref()),
-        );
+        let sub = genre_semijoin_subquery(&genre_names, is_all_mode(q.genres_mode.as_deref()));
         select = select.filter(series::Column::Id.in_subquery(sub));
     }
     let tag_names = parse_csv(q.tags.as_deref());
     if !tag_names.is_empty() {
-        let sub = build_tag_semijoin_subquery(
-            series_tags::Entity,
-            series_tags::Column::SeriesId,
-            series_tags::Column::TagId,
-            tags::Entity,
-            tags::Column::Id,
-            tags::Column::Name,
-            &tag_names,
-            is_all_mode(q.tags_mode.as_deref()),
-        );
+        let sub = tag_semijoin_subquery(&tag_names, is_all_mode(q.tags_mode.as_deref()));
         select = select.filter(series::Column::Id.in_subquery(sub));
     }
     select
@@ -386,46 +369,63 @@ fn is_all_mode(raw: Option<&str>) -> bool {
     )
 }
 
-/// Build the `SELECT series_id FROM <join> JOIN <vocab>` subquery used by
-/// the genre / tag filters. In `all` mode it adds `GROUP BY series_id
-/// HAVING COUNT(DISTINCT vocab.name) = N` so only series carrying every
-/// requested name survive. `any` mode skips the grouping — a plain IN
-/// against the deduped series ids.
-#[allow(clippy::too_many_arguments)]
-fn build_tag_semijoin_subquery<JE, VE>(
-    join_entity: JE,
-    series_id_col: JE::Column,
-    join_vocab_id_col: JE::Column,
-    vocab_entity: VE,
-    vocab_id_col: VE::Column,
-    vocab_name_col: VE::Column,
+/// Subquery yielding the series ids that match the requested genres.
+/// In `all` mode every requested name must match (`GROUP BY series_id
+/// HAVING COUNT(DISTINCT genres.name) = N`); otherwise at least one is
+/// enough. The select is duplicate-safe because the outer call always
+/// uses it inside `series::Column::Id.in_subquery(...)`.
+fn genre_semijoin_subquery(
     names: &[String],
     all_mode: bool,
-) -> sea_orm::sea_query::SelectStatement
-where
-    JE: EntityTrait,
-    VE: EntityTrait,
-{
-    use sea_orm::sea_query::{Func, Query};
-    let mut sub = Query::select();
-    sub.column((join_entity, series_id_col))
-        .from(join_entity)
-        .inner_join(
-            vocab_entity,
-            Expr::col((join_entity, join_vocab_id_col)).equals((vocab_entity, vocab_id_col)),
+) -> sea_orm::sea_query::SelectStatement {
+    use sea_orm::QueryTrait;
+    use sea_orm::sea_query::Func;
+
+    let mut sub = series_genres::Entity::find()
+        .select_only()
+        .column(series_genres::Column::SeriesId)
+        .join(
+            sea_orm::JoinType::InnerJoin,
+            series_genres::Relation::Genre.def(),
         )
-        .and_where(Expr::col((vocab_entity, vocab_name_col)).is_in(names.iter().cloned()));
+        .filter(genres::Column::Name.is_in(names.iter().cloned()));
     if all_mode {
-        sub.add_group_by([Expr::col((join_entity, series_id_col)).into()])
-            .and_having(
-                Expr::expr(Func::count_distinct(Expr::col((
-                    vocab_entity,
-                    vocab_name_col,
-                ))))
-                .eq(names.len() as i64),
-            );
+        sub = sub.group_by(series_genres::Column::SeriesId).having(
+            Expr::expr(Func::count_distinct(Expr::col((
+                genres::Entity,
+                genres::Column::Name,
+            ))))
+            .eq(names.len() as i64),
+        );
     }
-    sub
+    sub.into_query()
+}
+
+/// Tag analog of [`genre_semijoin_subquery`]. Separate function rather
+/// than a generic helper because sea-orm's typing makes the abstraction
+/// more fiddly than just writing the second variant.
+fn tag_semijoin_subquery(names: &[String], all_mode: bool) -> sea_orm::sea_query::SelectStatement {
+    use sea_orm::QueryTrait;
+    use sea_orm::sea_query::Func;
+
+    let mut sub = series_tags::Entity::find()
+        .select_only()
+        .column(series_tags::Column::SeriesId)
+        .join(
+            sea_orm::JoinType::InnerJoin,
+            series_tags::Relation::Tag.def(),
+        )
+        .filter(tags::Column::Name.is_in(names.iter().cloned()));
+    if all_mode {
+        sub = sub.group_by(series_tags::Column::SeriesId).having(
+            Expr::expr(Func::count_distinct(Expr::col((
+                tags::Entity,
+                tags::Column::Name,
+            ))))
+            .eq(names.len() as i64),
+        );
+    }
+    sub.into_query()
 }
 
 /// Free-text search path. Ranks every series by a Dice-coefficient
@@ -784,6 +784,7 @@ pub async fn refresh_metadata(
     post,
     path = "/api/v1/series/refresh-all",
     tag = "series",
+    operation_id = "refresh_all_series",
     responses(
         (status = 202, body = RefreshAllSeriesResponse),
         (status = 503, description = "Active provider is not registered")

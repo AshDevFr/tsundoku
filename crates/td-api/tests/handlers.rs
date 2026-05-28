@@ -1551,6 +1551,145 @@ async fn series_list_filters_by_genre_and_tag_and_combines() {
 }
 
 #[tokio::test]
+async fn series_list_genres_multi_any_vs_all() {
+    let db = fresh_db().await;
+    let a = seed_series(&db, "Action+Adventure", "manga").await;
+    let b = seed_series(&db, "Action-only", "manga").await;
+    let c = seed_series(&db, "Drama-only", "manga").await;
+    tagging_repo::set_series_genres(&db, a, &["Action".into(), "Adventure".into()])
+        .await
+        .unwrap();
+    tagging_repo::set_series_genres(&db, b, &["Action".into()])
+        .await
+        .unwrap();
+    tagging_repo::set_series_genres(&db, c, &["Drama".into()])
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    // Default mode is `any`: Action OR Adventure → a, b (c is Drama-only).
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?genres=Action,Adventure")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 2);
+    let ids: Vec<i64> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_i64().unwrap())
+        .collect();
+    assert!(ids.contains(&(a as i64)));
+    assert!(ids.contains(&(b as i64)));
+
+    // `all` mode: Action AND Adventure → only a.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?genres=Action,Adventure&genresMode=all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["id"], a);
+
+    // `all` with one name not on any row collapses the set even when the
+    // other name matches: confirms the COUNT(DISTINCT) guard, not just
+    // "more rows satisfy".
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?genres=Action,Nonexistent&genresMode=all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 0);
+}
+
+#[tokio::test]
+async fn series_list_tags_multi_any_vs_all_with_pagination_count() {
+    let db = fresh_db().await;
+    // Three rows with `isekai`; one of those also has `magic`. A single-
+    // row "all" filter must not over-count due to the join multiplying
+    // rows on the outer SELECT — the page total has to stay at 1.
+    let a = seed_series(&db, "Isekai+Magic", "manga").await;
+    let b = seed_series(&db, "Isekai-only-1", "manga").await;
+    let c = seed_series(&db, "Isekai-only-2", "manga").await;
+    tagging_repo::set_series_tags(&db, a, &["isekai".into(), "magic".into()])
+        .await
+        .unwrap();
+    tagging_repo::set_series_tags(&db, b, &["isekai".into()])
+        .await
+        .unwrap();
+    tagging_repo::set_series_tags(&db, c, &["isekai".into()])
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    // any: matches every row carrying either tag.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?tags=isekai,magic")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 3);
+
+    // all: only the row with both tags.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?tags=isekai,magic&tagsMode=all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["id"], a);
+}
+
+#[tokio::test]
 async fn genres_endpoint_lists_canonical_names_with_counts() {
     let db = fresh_db().await;
     let a = seed_series(&db, "A", "manga").await;
