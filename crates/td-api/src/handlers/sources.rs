@@ -12,7 +12,7 @@ use td_scheduler::jobs::poll_source;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
-use crate::state::{AppState, JobEvent, JobKind, JobResult};
+use crate::state::{AppState, JobKind, JobResult};
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -156,45 +156,14 @@ pub async fn poll(
         .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("source {name:?}")))?;
 
-    // Check the lock optimistically: if another tick is in flight we want
-    // to report `skipped` rather than spawn a task that will silently
-    // bail. `run_tick` itself does the same `try_lock` dance.
     let lock = state.locks.source_lock(&name);
-    let skipped = lock.try_lock().is_err();
-    if skipped {
-        // Single `finished{skipped:true}` so observers see the no-op
-        // without a phantom `started` first.
-        state.send_job_event(JobEvent::finished(
-            JobKind::Source,
-            &name,
-            JobResult {
-                triggered: false,
-                skipped: true,
-                ..Default::default()
-            },
-        ));
-        return Ok(Json(ManualPollResponse {
-            source: name,
-            triggered: false,
-            skipped: true,
-        }));
-    }
-    // Drop the test-lock; the spawned tick will re-acquire it. This is
-    // racy in theory (another tick could grab it between the drop and the
-    // spawn), but at worst the spawned tick will skip itself — which is
-    // exactly the desired behaviour anyway.
-
-    state.send_job_event(JobEvent::started(JobKind::Source, &name));
-
     let db = state.db.clone();
     let metadata = state.metadata.clone();
     let ingestion = state.ingestion.clone();
     let locks = state.locks.clone();
     let query_builder = state.query_builder.clone();
     let mu_redirector = state.mangaupdates_redirector.clone();
-    let events = state.job_events.clone();
-    let event_name = name.clone();
-    tokio::spawn(async move {
+    let triggered = state.try_dispatch(lock, JobKind::Source, &name, move || async move {
         poll_source::run_tick(
             source,
             db,
@@ -206,21 +175,17 @@ pub async fn poll(
             "manual",
         )
         .await;
-        let _ = events.send(JobEvent::finished(
-            JobKind::Source,
-            event_name,
-            JobResult {
-                triggered: true,
-                skipped: false,
-                ..Default::default()
-            },
-        ));
+        JobResult {
+            triggered: true,
+            skipped: false,
+            ..Default::default()
+        }
     });
 
     Ok(Json(ManualPollResponse {
         source: name,
-        triggered: true,
-        skipped: false,
+        triggered,
+        skipped: !triggered,
     }))
 }
 
@@ -246,24 +211,6 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
             continue;
         };
         let lock = state.locks.source_lock(&name);
-        if lock.try_lock().is_err() {
-            state.send_job_event(JobEvent::finished(
-                JobKind::Source,
-                &name,
-                JobResult {
-                    triggered: false,
-                    skipped: true,
-                    ..Default::default()
-                },
-            ));
-            results.push(ManualPollResponse {
-                source: name,
-                triggered: false,
-                skipped: true,
-            });
-            continue;
-        }
-        state.send_job_event(JobEvent::started(JobKind::Source, &name));
         let db = state.db.clone();
         let metadata = state.metadata.clone();
         let ingestion = state.ingestion.clone();
@@ -271,9 +218,7 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
         let query_builder = state.query_builder.clone();
         let mu_redirector = state.mangaupdates_redirector.clone();
         let spawned: Arc<dyn td_source::DiscoverySource> = source;
-        let events = state.job_events.clone();
-        let event_name = name.clone();
-        tokio::spawn(async move {
+        let triggered = state.try_dispatch(lock, JobKind::Source, &name, move || async move {
             poll_source::run_tick(
                 spawned,
                 db,
@@ -285,20 +230,16 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
                 "manual",
             )
             .await;
-            let _ = events.send(JobEvent::finished(
-                JobKind::Source,
-                event_name,
-                JobResult {
-                    triggered: true,
-                    skipped: false,
-                    ..Default::default()
-                },
-            ));
+            JobResult {
+                triggered: true,
+                skipped: false,
+                ..Default::default()
+            }
         });
         results.push(ManualPollResponse {
             source: name,
-            triggered: true,
-            skipped: false,
+            triggered,
+            skipped: !triggered,
         });
     }
 
@@ -375,39 +316,15 @@ pub async fn backfill(
         )));
     }
 
-    // Optimistic skip check, mirroring `poll`: report `skipped` instead of
-    // spawning a task that would immediately bail. `backfill_source::run`
-    // re-acquires the lock and is the real authority.
     let lock = state.locks.source_lock(&name);
-    if lock.try_lock().is_err() {
-        state.send_job_event(JobEvent::finished(
-            JobKind::Source,
-            &name,
-            JobResult {
-                triggered: false,
-                skipped: true,
-                ..Default::default()
-            },
-        ));
-        return Ok(Json(ManualBackfillResponse {
-            source: name,
-            pages,
-            triggered: false,
-            skipped: true,
-        }));
-    }
-
-    state.send_job_event(JobEvent::started(JobKind::Source, &name));
-
     let db = state.db.clone();
     let metadata = state.metadata.clone();
     let ingestion = state.ingestion.clone();
     let locks = state.locks.clone();
     let query_builder = state.query_builder.clone();
     let mu_redirector = state.mangaupdates_redirector.clone();
-    let events = state.job_events.clone();
     let event_name = name.clone();
-    tokio::spawn(async move {
+    let triggered = state.try_dispatch(lock, JobKind::Source, &name, move || async move {
         let result = backfill_source::run(
             source,
             db,
@@ -427,22 +344,18 @@ pub async fn backfill(
         if let Err(e) = &result {
             tracing::warn!(error = ?e, source = %event_name, "manual backfill failed");
         }
-        let _ = events.send(JobEvent::finished(
-            JobKind::Source,
-            event_name,
-            JobResult {
-                triggered: true,
-                skipped: false,
-                new,
-                ..Default::default()
-            },
-        ));
+        JobResult {
+            triggered: true,
+            skipped: false,
+            new,
+            ..Default::default()
+        }
     });
 
     Ok(Json(ManualBackfillResponse {
         source: name,
         pages,
-        triggered: true,
-        skipped: false,
+        triggered,
+        skipped: !triggered,
     }))
 }

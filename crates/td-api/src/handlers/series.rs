@@ -24,7 +24,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
 use crate::handlers::pagination::Pagination;
-use crate::state::{AppState, JobEvent, JobKind, JobResult};
+use crate::state::{AppState, JobKind, JobResult};
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -801,63 +801,34 @@ pub async fn refresh_all(
     let min_age_seconds = (min_age_days as i64).saturating_mul(86_400);
 
     let lock = state.locks.series_refresh_lock(&active_id);
-    let skipped = lock.try_lock().is_err();
-    if skipped {
-        state.send_job_event(JobEvent::finished(
-            JobKind::SeriesRefresh,
-            &active_id,
-            JobResult {
-                triggered: false,
-                skipped: true,
-                ..Default::default()
-            },
-        ));
-        return Ok(Json(RefreshAllSeriesResponse {
-            provider: active_id,
-            triggered: false,
-            skipped: true,
-            batch_size,
-            min_age_days,
-        }));
-    }
-    // Drop the test-lock; the spawned tick re-acquires it. There's a
-    // negligible race window where a cron tick could slip in before the
-    // spawn re-locks, in which case the spawned manual tick would `try_lock`
-    // and skip too — same self-healing behaviour as the provider refresh
-    // handler.
-    drop(lock);
-
-    state.send_job_event(JobEvent::started(JobKind::SeriesRefresh, &active_id));
-
     let db = state.db.clone();
     let locks = state.locks.clone();
-    let events = state.job_events.clone();
-    let event_id = active_id.clone();
-    tokio::spawn(async move {
-        refresh_series_metadata::run_tick(
-            provider,
-            db,
-            locks,
-            batch_size,
-            min_age_seconds,
-            "manual",
-        )
-        .await;
-        let _ = events.send(JobEvent::finished(
-            JobKind::SeriesRefresh,
-            event_id,
+    let triggered = state.try_dispatch(
+        lock,
+        JobKind::SeriesRefresh,
+        &active_id,
+        move || async move {
+            refresh_series_metadata::run_tick(
+                provider,
+                db,
+                locks,
+                batch_size,
+                min_age_seconds,
+                "manual",
+            )
+            .await;
             JobResult {
                 triggered: true,
                 skipped: false,
                 ..Default::default()
-            },
-        ));
-    });
+            }
+        },
+    );
 
     Ok(Json(RefreshAllSeriesResponse {
         provider: active_id,
-        triggered: true,
-        skipped: false,
+        triggered,
+        skipped: !triggered,
         batch_size,
         min_age_days,
     }))
