@@ -2543,6 +2543,13 @@
               "null"
             ]
           },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Series format (manga / novel / manhwa / …) from provider metadata.\nSurfaced so the operator can sanity-check a candidate's format\nagainst the release before linking. `None` when the provider did\nnot classify the series."
+          },
           "provider": {
             "type": [
               "string",

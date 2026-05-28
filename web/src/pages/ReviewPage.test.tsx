@@ -115,6 +115,10 @@ describe("ReviewPage", () => {
     // only chapters (null volume is omitted).
     expect(within(card).getByText("11 vols · 97 ch")).toBeInTheDocument();
     expect(within(card).getByText("179 ch")).toBeInTheDocument();
+
+    // Each candidate surfaces its series format (manga / manhwa / …).
+    expect(within(card).getByText("manga")).toBeInTheDocument();
+    expect(within(card).getByText("manhwa")).toBeInTheDocument();
   });
 
   it("links a release by picking a candidate and drops it from the queue", async () => {

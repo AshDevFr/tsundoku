@@ -113,7 +113,7 @@ export function ReleaseDescription({
           {opened ? "hide" : "show"}
         </Anchor>
       </Group>
-      <Collapse in={opened}>
+      <Collapse expanded={opened}>
         <Paper
           withBorder
           radius="sm"
@@ -172,7 +172,7 @@ export function ReleaseFiles({
           {opened ? "hide" : "show"}
         </Anchor>
       </Group>
-      <Collapse in={opened}>
+      <Collapse expanded={opened}>
         <Paper
           withBorder
           radius="sm"

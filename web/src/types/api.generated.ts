@@ -1068,6 +1068,13 @@ export interface components {
             alternateTitles: string[];
             externalId?: string | null;
             /**
+             * @description Series format (manga / novel / manhwa / …) from provider metadata.
+             *     Surfaced so the operator can sanity-check a candidate's format
+             *     against the release before linking. `None` when the provider did
+             *     not classify the series.
+             */
+            kind?: string | null;
+            /**
              * @description Provider + external_id pair for building a link to the provider's
              *     page. Prefers the active provider's mapping; falls back to any
              *     other mapping so the operator always has a way to inspect the

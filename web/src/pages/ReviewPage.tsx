@@ -35,14 +35,9 @@ import {
   useRetryRelease,
 } from "@/api/mutations";
 import {
-  type ProviderSearchHit,
   type ReleaseDto,
   type ReviewCandidateDto,
-  type SeriesListItem,
   type UnresolvedRelease,
-  useProviderSearch,
-  useProviders,
-  useSeriesList,
   useSources,
   useUnresolvedReleases,
 } from "@/api/queries";
@@ -52,6 +47,12 @@ import {
   ReleaseDescription,
   ReleaseFiles,
 } from "@/components/ReleaseDetails";
+import {
+  CANDIDATE_PLACEHOLDER,
+  LinkExistingPanel,
+  MetadataCounts,
+  ProviderSearchPanel,
+} from "@/components/ReleaseLinking";
 import type { components } from "@/types/api.generated";
 
 type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
@@ -785,7 +786,8 @@ function ReviewCard({
 /// catalog (provider-backed or manual). Closes the gap that the resolver
 /// and provider search both miss: a manual series has no external id, so it
 /// never surfaces as a candidate or in provider search — but recurring
-/// releases of it still need to attach to the same row.
+/// releases of it still need to attach to the same row. The catalog search
+/// itself is shared with the series-page "Move" flow.
 function LinkExistingModal({
   onClose,
   releaseId,
@@ -795,41 +797,6 @@ function LinkExistingModal({
   releaseId: string;
   seedQuery: string;
 }) {
-  const link = useLinkRelease();
-  const [query, setQuery] = useState(seedQuery);
-  const [debounced, setDebounced] = useState(seedQuery);
-
-  useEffect(() => {
-    const handle = window.setTimeout(() => setDebounced(query), 300);
-    return () => window.clearTimeout(handle);
-  }, [query]);
-
-  // Blank query falls back to the most-recent series, which is a sensible
-  // default browse for "I just made this one".
-  const results = useSeriesList({ q: debounced, pageSize: 20 });
-  const items = results.data?.items ?? [];
-
-  const handlePick = (series: SeriesListItem) => {
-    link.mutate(
-      { releaseId, body: { seriesId: series.id } },
-      {
-        onSuccess: () => {
-          notifications.show({
-            color: "green",
-            message: `Linked to “${series.canonicalTitle}”`,
-          });
-          onClose();
-        },
-        onError: (e) =>
-          notifications.show({
-            color: "red",
-            title: "Link failed",
-            message: (e as Error).message,
-          }),
-      },
-    );
-  };
-
   return (
     <Modal
       opened
@@ -839,20 +806,10 @@ function LinkExistingModal({
       centered
     >
       <Stack gap="md">
-        <TextInput
-          label="Search the catalog"
-          description="Matches every series you've already discovered, including manual ones"
-          placeholder="Series title"
-          value={query}
-          onChange={(e) => setQuery(e.currentTarget.value)}
-          data-testid="link-existing-search"
-          autoFocus
-        />
-        <ExistingSeriesResults
-          items={items}
-          loading={results.isFetching}
-          disabled={link.isPending}
-          onPick={handlePick}
+        <LinkExistingPanel
+          releaseId={releaseId}
+          seedQuery={seedQuery}
+          onLinked={onClose}
         />
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>
@@ -861,104 +818,6 @@ function LinkExistingModal({
         </Group>
       </Stack>
     </Modal>
-  );
-}
-
-function ExistingSeriesResults({
-  items,
-  loading,
-  disabled,
-  onPick,
-}: {
-  items: SeriesListItem[];
-  loading: boolean;
-  disabled: boolean;
-  onPick: (series: SeriesListItem) => void;
-}) {
-  if (loading && items.length === 0) {
-    return (
-      <Center py="md">
-        <Loader size="sm" />
-      </Center>
-    );
-  }
-  if (items.length === 0) {
-    return (
-      <Text size="xs" c="dimmed">
-        No series in the catalog match. Try a different title, or create a
-        manual series.
-      </Text>
-    );
-  }
-  return (
-    <Stack gap={6} data-testid="link-existing-results">
-      <Text size="xs" fw={500} c="dimmed" tt="uppercase">
-        {items.length} match{items.length === 1 ? "" : "es"}
-      </Text>
-      <Stack gap={6} mah={400} style={{ overflowY: "auto" }}>
-        {items.map((s) => (
-          <Card
-            key={s.id}
-            withBorder
-            padding="xs"
-            radius="sm"
-            data-testid={`existing-series-${s.id}`}
-            style={{ flexShrink: 0 }}
-          >
-            <Group justify="space-between" wrap="nowrap" align="center">
-              <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
-                <Box w={42} miw={42} h={56}>
-                  <Image
-                    src={s.coverUrl ?? CANDIDATE_PLACEHOLDER}
-                    fallbackSrc={CANDIDATE_PLACEHOLDER}
-                    alt={s.canonicalTitle}
-                    radius="sm"
-                    h={56}
-                    fit="cover"
-                  />
-                </Box>
-                <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
-                  <Text
-                    size="sm"
-                    fw={500}
-                    lineClamp={1}
-                    title={s.canonicalTitle}
-                  >
-                    {s.canonicalTitle}
-                  </Text>
-                  <Group gap={6} wrap="wrap">
-                    {s.kind && (
-                      <Badge size="xs" variant="light" color="indigo">
-                        {s.kind}
-                      </Badge>
-                    )}
-                    {typeof s.year === "number" && (
-                      <Badge size="xs" variant="light" color="gray">
-                        {s.year}
-                      </Badge>
-                    )}
-                    {s.metadataSource === "manual" && (
-                      <Badge size="xs" variant="light" color="grape">
-                        manual
-                      </Badge>
-                    )}
-                  </Group>
-                </Stack>
-              </Group>
-              <Button
-                size="xs"
-                variant="light"
-                onClick={() => onPick(s)}
-                disabled={disabled}
-                data-testid={`link-existing-${s.id}`}
-              >
-                Link
-              </Button>
-            </Group>
-          </Card>
-        ))}
-      </Stack>
-    </Stack>
   );
 }
 
@@ -1188,36 +1047,6 @@ function ReleaseHeader({ release }: { release: ReleaseDto }) {
   );
 }
 
-const CANDIDATE_PLACEHOLDER =
-  "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
-
-/// Compact "N vols · M ch" badge from provider metadata, shown on candidate
-/// cards and provider-search hits so the operator can match a release against
-/// the series' published length. Renders nothing when neither count is known.
-function MetadataCounts({
-  totalVolumes,
-  totalChapters,
-}: {
-  totalVolumes?: number | null;
-  totalChapters?: number | null;
-}) {
-  const parts: string[] = [];
-  if (typeof totalVolumes === "number") {
-    parts.push(`${totalVolumes} vol${totalVolumes === 1 ? "" : "s"}`);
-  }
-  if (typeof totalChapters === "number") {
-    parts.push(`${totalChapters} ch`);
-  }
-  if (parts.length === 0) {
-    return null;
-  }
-  return (
-    <Badge size="xs" variant="light" color="gray" data-testid="metadata-counts">
-      {parts.join(" · ")}
-    </Badge>
-  );
-}
-
 function CandidateList({
   candidates,
   disabled,
@@ -1306,6 +1135,11 @@ function CandidateList({
                     <Badge size="xs" variant="default">
                       score {c.score.toFixed(2)}
                     </Badge>
+                    {c.kind && (
+                      <Badge size="xs" variant="light" color="indigo">
+                        {c.kind}
+                      </Badge>
+                    )}
                     <MetadataCounts
                       totalVolumes={c.totalVolumes}
                       totalChapters={c.totalChapters}
