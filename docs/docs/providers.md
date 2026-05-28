@@ -105,7 +105,10 @@ how often you expect MangaBaka to backfill new entries.
 
 ### Manual refresh
 
-From the admin UI: **Refresh cache** on the MangaBaka card.
+From the admin UI: **Refresh cache** on the MangaBaka card. The card's
+in-flight pill shows live progress (`Running... 47 / 200 (phase)`) over
+SSE and is hydrated from the latest `provider_refreshes` row on page
+load, so it survives a hard refresh while a tick is still in flight.
 
 From the CLI:
 
@@ -164,6 +167,26 @@ than starting a second batch.
 A series with no mapping for the active provider is skipped silently
 on the bulk path; the single-id endpoint returns `409 Conflict` so
 the operator knows the row needs a manual link first.
+
+### Forcing a rewrite when the hash matches
+
+Each provider-backed series row carries a `metadata_hash`. If the
+incoming canonical payload hashes to the same value as the stored row,
+the refresh short-circuits and the row isn't rewritten. That's the
+right default — until a denormalized column gets added to the `series`
+table. Existing rows then show the old shape (e.g. `NULL` for a newly
+added `volumes` column) and the hash match keeps them that way
+forever.
+
+`POST /api/v1/series/invalidate-metadata-hashes` is the escape hatch:
+it clears every hash so the next refresh tick rewrites the row from
+scratch. Manual rows are always left alone. The response is
+`{ invalidated, skippedManual }`. Pair it with the **Refresh all
+series metadata** trigger above to actually rewrite the rows; the
+clear by itself is cheap and changes nothing observable.
+
+Exposed in the UI as a card on the admin
+[Maintenance](./admin-maintenance.md) page.
 
 ## Metrics
 

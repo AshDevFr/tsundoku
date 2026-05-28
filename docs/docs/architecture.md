@@ -95,11 +95,36 @@ shares the same lock — manual and scheduled work can't race.
 
 ## Real-time updates
 
-Currently: TanStack Query polling on the frontend. No SSE, no
-WebSockets. Discovery is a low-frequency activity (polls run on cron,
-minutes apart); the operational cost of a push channel would buy
-nothing here. A future phase may revisit if a workflow needs live
-push.
+List queries are TanStack Query polls. The one push channel is
+`GET /api/v1/events/jobs` (SSE), used for live job lifecycle events:
+manual-trigger fan-out (`Started` / `Progress` / `Finished` /
+`Skipped`) and the in-flight pill on the admin sources, providers, and
+maintenance surfaces. Long-running jobs (`poll_source`,
+`refresh_series_metadata`, `backfill_source`,
+`refresh_provider_cache`) drive a `ProgressHandle` that throttles DB
+checkpoints to whichever comes first: every `max(1, total/20)` items
+or every 2 seconds. The pill renders
+`Running... 47 / 200 (phase)` from whichever is fresher — a live SSE
+frame or the `inFlight.progress` checkpoint persisted on the `*_runs`
+row.
+
+The pill survives a hard refresh because the listing DTOs read the
+in-flight row directly from the DB, not from the per-connection SSE
+event map. WebSockets are not enabled: a one-way push of small JSON
+frames is all this workflow needs.
+
+## Cover image proxy
+
+`GET /api/v1/covers/{series_id}` (and `GET /api/v1/covers/by-url` for
+the not-yet-persisted review/search case) proxies MangaBaka cover
+bytes through a content-addressed disk cache rooted at
+`storage.cover_cache_dir`. Cache keys are `sha256(url).<ext>`, so a
+rotated upstream URL maps to a fresh file automatically. The `by-url`
+form enforces a hardcoded host allowlist (`mangabaka.dev` and
+subdomains) to neutralize SSRF. The operator escape hatch is
+`POST /api/v1/covers/invalidate-cache`, exposed as a card on the admin
+[Maintenance](./admin-maintenance.md) page; it wipes every file under
+the cache directory and reports `{ filesDeleted, bytesFreed }`.
 
 ## Auth model
 

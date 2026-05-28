@@ -24,7 +24,14 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Operating tsundoku",
       collapsed: false,
-      items: ["sources", "providers", "review-queue"],
+      items: [
+        "sources",
+        "providers",
+        "browse",
+        "review-queue",
+        "kept-releases",
+        "admin-maintenance",
+      ],
     },
     {
       type: "category",

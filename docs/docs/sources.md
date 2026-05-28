@@ -118,6 +118,12 @@ From the admin UI (`/admin`):
   per-source `{ triggered, skipped }` so partial-in-flight states are
   visible.
 
+Each source row shows an in-flight pill while a poll is running. The
+pill is driven by the `GET /api/v1/events/jobs` SSE stream, falls back
+to the `inFlight` snapshot on `SourceDto` after a hard refresh, and
+renders `Running... 47 / 200` once the poll loop publishes its first
+progress checkpoint.
+
 From the CLI:
 
 ```bash

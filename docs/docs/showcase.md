@@ -139,3 +139,13 @@ fuzzy title search when an external link extracted from a post
 body matches a known canonical id.
 
 ![ID maps page](/img/screenshots/admin/id-maps.png)
+
+### Maintenance
+
+Escape-hatch operations that don't belong on a per-source or
+per-provider page: invalidate metadata hashes so the next refresh
+rewrites every row, kick a series-metadata refresh tick now instead
+of waiting for cron, or wipe the cover-proxy disk cache. Each is a
+card with its own confirmation modal.
+
+→ When to reach for each card: [Admin maintenance](./admin-maintenance.md).

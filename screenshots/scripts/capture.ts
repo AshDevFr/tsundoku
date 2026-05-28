@@ -119,6 +119,7 @@ async function loadScenarios(): Promise<ScenarioModule[]> {
     { name: "Admin Providers", path: "./scenarios/admin-providers.js" },
     { name: "Admin Metrics", path: "./scenarios/admin-metrics.js" },
     { name: "Admin ID Maps", path: "./scenarios/admin-id-maps.js" },
+    { name: "Admin Maintenance", path: "./scenarios/admin-maintenance.js" },
   ];
 
   for (const entry of entries) {
