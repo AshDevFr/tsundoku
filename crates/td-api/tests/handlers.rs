@@ -1510,7 +1510,7 @@ async fn series_list_filters_by_genre_and_tag_and_combines() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/v1/series?genre=Action")
+                .uri("/api/v1/series?genres=Action")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1525,7 +1525,7 @@ async fn series_list_filters_by_genre_and_tag_and_combines() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/v1/series?genre=Action&tag=isekai")
+                .uri("/api/v1/series?genres=Action&tags=isekai")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1540,7 +1540,7 @@ async fn series_list_filters_by_genre_and_tag_and_combines() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/api/v1/series?genre=nope")
+                .uri("/api/v1/series?genres=nope")
                 .body(Body::empty())
                 .unwrap(),
         )

@@ -512,6 +512,7 @@ async fn scheduler_fires_source_and_provider_jobs_on_schedule() {
     let cfg = AppConfig {
         metadata: MetadataConfig {
             active_provider: "mangabaka".into(),
+            ..MetadataConfig::default()
         },
         providers: ProvidersConfig {
             mangabaka: MangabakaProviderConfig {

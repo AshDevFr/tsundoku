@@ -163,6 +163,45 @@ pub struct MetadataConfig {
     /// The provider that runs the auto-detect resolution path. Must match
     /// a provider id registered in [`ProvidersConfig`].
     pub active_provider: String,
+    /// Scheduled + on-demand refresh of `series` rows from the active
+    /// provider. Distinct from `providers.<id>.offline_refresh_cron`,
+    /// which refreshes the provider's local dump but does not touch any
+    /// series row. Disabled by default.
+    #[serde(default)]
+    pub series_refresh: SeriesRefreshConfig,
+}
+
+/// Knobs for the series-row refresh job. The same values back both the
+/// cron tick and the manual `POST /api/v1/series/refresh-all` trigger, so
+/// behavior is identical regardless of which path fires the work.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SeriesRefreshConfig {
+    /// Cron expression for the scheduled job. `None` disables the cron;
+    /// the manual API + CLI triggers still work as long as the active
+    /// provider is registered.
+    pub cron: Option<String>,
+    /// Maximum number of series rows to refresh per tick. Each row is one
+    /// outbound provider call, so the value should match what the active
+    /// provider's rate-limit tolerates over the tick window. `0` is legal
+    /// and turns each tick into a no-op (useful for transient disabling
+    /// without un-registering the cron).
+    pub batch_size: u32,
+    /// Skip rows whose `series.metadata_fetched_at` is within this many
+    /// days of now. Acts as a per-row min-refresh interval. The default
+    /// (7) matches MangaBaka's published-dump cadence; tighten or loosen
+    /// based on observed upstream churn.
+    pub min_age_days: u32,
+}
+
+impl Default for SeriesRefreshConfig {
+    fn default() -> Self {
+        Self {
+            cron: None,
+            batch_size: 50,
+            min_age_days: 7,
+        }
+    }
 }
 
 /// Per-provider config blocks. Adding a new provider = adding a field here +
@@ -239,6 +278,7 @@ impl Default for MetadataConfig {
     fn default() -> Self {
         Self {
             active_provider: "mangabaka".into(),
+            series_refresh: SeriesRefreshConfig::default(),
         }
     }
 }
@@ -958,6 +998,42 @@ min_gap_ms  = 250
         assert!((cfg.ingestion.resolution_threshold - 0.85).abs() < 1e-6);
         assert!(cfg.ingestion.queue_low_confidence);
         assert!(cfg.ingestion.format_type_rules.is_empty());
+    }
+
+    #[test]
+    fn series_refresh_defaults_are_disabled_with_weekly_floor() {
+        let cfg = load(&PathBuf::from("does-not-exist.toml")).unwrap();
+        let sr = &cfg.metadata.series_refresh;
+        assert!(sr.cron.is_none(), "cron is None by default (opt-in)");
+        assert_eq!(sr.batch_size, 50);
+        assert_eq!(sr.min_age_days, 7);
+    }
+
+    #[test]
+    fn series_refresh_block_parses() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[metadata]
+active_provider = "mangabaka"
+
+[metadata.series_refresh]
+cron = "0 0 4 * * *"
+batch_size = 25
+min_age_days = 14
+            "#
+        )
+        .unwrap();
+
+        let cfg = load(&path).unwrap();
+        let sr = &cfg.metadata.series_refresh;
+        assert_eq!(sr.cron.as_deref(), Some("0 0 4 * * *"));
+        assert_eq!(sr.batch_size, 25);
+        assert_eq!(sr.min_age_days, 14);
     }
 
     #[test]

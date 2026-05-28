@@ -46,6 +46,17 @@ read_requires_auth = false
 [metadata]
 active_provider = "mangabaka"
 
+# Scheduled + on-demand refresh of `series` rows from the active provider.
+# Distinct from `providers.<id>.offline_refresh_cron`, which refreshes the
+# provider's local dump but does not touch any series row. Disabled by
+# default; the manual `tsundoku refresh-series` and
+# `POST /api/v1/series/refresh-all` triggers still work as long as the
+# active provider is registered.
+# [metadata.series_refresh]
+# cron         = "0 0 4 * * *"   # 04:00 UTC daily; 6-field cron (seconds first)
+# batch_size   = 50               # series per tick; one outbound provider call each
+# min_age_days = 7                # skip rows refreshed within this window
+
 # Per-provider config. Adding a new provider = adding a [providers.<id>]
 # block + a line in the registry builder.
 [providers.mangabaka]

@@ -8,8 +8,7 @@ use axum::http::StatusCode;
 use chrono::Utc;
 use sea_orm::sea_query::Expr;
 use sea_orm::{
-    ColumnTrait, EntityTrait, JoinType, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
-    RelationTrait, Set,
+    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
 };
 use serde::{Deserialize, Serialize};
 use td_db::entities::{
@@ -128,10 +127,17 @@ pub struct SeriesListQuery {
     /// keeps only series with ≥1 release; `false` keeps only orphaned
     /// series (zero releases — often the residue of a manual re-link).
     pub has_releases: Option<bool>,
-    /// Filter by a single genre name. AND-combined with the other filters.
-    pub genre: Option<String>,
-    /// Filter by a single tag name. AND-combined with the other filters.
-    pub tag: Option<String>,
+    /// Comma-separated genre names. Combined with [`Self::genres_mode`]:
+    /// `any` (default) keeps series matching at least one; `all` keeps
+    /// only series matching every entry. Each entry is matched case-
+    /// insensitively. AND-combined with the other filters.
+    pub genres: Option<String>,
+    /// `any` (default) or `all`. See [`Self::genres`].
+    pub genres_mode: Option<String>,
+    /// Comma-separated tag names. Mirrors [`Self::genres`].
+    pub tags: Option<String>,
+    /// `any` (default) or `all`. See [`Self::tags`].
+    pub tags_mode: Option<String>,
     /// Sort field. Supports `last_release_at` (default), `first_seen_at`,
     /// `total_volumes`, and `total_chapters`. The count sorts are
     /// nullable-aware: rows without a provider value sink to the end
@@ -155,8 +161,10 @@ impl Default for SeriesListQuery {
             status: None,
             owned: None,
             has_releases: None,
-            genre: None,
-            tag: None,
+            genres: None,
+            genres_mode: None,
+            tags: None,
+            tags_mode: None,
             sort: None,
             order: None,
             q: None,
@@ -319,28 +327,104 @@ fn apply_series_filters(
             select.filter(series::Column::Id.not_in_subquery(linked_ids))
         };
     }
-    // Genre/tag filters: AND-combined via two semi-join clauses. Names are
-    // matched case-insensitively because the underlying UNIQUE constraints
-    // collate NOCASE.
-    if let Some(genre_name) = q.genre.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        select = select
-            .join(
-                JoinType::InnerJoin,
-                series_genres::Relation::Series.def().rev(),
-            )
-            .join(JoinType::InnerJoin, series_genres::Relation::Genre.def())
-            .filter(genres::Column::Name.eq(genre_name));
+    // Genre / tag filters: semi-joins via a subquery so the outer SELECT
+    // never row-multiplies (which would break pagination counts) and so
+    // the `all` mode can use a GROUP BY ... HAVING COUNT on the join
+    // table. Names are matched case-insensitively because the underlying
+    // UNIQUE constraints collate NOCASE.
+    let genre_names = parse_csv(q.genres.as_deref());
+    if !genre_names.is_empty() {
+        let sub = build_tag_semijoin_subquery(
+            series_genres::Entity,
+            series_genres::Column::SeriesId,
+            series_genres::Column::GenreId,
+            genres::Entity,
+            genres::Column::Id,
+            genres::Column::Name,
+            &genre_names,
+            is_all_mode(q.genres_mode.as_deref()),
+        );
+        select = select.filter(series::Column::Id.in_subquery(sub));
     }
-    if let Some(tag_name) = q.tag.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        select = select
-            .join(
-                JoinType::InnerJoin,
-                series_tags::Relation::Series.def().rev(),
-            )
-            .join(JoinType::InnerJoin, series_tags::Relation::Tag.def())
-            .filter(tags::Column::Name.eq(tag_name));
+    let tag_names = parse_csv(q.tags.as_deref());
+    if !tag_names.is_empty() {
+        let sub = build_tag_semijoin_subquery(
+            series_tags::Entity,
+            series_tags::Column::SeriesId,
+            series_tags::Column::TagId,
+            tags::Entity,
+            tags::Column::Id,
+            tags::Column::Name,
+            &tag_names,
+            is_all_mode(q.tags_mode.as_deref()),
+        );
+        select = select.filter(series::Column::Id.in_subquery(sub));
     }
     select
+}
+
+/// Split a comma-separated genre / tag list into trimmed, non-empty names.
+/// Returns an empty vec if the input is absent or yields no usable tokens —
+/// the caller treats that as "no constraint" rather than "match nothing".
+fn parse_csv(raw: Option<&str>) -> Vec<String> {
+    let Some(s) = raw else { return Vec::new() };
+    s.split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// `all` (case-insensitive) ⇒ every name must match; anything else ⇒ at
+/// least one. Default is `any` so an absent mode behaves like the
+/// pre-multiselect single-name filter.
+fn is_all_mode(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("all")
+    )
+}
+
+/// Build the `SELECT series_id FROM <join> JOIN <vocab>` subquery used by
+/// the genre / tag filters. In `all` mode it adds `GROUP BY series_id
+/// HAVING COUNT(DISTINCT vocab.name) = N` so only series carrying every
+/// requested name survive. `any` mode skips the grouping — a plain IN
+/// against the deduped series ids.
+#[allow(clippy::too_many_arguments)]
+fn build_tag_semijoin_subquery<JE, VE>(
+    join_entity: JE,
+    series_id_col: JE::Column,
+    join_vocab_id_col: JE::Column,
+    vocab_entity: VE,
+    vocab_id_col: VE::Column,
+    vocab_name_col: VE::Column,
+    names: &[String],
+    all_mode: bool,
+) -> sea_orm::sea_query::SelectStatement
+where
+    JE: EntityTrait,
+    VE: EntityTrait,
+{
+    use sea_orm::sea_query::{Func, Query};
+    let mut sub = Query::select();
+    sub.column((join_entity, series_id_col))
+        .from(join_entity)
+        .inner_join(
+            vocab_entity,
+            Expr::col((join_entity, join_vocab_id_col)).equals((vocab_entity, vocab_id_col)),
+        )
+        .and_where(Expr::col((vocab_entity, vocab_name_col)).is_in(names.iter().cloned()));
+    if all_mode {
+        sub.add_group_by([Expr::col((join_entity, series_id_col)).into()])
+            .and_having(
+                Expr::expr(Func::count_distinct(Expr::col((
+                    vocab_entity,
+                    vocab_name_col,
+                ))))
+                .eq(names.len() as i64),
+            );
+    }
+    sub
 }
 
 /// Free-text search path. Ranks every series by a Dice-coefficient
@@ -627,10 +711,19 @@ pub async fn refresh_metadata(
             ))
         })?;
 
+    // Explicit operator action: the per-series refresh button is the one
+    // path that opts in to overwriting a manual row.
     let now = Utc::now();
-    persist::upsert_series_from_metadata(&state.db, &active_id, &metadata, now.timestamp(), now)
-        .await
-        .map_err(ApiError::Internal)?;
+    persist::upsert_series_from_metadata(
+        &state.db,
+        &active_id,
+        &metadata,
+        now.timestamp(),
+        now,
+        true,
+    )
+    .await
+    .map_err(ApiError::Internal)?;
 
     let row = series::Entity::find_by_id(id)
         .one(&state.db)

@@ -918,12 +918,17 @@ async fn resolve_link_target(
                         "provider {provider:?} has no record for {external_id:?}"
                     ))
                 })?;
+            // Operator picked a (provider, external_id) for a release that
+            // didn't have a local series yet. Use the conservative default:
+            // if the foreign-id chain happens to land on a pre-existing
+            // manual row, don't clobber it.
             Ok(persist::upsert_series_from_metadata(
                 &state.db,
                 &provider,
                 &metadata,
                 release.posted_at,
                 now,
+                false,
             )
             .await
             .map_err(ApiError::Internal)?

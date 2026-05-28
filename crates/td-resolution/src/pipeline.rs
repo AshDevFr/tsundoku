@@ -522,12 +522,15 @@ impl Resolver {
         formats: &[String],
         now: chrono::DateTime<Utc>,
     ) -> Result<ResolutionOutcome> {
+        // Resolver upsert: a release event is not a signal to overwrite
+        // operator-curated metadata, so manual rows stay sticky.
         let UpsertResult { series_id, .. } = persist::upsert_series_from_metadata(
             &self.db,
             active_id,
             &metadata,
             release.posted_at,
             now,
+            false,
         )
         .await
         .with_context(|| format!("upserting series for release {}", release.id))?;
@@ -616,6 +619,7 @@ impl Resolver {
                 &metadata,
                 release.posted_at,
                 now,
+                false,
             )
             .await?;
             let s = *score;

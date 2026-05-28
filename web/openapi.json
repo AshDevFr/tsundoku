@@ -982,18 +982,36 @@
             }
           },
           {
-            "name": "genre",
+            "name": "genres",
             "in": "query",
-            "description": "Filter by a single genre name. AND-combined with the other filters.",
+            "description": "Comma-separated genre names. Combined with [`Self::genres_mode`]:\n`any` (default) keeps series matching at least one; `all` keeps\nonly series matching every entry. Each entry is matched case-\ninsensitively. AND-combined with the other filters.",
             "required": false,
             "schema": {
               "type": "string"
             }
           },
           {
-            "name": "tag",
+            "name": "genresMode",
             "in": "query",
-            "description": "Filter by a single tag name. AND-combined with the other filters.",
+            "description": "`any` (default) or `all`. See [`Self::genres`].",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "description": "Comma-separated tag names. Mirrors [`Self::genres`].",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tagsMode",
+            "in": "query",
+            "description": "`any` (default) or `all`. See [`Self::tags`].",
             "required": false,
             "schema": {
               "type": "string"

@@ -48,6 +48,16 @@ pub struct UpsertResult {
 /// `metadata.foreign_ids` into `series_external_ids` so future releases
 /// linking to any of them short-circuit to the same series.
 ///
+/// Set `allow_manual_overwrite = true` only when the operator has
+/// explicitly asked to overwrite the row (e.g. the per-series refresh
+/// endpoint). The resolver, the link-by-external-id path, and the bulk
+/// refresh job all pass `false` so that `metadata_source = "manual"`
+/// rows stay sticky: provider events (a new release arriving, a cron
+/// tick) do not erase operator-curated metadata. When the manual lock
+/// fires we still upsert `series_external_ids` (cheap, idempotent, and
+/// it keeps cross-provider resolution working) but skip the series
+/// `UPDATE` *and* the genre/tag re-sync.
+///
 /// The whole operation runs in a single transaction; partial failure
 /// leaves the catalog consistent.
 pub async fn upsert_series_from_metadata(
@@ -56,6 +66,7 @@ pub async fn upsert_series_from_metadata(
     metadata: &SeriesMetadata,
     release_posted_at: i64,
     now: DateTime<Utc>,
+    allow_manual_overwrite: bool,
 ) -> Result<UpsertResult> {
     let txn = db.begin().await?;
     let fetched_at = now.timestamp();
@@ -94,16 +105,32 @@ pub async fn upsert_series_from_metadata(
         Some(serde_json::to_string(&metadata.alternate_titles)?)
     };
 
-    let (series_id, unchanged) = match series_id {
+    let (series_id, unchanged, manual_lock) = match series_id {
         Some(id) => {
             // Hash-skip: if the stored metadata_hash matches incoming,
-            // skip the UPDATE entirely. We still proceed to upsert the
-            // external_ids fan-out (cheap; tolerates duplicates).
+            // skip the UPDATE entirely. Manual-lock: if the row is
+            // operator-curated and the caller didn't opt in to
+            // overwrite, also skip. Either way we still proceed to
+            // upsert the external_ids fan-out (cheap; tolerates
+            // duplicates).
             let existing = series::Entity::find_by_id(id).one(&txn).await?;
-            let unchanged = matches!(
+            let hash_unchanged = matches!(
                 existing.as_ref().and_then(|e| e.metadata_hash.as_deref()),
                 Some(h) if h == metadata.content_hash
             );
+            let manual_lock = !allow_manual_overwrite
+                && existing
+                    .as_ref()
+                    .map(|e| e.metadata_source.as_str() == "manual")
+                    .unwrap_or(false);
+            if manual_lock {
+                tracing::debug!(
+                    series_id = id,
+                    provider = provider_id,
+                    "skipping series UPDATE: metadata_source='manual' and caller did not opt in to overwrite"
+                );
+            }
+            let unchanged = hash_unchanged || manual_lock;
             if !unchanged {
                 let mut last_release_at = release_posted_at;
                 if let Some(e) = existing.as_ref() {
@@ -134,7 +161,7 @@ pub async fn upsert_series_from_metadata(
                 };
                 series::Entity::update(model).exec(&txn).await?;
             }
-            (id, unchanged)
+            (id, unchanged, manual_lock)
         }
         None => {
             let model = series::ActiveModel {
@@ -160,7 +187,7 @@ pub async fn upsert_series_from_metadata(
                 owned: Set(0),
             };
             let inserted = series::Entity::insert(model).exec(&txn).await?;
-            (inserted.last_insert_id, false)
+            (inserted.last_insert_id, false, false)
         }
     };
 
@@ -185,12 +212,15 @@ pub async fn upsert_series_from_metadata(
 
     // Sync the normalized genre/tag join tables. Failures here don't roll
     // back the series row: the next persist will re-sync from the full set,
-    // and the catalog stays usable in the meantime.
-    if let Err(e) = tagging_repo::set_series_genres(db, series_id, &metadata.genres).await {
-        tracing::warn!(error = ?e, series_id, "failed to sync series_genres; will retry on next persist");
-    }
-    if let Err(e) = tagging_repo::set_series_tags(db, series_id, &metadata.tags).await {
-        tracing::warn!(error = ?e, series_id, "failed to sync series_tags; will retry on next persist");
+    // and the catalog stays usable in the meantime. Skipped under manual
+    // lock so a provider event can't overwrite operator-curated tags.
+    if !manual_lock {
+        if let Err(e) = tagging_repo::set_series_genres(db, series_id, &metadata.genres).await {
+            tracing::warn!(error = ?e, series_id, "failed to sync series_genres; will retry on next persist");
+        }
+        if let Err(e) = tagging_repo::set_series_tags(db, series_id, &metadata.tags).await {
+            tracing::warn!(error = ?e, series_id, "failed to sync series_tags; will retry on next persist");
+        }
     }
 
     Ok(UpsertResult {
@@ -444,10 +474,16 @@ mod tests {
     async fn upsert_creates_series_and_fans_out_foreign_ids() {
         let db = fresh_db().await;
         let now = Utc::now();
-        let result =
-            upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), 1_700_000_000, now)
-                .await
-                .unwrap();
+        let result = upsert_series_from_metadata(
+            &db,
+            "mangabaka",
+            &sample_metadata(),
+            1_700_000_000,
+            now,
+            false,
+        )
+        .await
+        .unwrap();
         assert!(result.series_id > 0);
         assert!(!result.unchanged);
 
@@ -467,10 +503,10 @@ mod tests {
         let db = fresh_db().await;
         let now = Utc::now();
         let m = sample_metadata();
-        let first = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now)
+        let first = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now, false)
             .await
             .unwrap();
-        let second = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now)
+        let second = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now, false)
             .await
             .unwrap();
         assert_eq!(first.series_id, second.series_id);
@@ -482,10 +518,16 @@ mod tests {
     async fn upsert_writes_normalized_genre_and_tag_tables() {
         let db = fresh_db().await;
         let now = Utc::now();
-        let res =
-            upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), 1_700_000_000, now)
-                .await
-                .unwrap();
+        let res = upsert_series_from_metadata(
+            &db,
+            "mangabaka",
+            &sample_metadata(),
+            1_700_000_000,
+            now,
+            false,
+        )
+        .await
+        .unwrap();
 
         let genres = td_db::repos::tagging_repo::list_genres_for_series(&db, res.series_id)
             .await
@@ -512,7 +554,7 @@ mod tests {
             content_hash: "hash-anilist".into(),
             ..sample_metadata()
         };
-        let first = upsert_series_from_metadata(&db, "anilist", &pseudo, 1_700_000_000, now)
+        let first = upsert_series_from_metadata(&db, "anilist", &pseudo, 1_700_000_000, now, false)
             .await
             .unwrap();
 
@@ -521,7 +563,7 @@ mod tests {
         // the second call should reuse `first.series_id` instead of
         // making a brand new row.
         let mb = sample_metadata();
-        let second = upsert_series_from_metadata(&db, "mangabaka", &mb, 1_700_000_000, now)
+        let second = upsert_series_from_metadata(&db, "mangabaka", &mb, 1_700_000_000, now, false)
             .await
             .unwrap();
         assert_eq!(first.series_id, second.series_id);
@@ -552,7 +594,7 @@ mod tests {
             }],
             ..sample_metadata()
         };
-        let first = upsert_series_from_metadata(&db, "mangabaka", &aaa, 1_700_000_000, now)
+        let first = upsert_series_from_metadata(&db, "mangabaka", &aaa, 1_700_000_000, now, false)
             .await
             .unwrap();
 
@@ -567,7 +609,7 @@ mod tests {
             }],
             ..sample_metadata()
         };
-        let second = upsert_series_from_metadata(&db, "mangabaka", &bbb, 1_700_000_000, now)
+        let second = upsert_series_from_metadata(&db, "mangabaka", &bbb, 1_700_000_000, now, false)
             .await
             .unwrap();
 
@@ -609,6 +651,99 @@ mod tests {
         assert_eq!(second_pairs, vec![("mangabaka".into(), "BBB".into())]);
     }
 
+    /// Flip an existing series to `metadata_source = "manual"` and stamp a
+    /// distinct canonical_title so we can detect whether a subsequent upsert
+    /// overwrote it.
+    async fn mark_manual(db: &DatabaseConnection, series_id: i32, title: &str) {
+        let model = series::ActiveModel {
+            id: Set(series_id),
+            canonical_title: Set(title.into()),
+            metadata_source: Set("manual".into()),
+            // Bust the hash so the hash-skip path doesn't mask a real
+            // overwrite/skip — we want to observe the manual guard, not
+            // the hash optimization.
+            metadata_hash: Set(Some("operator-stamp".into())),
+            ..Default::default()
+        };
+        series::Entity::update(model).exec(db).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_with_manual_lock_skips_series_update_but_still_fans_out_external_ids() {
+        let db = fresh_db().await;
+        let now = Utc::now();
+        let m = sample_metadata();
+        let first = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now, false)
+            .await
+            .unwrap();
+
+        // Operator edits the row.
+        mark_manual(&db, first.series_id, "Operator Title").await;
+
+        // A second upsert under manual-lock semantics: must not clobber
+        // the title or source. The fan-out is still cheap and idempotent;
+        // we expect the existing mappings to stay (refreshed fetched_at
+        // is acceptable, but content stays put).
+        let m2 = SeriesMetadata {
+            canonical_title: "Provider Title".into(),
+            content_hash: "new-hash".into(),
+            ..m.clone()
+        };
+        let result = upsert_series_from_metadata(&db, "mangabaka", &m2, 1_700_000_001, now, false)
+            .await
+            .unwrap();
+        assert_eq!(result.series_id, first.series_id);
+        assert!(
+            result.unchanged,
+            "manual lock should report unchanged so callers can short-circuit"
+        );
+
+        let row = series::Entity::find_by_id(first.series_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.canonical_title, "Operator Title", "title preserved");
+        assert_eq!(row.metadata_source, "manual", "source preserved");
+        assert_eq!(
+            row.metadata_hash.as_deref(),
+            Some("operator-stamp"),
+            "hash preserved"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_with_manual_overwrite_allowed_replaces_row() {
+        let db = fresh_db().await;
+        let now = Utc::now();
+        let m = sample_metadata();
+        let first = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now, false)
+            .await
+            .unwrap();
+        mark_manual(&db, first.series_id, "Operator Title").await;
+
+        // Explicit operator action (per-series refresh endpoint) passes
+        // `true` and gets the new metadata.
+        let m2 = SeriesMetadata {
+            canonical_title: "Provider Title".into(),
+            content_hash: "new-hash".into(),
+            ..m.clone()
+        };
+        let result = upsert_series_from_metadata(&db, "mangabaka", &m2, 1_700_000_001, now, true)
+            .await
+            .unwrap();
+        assert_eq!(result.series_id, first.series_id);
+        assert!(!result.unchanged);
+
+        let row = series::Entity::find_by_id(first.series_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.canonical_title, "Provider Title");
+        assert_eq!(row.metadata_source, "api");
+    }
+
     #[tokio::test]
     async fn link_release_writes_resolution_columns_and_increments_attempts() {
         let db = fresh_db().await;
@@ -619,6 +754,7 @@ mod tests {
             &sample_metadata(),
             1_700_000_000,
             Utc::now(),
+            false,
         )
         .await
         .unwrap();

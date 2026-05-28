@@ -2008,10 +2008,19 @@ export interface operations {
                  *     series (zero releases — often the residue of a manual re-link).
                  */
                 hasReleases?: boolean;
-                /** @description Filter by a single genre name. AND-combined with the other filters. */
-                genre?: string;
-                /** @description Filter by a single tag name. AND-combined with the other filters. */
-                tag?: string;
+                /**
+                 * @description Comma-separated genre names. Combined with [`Self::genres_mode`]:
+                 *     `any` (default) keeps series matching at least one; `all` keeps
+                 *     only series matching every entry. Each entry is matched case-
+                 *     insensitively. AND-combined with the other filters.
+                 */
+                genres?: string;
+                /** @description `any` (default) or `all`. See [`Self::genres`]. */
+                genresMode?: string;
+                /** @description Comma-separated tag names. Mirrors [`Self::genres`]. */
+                tags?: string;
+                /** @description `any` (default) or `all`. See [`Self::tags`]. */
+                tagsMode?: string;
                 /**
                  * @description Sort field. Supports `last_release_at` (default), `first_seen_at`,
                  *     `total_volumes`, and `total_chapters`. The count sorts are
