@@ -22,6 +22,11 @@ pub struct Model {
     pub last_release_at: i64,
     pub highest_volume: Option<f64>,
     pub highest_chapter: Option<f64>,
+    /// Published total volume/chapter counts from provider metadata
+    /// (denormalized for display). Distinct from `highest_volume` /
+    /// `highest_chapter`, which track the highest span seen across releases.
+    pub total_volumes: Option<i32>,
+    pub total_chapters: Option<i32>,
     pub owned: i32,
 }
 

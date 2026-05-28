@@ -193,7 +193,8 @@ impl OfflineStore {
 // `Option<String>` uniformly. `type` is aliased to `kind` because
 // `FromQueryResult` does not honor `#[sea_orm(column_name = ...)]`.
 const SELECT_BY_ID: &str = "SELECT id, title, native_title, romanized_title, \
-        titles, type AS kind, status, year, description, state, genres, tags, \
+        titles, type AS kind, status, year, final_volume, total_chapters, \
+        description, state, genres, tags, \
         cover_x350_x2, cover_x350_x1, cover_x250_x2, cover_x250_x1, cover_raw_url, \
         CAST(source_anilist_id AS TEXT) AS source_anilist_id, \
         CAST(source_my_anime_list_id AS TEXT) AS source_my_anime_list_id, \
@@ -205,7 +206,8 @@ const SELECT_BY_ID: &str = "SELECT id, title, native_title, romanized_title, \
         FROM series WHERE id = ?1 LIMIT 1";
 
 const SELECT_FTS: &str = "SELECT s.id, s.title, s.native_title, s.romanized_title, \
-        s.titles, s.type AS kind, s.status, s.year, s.description, s.state, s.genres, s.tags, \
+        s.titles, s.type AS kind, s.status, s.year, s.final_volume, s.total_chapters, \
+        s.description, s.state, s.genres, s.tags, \
         s.cover_x350_x2, s.cover_x350_x1, s.cover_x250_x2, s.cover_x250_x1, s.cover_raw_url, \
         CAST(s.source_anilist_id AS TEXT) AS source_anilist_id, \
         CAST(s.source_my_anime_list_id AS TEXT) AS source_my_anime_list_id, \
@@ -264,6 +266,10 @@ struct RawRow {
     kind: Option<String>,
     status: Option<String>,
     year: Option<i32>,
+    /// Last/final volume number, stored as TEXT in the dump (nullable).
+    final_volume: Option<String>,
+    /// Total chapter count, stored as TEXT in the dump (nullable).
+    total_chapters: Option<String>,
     description: Option<String>,
     state: Option<String>,
     /// JSON array of genre names (e.g. `["Action", "Comedy"]`). The HTTP
@@ -304,6 +310,8 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
     let status = row.status.as_deref().map(parse_status);
     let genres = parse_string_array(row.genres.as_deref());
     let tags = parse_string_array(row.tags.as_deref());
+    let total_volumes = crate::mapping::parse_count(row.final_volume.as_deref());
+    let total_chapters = crate::mapping::parse_count(row.total_chapters.as_deref());
     // Build a deterministic blob from the dump row so the resolver can
     // hash + dedupe writes. The dump itself doesn't expose a per-row
     // version; the SHA stays stable as long as the row stays stable.
@@ -317,6 +325,8 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
         year: row.year,
         description: row.description.clone(),
         cover_url: cover_url.clone(),
+        total_volumes,
+        total_chapters,
         alternate_titles: alternate_titles.clone(),
         foreign_ids: foreign_ids.clone(),
         genres: genres.clone(),
@@ -334,6 +344,8 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
         status,
         year: row.year,
         cover_url,
+        total_volumes,
+        total_chapters,
         description,
         genres,
         tags,
@@ -364,6 +376,8 @@ struct SerializedRow {
     year: Option<i32>,
     description: Option<String>,
     cover_url: Option<String>,
+    total_volumes: Option<i32>,
+    total_chapters: Option<i32>,
     alternate_titles: Vec<String>,
     foreign_ids: Vec<ForeignId>,
     genres: Vec<String>,
@@ -472,6 +486,8 @@ mod tests {
                 type TEXT,
                 status TEXT,
                 year INTEGER,
+                final_volume TEXT,
+                total_chapters TEXT,
                 description TEXT,
                 state TEXT,
                 genres TEXT,
@@ -497,14 +513,15 @@ mod tests {
         db.execute(Statement::from_string(
             backend,
             "INSERT INTO series (
-                id, title, native_title, romanized_title, titles, type, status, year, state,
+                id, title, native_title, romanized_title, titles, type, status, year,
+                final_volume, total_chapters, state,
                 genres, tags,
                 cover_x350_x2, source_anilist_id, source_my_anime_list_id,
                 source_manga_updates_id, source_kitsu_id, source_anime_planet_id
             ) VALUES (
                 1677, 'Chainsaw Man', 'チェンソーマン', 'Chainsaw Man',
                 '[{\"title\":\"Chainsaw-Man\",\"language\":\"en\"},{\"title\":\"CSM\",\"language\":\"en\"}]',
-                'manga', 'releasing', 2018, 'active',
+                'manga', 'releasing', 2018, '24', '232', 'active',
                 '[\"Action\", \"Horror\"]', '[\"Chainsaws\", \"Devils\"]',
                 'https://mb/350@2x.jpg', 105778, 116778,
                 'ylx5wzn', 54139, 'chainsaw-man'
@@ -573,6 +590,8 @@ mod tests {
         );
         assert_eq!(m.genres, vec!["Action".to_string(), "Horror".to_string()]);
         assert_eq!(m.tags, vec!["Chainsaws".to_string(), "Devils".to_string()]);
+        assert_eq!(m.total_volumes, Some(24));
+        assert_eq!(m.total_chapters, Some(232));
     }
 
     #[test]

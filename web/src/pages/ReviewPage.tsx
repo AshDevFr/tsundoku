@@ -50,6 +50,7 @@ import { formatAbsolute, formatRelative, providerUrl } from "@/api/utils";
 import {
   ExtractedLinks,
   ReleaseDescription,
+  ReleaseFiles,
 } from "@/components/ReleaseDetails";
 import type { components } from "@/types/api.generated";
 
@@ -679,6 +680,7 @@ function ReviewCard({
           queries={item.searchQueries}
           rules={item.cleanupRulesApplied}
         />
+        <ReleaseFiles files={item.files} />
         <CandidateList
           candidates={item.candidates}
           disabled={busy}
@@ -1189,6 +1191,33 @@ function ReleaseHeader({ release }: { release: ReleaseDto }) {
 const CANDIDATE_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
 
+/// Compact "N vols · M ch" badge from provider metadata, shown on candidate
+/// cards and provider-search hits so the operator can match a release against
+/// the series' published length. Renders nothing when neither count is known.
+function MetadataCounts({
+  totalVolumes,
+  totalChapters,
+}: {
+  totalVolumes?: number | null;
+  totalChapters?: number | null;
+}) {
+  const parts: string[] = [];
+  if (typeof totalVolumes === "number") {
+    parts.push(`${totalVolumes} vol${totalVolumes === 1 ? "" : "s"}`);
+  }
+  if (typeof totalChapters === "number") {
+    parts.push(`${totalChapters} ch`);
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  return (
+    <Badge size="xs" variant="light" color="gray" data-testid="metadata-counts">
+      {parts.join(" · ")}
+    </Badge>
+  );
+}
+
 function CandidateList({
   candidates,
   disabled,
@@ -1277,6 +1306,10 @@ function CandidateList({
                     <Badge size="xs" variant="default">
                       score {c.score.toFixed(2)}
                     </Badge>
+                    <MetadataCounts
+                      totalVolumes={c.totalVolumes}
+                      totalChapters={c.totalChapters}
+                    />
                     {c.reason && (
                       <Text size="xs" c="dimmed">
                         {c.reason}
@@ -1545,6 +1578,10 @@ function SearchResults({
                     <Badge size="xs" variant="default">
                       score {h.score.toFixed(2)}
                     </Badge>
+                    <MetadataCounts
+                      totalVolumes={h.totalVolumes}
+                      totalChapters={h.totalChapters}
+                    />
                     {h.year && (
                       <Badge size="xs" variant="light" color="gray">
                         {h.year}

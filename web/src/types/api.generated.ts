@@ -960,6 +960,14 @@ export interface components {
             tags: string[];
             title: string;
             /** Format: int32 */
+            totalChapters?: number | null;
+            /**
+             * Format: int32
+             * @description Published volume/chapter counts from provider metadata, shown next to
+             *     each hit so the operator can match a release against the series length.
+             */
+            totalVolumes?: number | null;
+            /** Format: int32 */
             year?: number | null;
         };
         ProviderSearchResponse: {
@@ -1073,6 +1081,16 @@ export interface components {
             /** Format: int32 */
             seriesId: number;
             seriesTitle: string;
+            /** Format: int32 */
+            totalChapters?: number | null;
+            /**
+             * Format: int32
+             * @description Published volume/chapter counts from provider metadata. Let the
+             *     operator compare the release's contents (see the torrent file list)
+             *     against the candidate series' length. `None` when the provider did
+             *     not expose them or the series predates this field.
+             */
+            totalVolumes?: number | null;
         };
         ReviewQueueMetrics: {
             /** Format: int64 */

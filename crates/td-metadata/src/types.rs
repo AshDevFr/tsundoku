@@ -21,6 +21,15 @@ pub struct SeriesMetadata {
     pub status: Option<SeriesStatus>,
     pub year: Option<i32>,
     pub cover_url: Option<String>,
+    /// Highest/last volume number the series reached, when the provider knows
+    /// it (MangaBaka's `final_volume`). Display-only: lets the review UI
+    /// compare a release's contents against the series' length.
+    #[serde(default)]
+    pub total_volumes: Option<i32>,
+    /// Total chapter count when the provider knows it (MangaBaka's
+    /// `total_chapters`). Display-only, same purpose as [`Self::total_volumes`].
+    #[serde(default)]
+    pub total_chapters: Option<i32>,
     /// Long-form synopsis as provided by the source. Surfaced in the
     /// detail view and (clamped) in the list view; not used for matching.
     #[serde(default)]

@@ -22,6 +22,7 @@ import { formatBytes } from "@/components/admin/format";
 import {
   ExtractedLinks,
   ReleaseDescription,
+  ReleaseFiles,
 } from "@/components/ReleaseDetails";
 
 /// Browse view for releases the operator marked `standalone`: worthwhile
@@ -175,6 +176,7 @@ function KeptCard({ release }: { release: ReleaseDto }) {
           </Group>
           <ExtractedLinks links={release.extractedLinks} />
           <ReleaseDescription body={release.descriptionHtml} />
+          <ReleaseFiles files={release.files} />
         </Stack>
         <Tooltip label="Send this release back through the resolver (e.g. after a provider refresh).">
           <Button

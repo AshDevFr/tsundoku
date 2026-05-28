@@ -324,6 +324,10 @@ pub struct ProviderSearchHit {
     pub title: String,
     pub year: Option<i32>,
     pub cover_url: Option<String>,
+    /// Published volume/chapter counts from provider metadata, shown next to
+    /// each hit so the operator can match a release against the series length.
+    pub total_volumes: Option<i32>,
+    pub total_chapters: Option<i32>,
     pub kind: Option<String>,
     pub status: Option<String>,
     /// First alternate title, if any. Useful for showing the
@@ -437,6 +441,8 @@ fn enrich(m: td_metadata::SeriesMetadata, score: f32) -> ProviderSearchHit {
         title: m.canonical_title,
         year: m.year,
         cover_url: m.cover_url,
+        total_volumes: m.total_volumes,
+        total_chapters: m.total_chapters,
         kind: m.kind.as_ref().map(series_kind_str),
         status: m.status.as_ref().map(series_status_str),
         native_title: m.alternate_titles.into_iter().next(),
@@ -452,6 +458,10 @@ fn stub_hit(hit: td_metadata::SearchHit, score: f32) -> ProviderSearchHit {
         title: hit.title,
         year: hit.year,
         cover_url: hit.cover_url,
+        // SearchHit (the unenriched form) doesn't carry counts; they fill in
+        // once the hit is enriched via the provider's `get`.
+        total_volumes: None,
+        total_chapters: None,
         kind: None,
         status: None,
         native_title: None,

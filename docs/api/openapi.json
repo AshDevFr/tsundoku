@@ -2187,6 +2187,21 @@
           "title": {
             "type": "string"
           },
+          "totalChapters": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "totalVolumes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Published volume/chapter counts from provider metadata, shown next to\neach hit so the operator can match a release against the series length."
+          },
           "year": {
             "type": [
               "integer",
@@ -2557,6 +2572,21 @@
           },
           "seriesTitle": {
             "type": "string"
+          },
+          "totalChapters": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "totalVolumes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Published volume/chapter counts from provider metadata. Let the\noperator compare the release's contents (see the torrent file list)\nagainst the candidate series' length. `None` when the provider did\nnot expose them or the series predates this field."
           }
         }
       },

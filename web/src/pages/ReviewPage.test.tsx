@@ -9,7 +9,13 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { ADMIN_TEST_TOKEN, resetReviewQueue } from "@/mocks/handlers";
@@ -83,6 +89,32 @@ describe("ReviewPage", () => {
     expect(
       screen.getByText(/2 releases awaiting a decision/),
     ).toBeInTheDocument();
+  });
+
+  it("shows the torrent file list behind a toggle and candidate vol/chapter counts", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+    const card = screen.getByTestId("review-card-nyaa:9001");
+
+    // The file list shows the file count and toggles open/closed.
+    const filesBlock = card.querySelector(
+      '[data-testid="files-block"]',
+    ) as HTMLElement;
+    expect(filesBlock).toBeInTheDocument();
+    expect(filesBlock.textContent).toMatch(/files \(3\)/i);
+    const toggle = within(filesBlock).getByRole("button");
+    expect(toggle).toHaveTextContent("show");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveTextContent("hide");
+    expect(
+      within(filesBlock).getByText("Mystery_Series_v02.cbz"),
+    ).toBeInTheDocument();
+
+    // Candidate counts: Chainsaw Man has both vols + chapters; Solo Leveling
+    // only chapters (null volume is omitted).
+    expect(within(card).getByText("11 vols · 97 ch")).toBeInTheDocument();
+    expect(within(card).getByText("179 ch")).toBeInTheDocument();
   });
 
   it("links a release by picking a candidate and drops it from the queue", async () => {

@@ -90,7 +90,14 @@ const INITIAL_QUEUE: UnresolvedRelease[] = [
     ddlUrl: null,
     infoHash: null,
     sizeBytes: 22_345_678,
-    files: ["mystery_series_v01.cbz"],
+    // Underscored names so they don't collide with the spaced "Mystery
+    // Series v01" title regex tests use (Mantine Collapse keeps the file
+    // list mounted even while visually collapsed).
+    files: [
+      "Mystery_Series_v01.cbz",
+      "Mystery_Series_v02.cbz",
+      "Mystery_Series_v03.cbz",
+    ],
     formats: ["cbz"],
     postedAt: NOW - 1_800,
     observedAt: NOW - 1_200,
@@ -105,6 +112,8 @@ const INITIAL_QUEUE: UnresolvedRelease[] = [
         seriesId: 1,
         seriesTitle: "Chainsaw Man",
         seriesCoverUrl: null,
+        totalVolumes: 11,
+        totalChapters: 97,
         score: 0.72,
         reason: "fuzzy title (0.72)",
         provider: "mangabaka",
@@ -115,6 +124,8 @@ const INITIAL_QUEUE: UnresolvedRelease[] = [
         seriesId: 3,
         seriesTitle: "Solo Leveling",
         seriesCoverUrl: null,
+        totalVolumes: null,
+        totalChapters: 179,
         score: 0.61,
         reason: "fuzzy title (0.61)",
         provider: "mangabaka",
@@ -362,6 +373,8 @@ export const handlers = [
           title: q.trim(),
           year: 2020,
           coverUrl: null,
+          totalVolumes: 11,
+          totalChapters: 97,
           kind: "manga",
           status: "ongoing",
           nativeTitle: null,

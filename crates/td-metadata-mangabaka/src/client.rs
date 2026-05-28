@@ -70,6 +70,12 @@ pub struct MbSeries {
     pub description: Option<String>,
     #[serde(default)]
     pub year: Option<i32>,
+    /// Last/final volume number. MangaBaka returns this as a nullable string.
+    #[serde(default)]
+    pub final_volume: Option<String>,
+    /// Total chapter count. MangaBaka returns this as a nullable string.
+    #[serde(default)]
+    pub total_chapters: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]

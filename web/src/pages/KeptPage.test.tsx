@@ -104,6 +104,27 @@ describe("KeptPage", () => {
     expect(within(desc).getByText(/official guidebook/i)).toBeInTheDocument();
   });
 
+  it("shows the torrent file list behind a toggle", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderKept();
+    await screen.findByText(/Shonen Jump Guide to Making Manga/, undefined, {
+      timeout: 3000,
+    });
+    const card = screen.getByTestId("kept-card-nyaa:7001");
+    const files = card.querySelector<HTMLElement>(
+      '[data-testid="files-block"]',
+    );
+    if (!files) throw new Error("files block not rendered");
+    expect(files.textContent).toMatch(/files \(1\)/i);
+    const toggle = within(files).getByRole("button");
+    expect(toggle).toHaveTextContent("show");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveTextContent("hide");
+    expect(
+      within(files).getByText("shonen_jump_guide_to_making_manga.cbz"),
+    ).toBeInTheDocument();
+  });
+
   it("re-resolves a kept release via the Re-resolve button", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderKept();

@@ -5,6 +5,8 @@ import {
   Collapse,
   Group,
   Paper,
+  ScrollArea,
+  Stack,
   Text,
   Typography,
 } from "@mantine/core";
@@ -133,6 +135,68 @@ export function ReleaseDescription({
               {trimmed}
             </ReactMarkdown>
           </Typography>
+        </Paper>
+      </Collapse>
+    </Box>
+  );
+}
+
+/// Collapsible list of the files inside the torrent/archive, as scraped from
+/// the source's post page (`ReleaseDto.files`). Lets the operator confirm what
+/// a release actually contains (e.g. "Vol. 01-20") and compare it against a
+/// candidate series' volume/chapter counts. Renders nothing when the source
+/// exposed no file list. Long chapter-level torrents can run to hundreds of
+/// entries, so the list scrolls rather than stretching the card.
+export function ReleaseFiles({
+  files,
+}: {
+  files: string[] | null | undefined;
+}) {
+  const [opened, { toggle }] = useDisclosure(false);
+  if (!files || files.length === 0) {
+    return null;
+  }
+  return (
+    <Box data-testid="files-block">
+      <Group gap={6} wrap="wrap" mb={opened ? 4 : 0}>
+        <Text size="xs" c="dimmed" tt="uppercase" fw={500}>
+          files ({files.length})
+        </Text>
+        <Anchor
+          component="button"
+          type="button"
+          size="xs"
+          onClick={toggle}
+          aria-expanded={opened}
+        >
+          {opened ? "hide" : "show"}
+        </Anchor>
+      </Group>
+      <Collapse in={opened}>
+        <Paper
+          withBorder
+          radius="sm"
+          p="sm"
+          bg="var(--mantine-color-default-hover)"
+        >
+          <ScrollArea.Autosize mah={220}>
+            <Stack gap={2}>
+              {files.map((f, i) => (
+                <Text
+                  // File names within one torrent can repeat across folders,
+                  // so the leaf name alone isn't a stable key; pair it with
+                  // the index. The list is read-only and never reordered.
+                  // biome-ignore lint/suspicious/noArrayIndexKey: see above
+                  key={`${f}-${i}`}
+                  size="xs"
+                  ff="monospace"
+                  style={{ wordBreak: "break-all" }}
+                >
+                  {f}
+                </Text>
+              ))}
+            </Stack>
+          </ScrollArea.Autosize>
         </Paper>
       </Collapse>
     </Box>

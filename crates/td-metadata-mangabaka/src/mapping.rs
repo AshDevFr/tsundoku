@@ -41,6 +41,8 @@ pub fn series_to_canonical(series: MbSeries) -> SeriesMetadata {
         status,
         year: series.year,
         cover_url,
+        total_volumes: parse_count(series.final_volume.as_deref()),
+        total_chapters: parse_count(series.total_chapters.as_deref()),
         description: series.description.filter(|s| !s.is_empty()),
         genres: series.genres.unwrap_or_default(),
         tags: series.tags.unwrap_or_default(),
@@ -59,6 +61,20 @@ pub fn series_to_search_hit(series: &MbSeries) -> SearchHit {
         cover_url: pick_cover(series.cover.as_ref()),
         score: None, // MangaBaka doesn't return a relevance score.
     }
+}
+
+/// MangaBaka returns `final_volume` / `total_chapters` as nullable JSON
+/// strings (e.g. `"24"`). Parse to an integer for display; anything
+/// non-numeric (or absent) becomes `None`. Decimal chapter numbers (e.g.
+/// `"232.5"`) truncate to the integer part.
+pub(crate) fn parse_count(s: Option<&str>) -> Option<i32> {
+    let s = s?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    s.parse::<i32>()
+        .ok()
+        .or_else(|| s.parse::<f64>().ok().map(|f| f as i32))
 }
 
 fn parse_kind(s: &str) -> SeriesKind {
@@ -192,6 +208,8 @@ mod tests {
             "native_title": "チェンソーマン",
             "romanized_title": "Chensō Man",
             "year": 2018,
+            "final_volume": "11",
+            "total_chapters": "97",
             "type": "manga",
             "status": "releasing",
             "secondary_titles": {
@@ -223,6 +241,31 @@ mod tests {
         assert_eq!(m.status, Some(SeriesStatus::Ongoing));
         assert_eq!(m.cover_url.as_deref(), Some("https://mangabaka/350@2x.jpg"));
         assert!(m.genres.contains(&"action".to_string()));
+        assert_eq!(m.total_volumes, Some(11));
+        assert_eq!(m.total_chapters, Some(97));
+    }
+
+    #[test]
+    fn parse_count_handles_strings_decimals_and_junk() {
+        assert_eq!(parse_count(Some("24")), Some(24));
+        assert_eq!(parse_count(Some("  232 ")), Some(232));
+        // Decimal chapter numbers truncate to the integer part.
+        assert_eq!(parse_count(Some("232.5")), Some(232));
+        assert_eq!(parse_count(Some("")), None);
+        assert_eq!(parse_count(Some("   ")), None);
+        assert_eq!(parse_count(Some("?")), None);
+        assert_eq!(parse_count(None), None);
+    }
+
+    #[test]
+    fn missing_counts_map_to_none() {
+        let mut payload = sample_payload();
+        payload["final_volume"] = serde_json::Value::Null;
+        payload["total_chapters"] = serde_json::Value::Null;
+        let s: MbSeries = serde_json::from_value(payload).unwrap();
+        let m = series_to_canonical(s);
+        assert_eq!(m.total_volumes, None);
+        assert_eq!(m.total_chapters, None);
     }
 
     #[test]

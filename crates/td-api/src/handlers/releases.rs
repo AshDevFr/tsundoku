@@ -68,6 +68,12 @@ pub struct ReviewCandidateDto {
     pub series_id: i32,
     pub series_title: String,
     pub series_cover_url: Option<String>,
+    /// Published volume/chapter counts from provider metadata. Let the
+    /// operator compare the release's contents (see the torrent file list)
+    /// against the candidate series' length. `None` when the provider did
+    /// not expose them or the series predates this field.
+    pub total_volumes: Option<i32>,
+    pub total_chapters: Option<i32>,
     pub score: f64,
     pub reason: Option<String>,
     /// Provider + external_id pair for building a link to the provider's
@@ -468,6 +474,8 @@ pub async fn list_unresolved(
                     .as_ref()
                     .map(|s| s.canonical_title.clone())
                     .unwrap_or_default(),
+                total_volumes: series.as_ref().and_then(|s| s.total_volumes),
+                total_chapters: series.as_ref().and_then(|s| s.total_chapters),
                 series_cover_url: series.and_then(|s| s.cover_url),
                 score: c.score,
                 reason: c.reason,
