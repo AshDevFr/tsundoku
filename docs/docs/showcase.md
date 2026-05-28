@@ -148,4 +148,6 @@ rewrites every row, kick a series-metadata refresh tick now instead
 of waiting for cron, or wipe the cover-proxy disk cache. Each is a
 card with its own confirmation modal.
 
+![Maintenance page](/img/screenshots/admin/maintenance.png)
+
 → When to reach for each card: [Admin maintenance](./admin-maintenance.md).
