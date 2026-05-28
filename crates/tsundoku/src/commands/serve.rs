@@ -80,6 +80,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
         locks,
         sources_config: Arc::new(cfg.sources.clone()),
         providers_config: Arc::new(cfg.providers.clone()),
+        metadata_config: Arc::new(cfg.metadata.clone()),
         query_builder,
         mangaupdates_redirector: mu_redirector,
         job_events,

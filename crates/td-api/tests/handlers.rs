@@ -2462,3 +2462,146 @@ async fn metrics_id_maps_returns_empty_state_cleanly() {
     assert_eq!(mu["tombstoneCount"], 0);
     assert!(mu["lastResolvedAt"].is_null());
 }
+
+#[tokio::test]
+async fn series_refresh_all_triggers_when_lock_is_free() {
+    let db = fresh_db().await;
+    let (app, events) = common::build_app_with_events(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+        Vec::new(),
+        td_config::ProvidersConfig::default(),
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let mut rx = events.subscribe();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/refresh-all")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = body_json(resp).await;
+    assert_eq!(body["provider"], "mb");
+    assert_eq!(body["triggered"], true);
+    assert_eq!(body["skipped"], false);
+    // Echoes the defaults from MetadataConfig::default in the test
+    // harness.
+    assert_eq!(body["batchSize"], 50);
+    assert_eq!(body["minAgeDays"], 7);
+
+    let started = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("started event should arrive")
+        .expect("channel still open");
+    assert!(matches!(started.kind, td_api::JobKind::SeriesRefresh));
+    assert_eq!(started.id, "mb");
+    assert!(matches!(started.phase, td_api::JobPhase::Started));
+
+    let finished = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .expect("finished event should arrive")
+        .expect("channel still open");
+    assert!(matches!(finished.phase, td_api::JobPhase::Finished));
+    let result = finished.result.expect("finished carries a result payload");
+    assert!(result.triggered);
+    assert!(!result.skipped);
+}
+
+#[tokio::test]
+async fn series_refresh_all_returns_skipped_when_lock_is_held() {
+    let db = fresh_db().await;
+    let locks = std::sync::Arc::new(td_scheduler::JobLocks::default());
+    // Pre-acquire the active provider's series-refresh lock to simulate a
+    // tick already in flight. The handler must see `try_lock` fail and
+    // report `skipped: true` synchronously.
+    let held = locks.series_refresh_lock("mb");
+    let _guard = held.try_lock().expect("test holds the lock");
+
+    let (app, events) = common::build_app_with_events(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+        Vec::new(),
+        td_config::ProvidersConfig::default(),
+        locks,
+    );
+    let mut rx = events.subscribe();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/refresh-all")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["triggered"], false);
+    assert_eq!(body["skipped"], true);
+    assert_eq!(body["batchSize"], 50);
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+        .await
+        .expect("finished{skipped} event should arrive")
+        .expect("channel still open");
+    assert!(matches!(event.kind, td_api::JobKind::SeriesRefresh));
+    assert!(matches!(event.phase, td_api::JobPhase::Finished));
+    let result = event.result.expect("finished carries a result");
+    assert!(!result.triggered);
+    assert!(result.skipped);
+    // No further events expected.
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn series_refresh_all_requires_admin_token() {
+    let db = fresh_db().await;
+    // Auth: read open, but admin required for writes.
+    let auth = td_config::AuthConfig {
+        read_requires_auth: false,
+        api_key: None,
+        admin_token: Some("write-token".into()),
+    };
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        auth,
+    );
+    // No Authorization header → 401.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/refresh-all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

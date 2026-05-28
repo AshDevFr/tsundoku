@@ -228,7 +228,8 @@ pub struct MangabakaProviderConfig {
     /// `None` disables the offline cache and forces API-only operation.
     pub offline_dump_url: Option<String>,
     /// Cron expression for the scheduled cache refresh job. `None` disables
-    /// the scheduled refresh; manual `tsundoku refresh-metadata` still works.
+    /// the scheduled refresh; manual `tsundoku refresh-provider-cache`
+    /// still works.
     pub offline_refresh_cron: Option<String>,
     /// Fall back to the live API when the offline cache misses an ID.
     pub api_fallback: bool,

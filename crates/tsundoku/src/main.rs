@@ -34,13 +34,27 @@ enum Commands {
     },
     /// Refresh the offline cache for every registered metadata provider
     /// (or one named provider). Providers without an offline cache are
-    /// skipped silently.
-    RefreshMetadata {
+    /// skipped silently. Distinct from `refresh-series`, which walks the
+    /// existing series rows and re-fetches each one's metadata.
+    RefreshProviderCache {
         #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
         config: PathBuf,
         /// Provider id to refresh; omit to iterate every registered provider.
         #[arg(short, long)]
         provider: Option<String>,
+    },
+    /// One-shot bulk refresh of stale series rows against the active
+    /// metadata provider. Shares the same tick code as the scheduler
+    /// cron and the `POST /api/v1/series/refresh-all` endpoint.
+    RefreshSeries {
+        #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
+        config: PathBuf,
+        /// Override `metadata.series_refresh.batch_size` for this run.
+        #[arg(long)]
+        batch_size: Option<u32>,
+        /// Override `metadata.series_refresh.min_age_days` for this run.
+        #[arg(long)]
+        min_age_days: Option<u32>,
     },
     /// Run a one-shot poll against the configured discovery sources (or one
     /// named source). Releases are persisted as `unresolved`; the
@@ -90,9 +104,14 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Serve { config } => commands::serve::run(config).await,
         Commands::Migrate { config } => commands::migrate::run(config).await,
-        Commands::RefreshMetadata { config, provider } => {
-            commands::refresh_metadata::run(config, provider).await
+        Commands::RefreshProviderCache { config, provider } => {
+            commands::refresh_provider_cache::run(config, provider).await
         }
+        Commands::RefreshSeries {
+            config,
+            batch_size,
+            min_age_days,
+        } => commands::refresh_series::run(config, batch_size, min_age_days).await,
         Commands::Poll { config, source } => commands::poll::run(config, source).await,
         Commands::Resolve {
             config,

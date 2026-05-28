@@ -173,6 +173,7 @@ pub fn build_app_with_events(
         locks,
         sources_config: Arc::new(sources_config),
         providers_config: Arc::new(providers_config),
+        metadata_config: Arc::new(td_config::MetadataConfig::default()),
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
         job_events,

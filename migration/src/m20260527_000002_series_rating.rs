@@ -28,9 +28,10 @@ impl MigrationTrait for Migration {
 // Carried as a real column for the same reason as `total_volumes` /
 // `total_chapters`: keeps the candidate query a flat SELECT.
 //
-// Existing rows are left NULL until the next `refresh-metadata` cycle
-// re-persists them (the offline-store row hash changes once `rating` is
-// included in `SerializedRow`, so hash-skip won't block the backfill).
+// Existing rows are left NULL until the next refresh cycle (cron, the
+// `POST /api/v1/series/refresh-all` endpoint, or `tsundoku refresh-series`)
+// re-persists them. The offline-store row hash changes once `rating` is
+// included in `SerializedRow`, so hash-skip won't block the backfill.
 const UP: &[&str] = &["ALTER TABLE series ADD COLUMN rating REAL"];
 
 const DOWN: &[&str] = &[

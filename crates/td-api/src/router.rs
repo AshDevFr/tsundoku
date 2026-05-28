@@ -26,6 +26,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
 
     let writes = Router::new()
         .route("/series", post(series::create))
+        .route("/series/refresh-all", post(series::refresh_all))
         .route(
             "/series/{id}/refresh-metadata",
             post(series::refresh_metadata),

@@ -1,4 +1,4 @@
-//! `tsundoku refresh-metadata [--provider id]`.
+//! `tsundoku refresh-provider-cache [--provider id]`.
 //!
 //! Iterates the metadata registry (or one named provider) and calls
 //! `refresh_cache()` on each. Providers without an offline cache report
@@ -6,7 +6,9 @@
 //!
 //! Successful refreshes are appended to the `provider_cache_state` table
 //! by way of [`td_db::repos::provider_cache_state_repo::append`] so the
-//! API and UI can show "when was the cache last refreshed".
+//! API and UI can show "when was the cache last refreshed". Distinct
+//! from `tsundoku refresh-series`, which walks the existing series rows
+//! and re-fetches each one's metadata from the active provider.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -83,7 +85,7 @@ pub async fn run(config_path: PathBuf, provider_id: Option<String>) -> anyhow::R
 }
 
 fn render_summary(summaries: &[RefreshSummary]) {
-    println!("\nrefresh-metadata summary:");
+    println!("\nrefresh-provider-cache summary:");
     for s in summaries {
         let status = match &s.status {
             RefreshStatus::Refreshed { records, version } => {

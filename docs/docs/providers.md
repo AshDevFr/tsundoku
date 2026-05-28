@@ -40,7 +40,7 @@ MangaBaka publishes nightly dumps at
 `https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz`
 (~476 MB compressed).
 
-`tsundoku refresh-metadata`:
+`tsundoku refresh-provider-cache`:
 
 1. Downloads the tarball + the SHA-1 sidecar.
 2. Verifies the hash.
@@ -98,8 +98,8 @@ From the admin UI: **Refresh cache** on the MangaBaka card.
 From the CLI:
 
 ```bash
-tsundoku refresh-metadata                       # all providers
-tsundoku refresh-metadata --provider mangabaka  # one specific provider
+tsundoku refresh-provider-cache                       # all providers
+tsundoku refresh-provider-cache --provider mangabaka  # one specific provider
 ```
 
 Both paths share the same `JobLocks` mutex with the cron job — manual

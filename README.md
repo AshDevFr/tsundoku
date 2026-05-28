@@ -44,7 +44,7 @@ $EDITOR config/tsundoku.toml
 cargo run -- migrate
 
 # 3. (Optional) refresh the MangaBaka offline cache.
-cargo run -- refresh-metadata
+cargo run -- refresh-provider-cache
 
 # 4. Serve the API + scheduler.
 cargo run -- serve

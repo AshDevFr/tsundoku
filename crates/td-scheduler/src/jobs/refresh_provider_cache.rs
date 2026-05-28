@@ -9,7 +9,8 @@
 //!    logged but don't write a row — they don't represent a fresh cache.
 //!
 //! Errors are logged and swallowed: a failing provider must not poison the
-//! scheduler. Operators can retry manually via `tsundoku refresh-metadata`.
+//! scheduler. Operators can retry manually via
+//! `tsundoku refresh-provider-cache`.
 
 use std::sync::Arc;
 use std::time::Instant;

@@ -70,7 +70,7 @@ Re-runs the full resolution pipeline against the release. Useful
 after:
 
 - Refreshing the MangaBaka offline cache (`Refresh cache` on the
-  Providers card or `tsundoku refresh-metadata`).
+  Providers card or `tsundoku refresh-provider-cache`).
 - Tweaking `[ingestion.cleanup.extra_format_keywords]` to handle a
   new uploader keyword.
 - Tweaking `resolution_threshold` or `review_threshold`.

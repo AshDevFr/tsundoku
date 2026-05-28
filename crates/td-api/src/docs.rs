@@ -26,7 +26,8 @@ use crate::handlers::releases::{
     UnresolvedRelease,
 };
 use crate::handlers::series::{
-    CreateSeriesRequest, ExternalIdDto, SeriesDetail, SeriesListItem, SeriesListPage,
+    CreateSeriesRequest, ExternalIdDto, RefreshAllSeriesResponse, SeriesDetail, SeriesListItem,
+    SeriesListPage,
 };
 use crate::handlers::sources::{
     ManualBackfillResponse, ManualPollResponse, PollAllResponse, SourceConfigDto, SourceDto,
@@ -53,6 +54,7 @@ use crate::state::{JobEvent, JobKind, JobPhase, JobResult};
         series::get,
         series::create,
         series::refresh_metadata,
+        series::refresh_all,
         releases::list,
         releases::list_unresolved,
         releases::link,
@@ -89,6 +91,7 @@ use crate::state::{JobEvent, JobKind, JobPhase, JobResult};
         SeriesListPage,
         SeriesDetail,
         CreateSeriesRequest,
+        RefreshAllSeriesResponse,
         ExternalIdDto,
         ReleaseDto,
         ReleasePage,

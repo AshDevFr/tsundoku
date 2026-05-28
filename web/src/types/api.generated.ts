@@ -481,6 +481,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/series/refresh-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger a bulk refresh of stale series rows against the active
+         *     metadata provider. The spawned tick reads `batch_size` and
+         *     `min_age_days` from `metadata.series_refresh`; the same selection
+         *     query backs the cron, so a manual click and a cron tick are
+         *     behaviourally identical (and they share a per-provider mutex, so
+         *     they can't race).
+         * @description Returns immediately with `triggered: true` once the tick is spawned,
+         *     or `triggered: false, skipped: true` when a refresh is already in
+         *     flight for the active provider.
+         */
+        post: operations["refresh_all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series/{id}": {
         parameters: {
             query?: never;
@@ -766,7 +793,7 @@ export interface components {
          *     the enum.
          * @enum {string}
          */
-        JobKind: "source" | "provider";
+        JobKind: "source" | "provider" | "seriesRefresh";
         /**
          * @description Lifecycle phase. `Started` fires after the per-key mutex was
          *     acquired (so a `skipped` job emits only `Finished`).
@@ -976,6 +1003,35 @@ export interface components {
         };
         RefreshAllResponse: {
             results: components["schemas"]["RefreshResponse"][];
+        };
+        /**
+         * @description Response from `POST /api/v1/series/refresh-all`. Mirrors the
+         *     triggered/skipped pattern used by the source and provider trigger
+         *     endpoints. `batchSize` echoes the config value the spawned tick will
+         *     use, so the operator can see at a glance how much work was queued.
+         */
+        RefreshAllSeriesResponse: {
+            /**
+             * Format: int32
+             * @description Maximum number of series rows this tick will touch, copied from
+             *     `metadata.series_refresh.batch_size`. Reported even on
+             *     `skipped: true` so the UI can render consistent metadata.
+             */
+            batchSize: number;
+            /**
+             * Format: int32
+             * @description Minimum age in days a row must have before it's eligible. Echoes
+             *     `metadata.series_refresh.min_age_days`.
+             */
+            minAgeDays: number;
+            /** @description Active provider id the refresh ran against. */
+            provider: string;
+            /**
+             * @description `true` when a previous refresh tick is still in flight; the
+             *     request is a no-op.
+             */
+            skipped: boolean;
+            triggered: boolean;
         };
         RefreshResponse: {
             provider: string;
@@ -2077,6 +2133,32 @@ export interface operations {
             };
             /** @description canonicalTitle is empty */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    refresh_all: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefreshAllSeriesResponse"];
+                };
+            };
+            /** @description Active provider is not registered */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

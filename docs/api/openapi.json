@@ -1097,6 +1097,36 @@
         ]
       }
     },
+    "/api/v1/series/refresh-all": {
+      "post": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Trigger a bulk refresh of stale series rows against the active\nmetadata provider. The spawned tick reads `batch_size` and\n`min_age_days` from `metadata.series_refresh`; the same selection\nquery backs the cron, so a manual click and a cron tick are\nbehaviourally identical (and they share a per-provider mutex, so\nthey can't race).",
+        "description": "Returns immediately with `triggered: true` once the tick is spawned,\nor `triggered: false, skipped: true` when a refresh is already in\nflight for the active provider.",
+        "operationId": "refresh_all",
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshAllSeriesResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Active provider is not registered"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/series/{id}": {
       "get": {
         "tags": [
@@ -1676,7 +1706,8 @@
         "description": "Kind of work an event refers to. Stays a plain string in the\nserialized form so the frontend can pattern-match without importing\nthe enum.",
         "enum": [
           "source",
-          "provider"
+          "provider",
+          "seriesRefresh"
         ]
       },
       "JobPhase": {
@@ -2267,6 +2298,42 @@
             "items": {
               "$ref": "#/components/schemas/RefreshResponse"
             }
+          }
+        }
+      },
+      "RefreshAllSeriesResponse": {
+        "type": "object",
+        "description": "Response from `POST /api/v1/series/refresh-all`. Mirrors the\ntriggered/skipped pattern used by the source and provider trigger\nendpoints. `batchSize` echoes the config value the spawned tick will\nuse, so the operator can see at a glance how much work was queued.",
+        "required": [
+          "provider",
+          "triggered",
+          "skipped",
+          "batchSize",
+          "minAgeDays"
+        ],
+        "properties": {
+          "batchSize": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum number of series rows this tick will touch, copied from\n`metadata.series_refresh.batch_size`. Reported even on\n`skipped: true` so the UI can render consistent metadata.",
+            "minimum": 0
+          },
+          "minAgeDays": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Minimum age in days a row must have before it's eligible. Echoes\n`metadata.series_refresh.min_age_days`.",
+            "minimum": 0
+          },
+          "provider": {
+            "type": "string",
+            "description": "Active provider id the refresh ran against."
+          },
+          "skipped": {
+            "type": "boolean",
+            "description": "`true` when a previous refresh tick is still in flight; the\nrequest is a no-op."
+          },
+          "triggered": {
+            "type": "boolean"
           }
         }
       },

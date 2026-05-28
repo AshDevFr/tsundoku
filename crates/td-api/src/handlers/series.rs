@@ -18,11 +18,12 @@ use td_db::repos::{releases_repo, series_external_ids_repo, series_repo, tagging
 use td_metadata::SeriesMetadata;
 use td_metadata::scoring::best_dice;
 use td_resolution::persist;
+use td_scheduler::jobs::refresh_series_metadata;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
 use crate::handlers::pagination::Pagination;
-use crate::state::AppState;
+use crate::state::{AppState, JobEvent, JobKind, JobResult};
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -589,6 +590,28 @@ pub async fn get(
     )))
 }
 
+/// Response from `POST /api/v1/series/refresh-all`. Mirrors the
+/// triggered/skipped pattern used by the source and provider trigger
+/// endpoints. `batchSize` echoes the config value the spawned tick will
+/// use, so the operator can see at a glance how much work was queued.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshAllSeriesResponse {
+    /// Active provider id the refresh ran against.
+    pub provider: String,
+    pub triggered: bool,
+    /// `true` when a previous refresh tick is still in flight; the
+    /// request is a no-op.
+    pub skipped: bool,
+    /// Maximum number of series rows this tick will touch, copied from
+    /// `metadata.series_refresh.batch_size`. Reported even on
+    /// `skipped: true` so the UI can render consistent metadata.
+    pub batch_size: u32,
+    /// Minimum age in days a row must have before it's eligible. Echoes
+    /// `metadata.series_refresh.min_age_days`.
+    pub min_age_days: u32,
+}
+
 /// Body for creating a manual series. Only `canonicalTitle` is required;
 /// the rest are optional descriptive fields. No provider mapping is created
 /// (that's the whole point), so the series is provider-agnostic and
@@ -745,6 +768,98 @@ pub async fn refresh_metadata(
         genres_for_series,
         tags_for_series,
     )))
+}
+
+/// Trigger a bulk refresh of stale series rows against the active
+/// metadata provider. The spawned tick reads `batch_size` and
+/// `min_age_days` from `metadata.series_refresh`; the same selection
+/// query backs the cron, so a manual click and a cron tick are
+/// behaviourally identical (and they share a per-provider mutex, so
+/// they can't race).
+///
+/// Returns immediately with `triggered: true` once the tick is spawned,
+/// or `triggered: false, skipped: true` when a refresh is already in
+/// flight for the active provider.
+#[utoipa::path(
+    post,
+    path = "/api/v1/series/refresh-all",
+    tag = "series",
+    responses(
+        (status = 202, body = RefreshAllSeriesResponse),
+        (status = 503, description = "Active provider is not registered")
+    ),
+    security(("admin" = []))
+)]
+pub async fn refresh_all(
+    State(state): State<AppState>,
+) -> ApiResult<Json<RefreshAllSeriesResponse>> {
+    let active_id = state.metadata.active_id().to_string();
+    let provider = state.metadata.active().clone();
+    let batch_size = state.metadata_config.series_refresh.batch_size;
+    let min_age_days = state.metadata_config.series_refresh.min_age_days;
+    let min_age_seconds = (min_age_days as i64).saturating_mul(86_400);
+
+    let lock = state.locks.series_refresh_lock(&active_id);
+    let skipped = lock.try_lock().is_err();
+    if skipped {
+        state.send_job_event(JobEvent::finished(
+            JobKind::SeriesRefresh,
+            &active_id,
+            JobResult {
+                triggered: false,
+                skipped: true,
+                ..Default::default()
+            },
+        ));
+        return Ok(Json(RefreshAllSeriesResponse {
+            provider: active_id,
+            triggered: false,
+            skipped: true,
+            batch_size,
+            min_age_days,
+        }));
+    }
+    // Drop the test-lock; the spawned tick re-acquires it. There's a
+    // negligible race window where a cron tick could slip in before the
+    // spawn re-locks, in which case the spawned manual tick would `try_lock`
+    // and skip too — same self-healing behaviour as the provider refresh
+    // handler.
+    drop(lock);
+
+    state.send_job_event(JobEvent::started(JobKind::SeriesRefresh, &active_id));
+
+    let db = state.db.clone();
+    let locks = state.locks.clone();
+    let events = state.job_events.clone();
+    let event_id = active_id.clone();
+    tokio::spawn(async move {
+        refresh_series_metadata::run_tick(
+            provider,
+            db,
+            locks,
+            batch_size,
+            min_age_seconds,
+            "manual",
+        )
+        .await;
+        let _ = events.send(JobEvent::finished(
+            JobKind::SeriesRefresh,
+            event_id,
+            JobResult {
+                triggered: true,
+                skipped: false,
+                ..Default::default()
+            },
+        ));
+    });
+
+    Ok(Json(RefreshAllSeriesResponse {
+        provider: active_id,
+        triggered: true,
+        skipped: false,
+        batch_size,
+        min_age_days,
+    }))
 }
 
 fn model_to_list_item(

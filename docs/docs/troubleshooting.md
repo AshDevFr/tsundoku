@@ -87,7 +87,7 @@ verifies SHA-1, extracts, and adds 8 indexes + an FTS5 mirror. On a
 modest machine this can take 3–5 minutes. Subsequent refreshes are
 faster because rotation reuses the extraction path.
 
-If `refresh-metadata` hangs longer than that, kill it and check the
+If `refresh-provider-cache` hangs longer than that, kill it and check the
 host's network. The download supports resume via HTTP Range; rerun
 the refresh and it picks up where it left off.
 
@@ -121,7 +121,7 @@ release within that window, you'll see the error.
 systemctl stop tsundoku
 rm ${data_dir}/db/tsundoku.db
 tsundoku migrate
-# (optional) tsundoku refresh-metadata
+# (optional) tsundoku refresh-provider-cache
 systemctl start tsundoku
 ```
 

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
-use td_config::{AuthConfig, IngestionConfig, ProvidersConfig, SourceConfig};
+use td_config::{AuthConfig, IngestionConfig, MetadataConfig, ProvidersConfig, SourceConfig};
 use td_metadata::MetadataRegistry;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_resolution::query_builder::QueryBuilder;
@@ -31,6 +31,8 @@ pub const JOB_EVENT_BUFFER: usize = 256;
 pub enum JobKind {
     Source,
     Provider,
+    /// Bulk series-metadata refresh against the active provider.
+    SeriesRefresh,
 }
 
 /// Lifecycle phase. `Started` fires after the per-key mutex was
@@ -118,6 +120,10 @@ pub struct AppState {
     /// Snapshot of the `[providers]` config block, with the same role for
     /// the provider admin endpoints.
     pub providers_config: Arc<ProvidersConfig>,
+    /// Snapshot of the `[metadata]` block. Today used only by the
+    /// bulk series-refresh endpoint to pick up `batch_size` and
+    /// `min_age_days`; the active-provider id lives on the registry.
+    pub metadata_config: Arc<MetadataConfig>,
     /// Title cleaner shared with the scheduler. Built once at startup
     /// from the built-in keyword list plus
     /// `ingestion.cleanup.extra_format_keywords`. Tests fall back to a

@@ -47,8 +47,8 @@ pub trait MetadataProvider: Send + Sync {
 
     /// Refresh the provider's local cache (e.g. download an offline dump).
     /// Default impl returns [`crate::RefreshStatus::NotSupported`] so the
-    /// generic `tsundoku refresh-metadata` CLI can iterate the registry
-    /// without per-provider conditionals.
+    /// generic `tsundoku refresh-provider-cache` CLI can iterate the
+    /// registry without per-provider conditionals.
     async fn refresh_cache(&self) -> MetadataResult<RefreshSummary> {
         Ok(RefreshSummary::not_supported(self.id()))
     }
