@@ -389,6 +389,19 @@ pub struct IngestionConfig {
     /// listed under `[[ingestion.http.hosts]]`.
     #[serde(default)]
     pub http: HttpConfig,
+    /// Per-tick batch size for the poll loop's `releases` upserts. The
+    /// loop walks `releases.chunks(N)`, opens one DB transaction per
+    /// chunk, and commits the whole chunk in one fsync. Higher = fewer
+    /// fsyncs (faster polls on busy feeds) but a crash mid-batch loses
+    /// up to `N` already-enriched rows that the next tick re-fetches
+    /// (idempotent on `(source_kind, external_id)`). `1` reverts to the
+    /// pre-batching one-commit-per-row behavior.
+    #[serde(default = "default_poll_write_batch_size")]
+    pub poll_write_batch_size: u32,
+}
+
+fn default_poll_write_batch_size() -> u32 {
+    10
 }
 
 /// Outbound-HTTP rate-limiting config. Lives in `td-config` as a pure
@@ -524,6 +537,7 @@ impl Default for IngestionConfig {
             format_type_rules: default_format_type_rules(),
             cleanup: CleanupConfig::default(),
             http: HttpConfig::default(),
+            poll_write_batch_size: default_poll_write_batch_size(),
         }
     }
 }

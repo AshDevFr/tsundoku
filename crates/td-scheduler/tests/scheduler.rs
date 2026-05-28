@@ -292,6 +292,65 @@ async fn poll_tick_persists_releases_and_updates_source_state() {
 }
 
 #[tokio::test]
+async fn poll_tick_batches_persists_across_chunks_with_uneven_tail() {
+    // 5 releases with batch_size=2 → chunks of (2, 2, 1). All 5 must
+    // still land, and the partial trailing chunk must commit.
+    let db = fresh_db().await;
+    let releases = vec![
+        discovered_release("trusted", "ext-1", "Series A"),
+        discovered_release("trusted", "ext-2", "Series B"),
+        discovered_release("trusted", "ext-3", "Series C"),
+        discovered_release("trusted", "ext-4", "Series D"),
+        discovered_release("trusted", "ext-5", "Series E"),
+    ];
+    let source = Arc::new(FakeSource::new(
+        "trusted",
+        "fake",
+        PollOutcome::from_releases(releases),
+    ));
+    let provider = Arc::new(FakeProvider::new("mangabaka", RefreshStatus::NotSupported));
+    let metadata = build_registry(provider);
+
+    let ingestion = IngestionConfig {
+        poll_write_batch_size: 2,
+        ..IngestionConfig::default()
+    };
+    let locks = Arc::new(JobLocks::default());
+    jobs::poll_source::run_tick(
+        source.clone() as Arc<dyn DiscoverySource>,
+        db.clone(),
+        metadata,
+        ingestion,
+        locks,
+        Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
+        None,
+        detached_events(),
+        "cron",
+    )
+    .await;
+
+    // Every release landed despite the chunked persist path.
+    let rows = td_db::entities::releases::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 5, "all 5 releases must persist across 3 chunks");
+
+    // Metrics row reflects the full count.
+    let runs = td_db::entities::poll_runs::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].status, "success");
+    assert_eq!(runs[0].fetched_count, Some(5));
+    assert_eq!(runs[0].new_count, Some(5));
+    // Progress tracked the full set.
+    assert_eq!(runs[0].progress_total, Some(5));
+    assert_eq!(runs[0].progress_current, Some(5));
+}
+
+#[tokio::test]
 async fn poll_tick_with_held_lock_is_a_noop() {
     let db = fresh_db().await;
     let source = Arc::new(FakeSource::new(

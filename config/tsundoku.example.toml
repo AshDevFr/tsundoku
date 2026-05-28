@@ -87,6 +87,13 @@ fuzzy_search_limit    = 10
 # When false, low-confidence hits leave the release as `unresolved`
 # without populating `review_candidates`.
 queue_low_confidence  = true
+# Per-tick batch size for the poll loop's `releases` upserts. The loop
+# walks `releases.chunks(N)`, opens one transaction per chunk, and
+# commits the whole chunk in one fsync. Higher = fewer fsyncs (faster
+# polls on busy feeds); a mid-batch crash loses up to N already-enriched
+# rows that the next tick re-fetches (idempotent on
+# `(source_kind, external_id)`). Set to 1 to revert to per-row commits.
+poll_write_batch_size = 10
 # Format-to-series-kind validation. A rule fires if any of its `formats`
 # is detected on the release; the matched series's kind must then be one
 # of `required_kinds` (case-insensitive). Otherwise the release is

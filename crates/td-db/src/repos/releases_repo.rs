@@ -33,8 +33,8 @@ pub fn id_for(source_kind: &str, external_id: &str) -> String {
 /// upserts on its composite primary key. Re-running the poll on the same
 /// upstream is a no-op apart from refreshing the mutable columns (title,
 /// magnet, posted_at, size, ...).
-pub async fn persist_discovered(
-    db: &DatabaseConnection,
+pub async fn persist_discovered<C: ConnectionTrait>(
+    db: &C,
     release: &DiscoveredRelease,
     observed_at: i64,
 ) -> Result<String> {
@@ -43,7 +43,10 @@ pub async fn persist_discovered(
 
     // Both upsert and add_format are idempotent on their unique key, so a
     // partial-failure recovery is a re-poll. The single-writer SQLite pool
-    // makes the interleaving here serial in practice.
+    // makes the interleaving here serial in practice. Generic over
+    // `ConnectionTrait` so the caller can group several `persist_discovered`
+    // calls into one transaction (the batched-write path in
+    // `poll_source::run_tick`).
     upsert(db, active).await?;
     for fmt in detect_formats(&release.files) {
         add_format(db, &id, fmt.as_str()).await?;
@@ -101,7 +104,7 @@ fn to_active_model(
     })
 }
 
-pub async fn upsert(db: &DatabaseConnection, model: releases::ActiveModel) -> Result<()> {
+pub async fn upsert<C: ConnectionTrait>(db: &C, model: releases::ActiveModel) -> Result<()> {
     releases::Entity::insert(model)
         .on_conflict(
             OnConflict::columns([releases::Column::SourceKind, releases::Column::ExternalId])
@@ -255,7 +258,7 @@ pub async fn bulk_reject(db: &DatabaseConnection, ids: &[String], now: i64) -> R
 }
 
 /// Idempotently attach a format tag to a release.
-pub async fn add_format(db: &DatabaseConnection, release_id: &str, format: &str) -> Result<()> {
+pub async fn add_format<C: ConnectionTrait>(db: &C, release_id: &str, format: &str) -> Result<()> {
     let row = release_formats::ActiveModel {
         release_id: Set(release_id.to_string()),
         format: Set(format.to_string()),

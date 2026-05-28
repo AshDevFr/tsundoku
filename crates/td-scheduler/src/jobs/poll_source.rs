@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use chrono::{TimeZone, Utc};
-use sea_orm::{DatabaseConnection, Set};
+use sea_orm::{DatabaseConnection, Set, TransactionTrait};
 use td_config::IngestionConfig;
 use td_db::entities::source_state;
 use td_db::repos::run_metrics_repo::{self, PollRunCounts, ProgressTable};
@@ -30,7 +30,7 @@ use td_resolution::Resolver;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_resolution::pipeline::{ResolutionOutcome, ResolutionPath, ResolutionStatus};
 use td_resolution::query_builder::QueryBuilder;
-use td_source::{DiscoverySource, PollContext, PollOutcome};
+use td_source::{DiscoveredRelease, DiscoverySource, PollContext, PollOutcome};
 use tokio::sync::broadcast;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
@@ -194,69 +194,94 @@ pub async fn run_tick(
     );
     progress.set_total(fetched as u64).await;
 
-    // Enrich + persist + resolve per release. Each iteration commits to
-    // SQLite before moving on, so a mid-loop crash leaves the work done
-    // so far visible in the UI; the next tick re-fetches (the ETag is
-    // only advanced after the whole walk) and re-persisting is
-    // idempotent on `(source_kind, external_id)`. Enrich errors are
-    // logged but non-fatal by trait contract — we persist with the
-    // RSS-only data. A resolver Err is logged and counted as a `failed`
-    // outcome so the breakdown ties out against the persisted release
-    // count.
+    // Enrich + persist + resolve in chunks of `ingestion.poll_write_batch_size`.
+    // Per chunk: (A) enrich every item with the source's HTTP detail call —
+    // strictly outside the DB transaction so we don't hold a SQLite write
+    // lock during HTTP, (B) open one transaction and upsert every item
+    // (per-item upsert errors log + count + continue, the rest of the
+    // chunk still commits), (C) commit and run the resolver per persisted
+    // id. A commit failure logs and counts the whole chunk as
+    // persist_errors; the next tick re-fetches and `persist_discovered`
+    // is idempotent on `(source_kind, external_id)` so nothing is lost.
+    // Enrich errors are non-fatal — we persist with RSS-only data per
+    // trait contract.
     let mut resolver =
-        Resolver::new(db.clone(), metadata, ingestion).with_query_builder(query_builder);
+        Resolver::new(db.clone(), metadata, ingestion.clone()).with_query_builder(query_builder);
     if let Some(r) = mangaupdates_redirector {
         resolver = resolver.with_mangaupdates_redirector(r);
     }
 
     const PROGRESS_EVERY: usize = 25;
+    let batch_size = ingestion.poll_write_batch_size.max(1) as usize;
     let mut persisted = 0usize;
     let mut persist_errors = 0usize;
     let mut enrich_errors = 0usize;
     let mut resolve_errors = 0usize;
     let mut breakdown = OutcomeBreakdown::default();
-    for (idx, release) in outcome.releases.iter_mut().enumerate() {
-        if let Err(e) = source.enrich(release).await {
-            tracing::warn!(
-                error = ?e,
-                source = %name,
-                external_id = %release.external_id,
-                "enrich failed; persisting with rss-only data"
-            );
-            enrich_errors += 1;
+    let mut processed = 0usize;
+    for chunk in outcome.releases.chunks_mut(batch_size) {
+        // (A) Enrich the whole chunk first. No DB lock held.
+        for release in chunk.iter_mut() {
+            if let Err(e) = source.enrich(release).await {
+                tracing::warn!(
+                    error = ?e,
+                    source = %name,
+                    external_id = %release.external_id,
+                    "enrich failed; persisting with rss-only data"
+                );
+                enrich_errors += 1;
+            }
         }
-        let id = match releases_repo::persist_discovered(&db, release, started_at.timestamp()).await
-        {
-            Ok(id) => id,
+
+        // (B) Open one transaction, upsert every item, commit.
+        let chunk_size = chunk.len();
+        match persist_chunk(&db, chunk, started_at.timestamp()).await {
+            Ok(outcome) => {
+                persisted += outcome.ids.len();
+                persist_errors += outcome.per_item_failures;
+                let persist_failed_in_chunk = outcome.per_item_failures;
+
+                // (C) Resolve each persisted id. Resolver writes are their
+                // own per-item transactions; that's intentional, the
+                // resolver touches several tables (review_candidates,
+                // series_external_ids, ...) per release and the size of
+                // its write set varies enormously per release.
+                for id in &outcome.ids {
+                    match resolver.resolve_one(id).await {
+                        Ok(o) => breakdown.record(&o),
+                        Err(e) => {
+                            tracing::warn!(error = ?e, release_id = %id, "resolver failed; leaving release unresolved");
+                            resolve_errors += 1;
+                            breakdown.failed += 1;
+                        }
+                    }
+                    processed += 1;
+                    progress.tick_to(processed as u64).await;
+                    if processed.is_multiple_of(PROGRESS_EVERY) && processed < fetched {
+                        tracing::info!(
+                            source = %name,
+                            processed,
+                            total = fetched,
+                            "poll tick progress"
+                        );
+                    }
+                }
+                // Items that failed persist still consumed a slot; bump
+                // `processed` so the pill reflects the whole chunk done.
+                processed += persist_failed_in_chunk;
+                progress.tick_to(processed as u64).await;
+            }
             Err(e) => {
                 tracing::error!(
                     error = ?e,
                     source = %name,
-                    external_id = %release.external_id,
-                    "failed to persist release"
+                    chunk_size,
+                    "batch persist transaction failed; all items in batch rolled back"
                 );
-                persist_errors += 1;
-                continue;
+                persist_errors += chunk_size;
+                processed += chunk_size;
+                progress.tick_to(processed as u64).await;
             }
-        };
-        persisted += 1;
-        match resolver.resolve_one(&id).await {
-            Ok(o) => breakdown.record(&o),
-            Err(e) => {
-                tracing::warn!(error = ?e, release_id = %id, "resolver failed; leaving release unresolved");
-                resolve_errors += 1;
-                breakdown.failed += 1;
-            }
-        }
-        let processed = idx + 1;
-        progress.tick_to(processed as u64).await;
-        if processed % PROGRESS_EVERY == 0 && processed < fetched {
-            tracing::info!(
-                source = %name,
-                processed,
-                total = fetched,
-                "poll tick progress"
-            );
         }
     }
     progress.flush().await;
@@ -319,6 +344,48 @@ impl OutcomeBreakdown {
             _ => self.failed += 1,
         }
     }
+}
+
+/// Outcome of `persist_chunk` when the commit succeeds. `ids` is the
+/// subset of the chunk that actually landed (per-item upsert errors are
+/// caught and counted as `per_item_failures` without aborting the
+/// whole transaction).
+struct PersistChunkOutcome {
+    ids: Vec<String>,
+    per_item_failures: usize,
+}
+
+/// Upsert every release in `chunk` inside one `BEGIN ... COMMIT`. Per-item
+/// errors are logged and counted but do not roll the transaction back —
+/// the survivors still commit. A failure at `begin()` or `commit()` is
+/// surfaced via `Err`; the caller treats the whole chunk as lost in that
+/// case (idempotent retry on the next tick).
+async fn persist_chunk(
+    db: &DatabaseConnection,
+    chunk: &[DiscoveredRelease],
+    observed_at: i64,
+) -> Result<PersistChunkOutcome> {
+    let tx = db.begin().await?;
+    let mut ids = Vec::with_capacity(chunk.len());
+    let mut per_item_failures = 0usize;
+    for release in chunk {
+        match releases_repo::persist_discovered(&tx, release, observed_at).await {
+            Ok(id) => ids.push(id),
+            Err(e) => {
+                per_item_failures += 1;
+                tracing::error!(
+                    error = ?e,
+                    external_id = %release.external_id,
+                    "upsert failed inside batch transaction; continuing with survivors"
+                );
+            }
+        }
+    }
+    tx.commit().await?;
+    Ok(PersistChunkOutcome {
+        ids,
+        per_item_failures,
+    })
 }
 
 async fn record_skipped(
