@@ -7,9 +7,9 @@ import {
   Menu,
   Modal,
   Paper,
+  SegmentedControl,
   Select,
   Stack,
-  Switch,
   Text,
   TextInput,
   Title,
@@ -68,6 +68,21 @@ const DEFAULT_ORDER_LABELS: OrderLabels = {
   desc: "Highest first",
   asc: "Lowest first",
 };
+
+// SegmentedControl needs a string value, but boolean tri-state filters
+// use `true | false | undefined` (with `undefined` meaning "no
+// constraint"). These two helpers bridge the two representations so the
+// rest of the panel doesn't have to think about it.
+function triValue(b: boolean | undefined): "any" | "true" | "false" {
+  if (b === true) return "true";
+  if (b === false) return "false";
+  return "any";
+}
+function triParse(v: string): boolean | undefined {
+  if (v === "true") return true;
+  if (v === "false") return false;
+  return undefined;
+}
 
 export function FilterPanel({ search, onChange }: FilterPanelProps) {
   const presets = useFilterPresets((s) => s.presets);
@@ -251,56 +266,46 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
           data-testid="filter-tag-select"
         />
 
-        <Box>
-          <Text size="sm" fw={500} mb={4}>
-            Ownership
-          </Text>
-          <Group gap="xs">
-            <Switch
-              size="sm"
-              label="Hide owned"
-              checked={search.owned === false}
-              onChange={(e) =>
-                merge({ owned: e.currentTarget.checked ? false : undefined })
-              }
+        {/*
+          Ownership filter hidden until tsundoku actually talks to Codex.
+          The `owned` flag exists in the schema + API, but with no Codex
+          integration to flip it nothing ever sets `owned=true`, so the
+          control would only ever filter to an empty set or no-op.
+          Re-enable once the Codex HTTP sync lands.
+
+          <Box>
+            <Text size="sm" fw={500} mb={4}>
+              Ownership
+            </Text>
+            <SegmentedControl
+              size="xs"
+              fullWidth
+              value={triValue(search.owned)}
+              onChange={(v) => merge({ owned: triParse(v) })}
+              data={[
+                { label: "Any", value: "any" },
+                { label: "Discoverable", value: "false" },
+                { label: "Owned", value: "true" },
+              ]}
             />
-            <Switch
-              size="sm"
-              label="Owned only"
-              checked={search.owned === true}
-              onChange={(e) =>
-                merge({ owned: e.currentTarget.checked ? true : undefined })
-              }
-            />
-          </Group>
-        </Box>
+          </Box>
+        */}
 
         <Box>
           <Text size="sm" fw={500} mb={4}>
             Releases
           </Text>
-          <Group gap="xs">
-            <Switch
-              size="sm"
-              label="Has releases"
-              checked={search.hasReleases === true}
-              onChange={(e) =>
-                merge({
-                  hasReleases: e.currentTarget.checked ? true : undefined,
-                })
-              }
-            />
-            <Switch
-              size="sm"
-              label="Orphans only"
-              checked={search.hasReleases === false}
-              onChange={(e) =>
-                merge({
-                  hasReleases: e.currentTarget.checked ? false : undefined,
-                })
-              }
-            />
-          </Group>
+          <SegmentedControl
+            size="xs"
+            fullWidth
+            value={triValue(search.hasReleases)}
+            onChange={(v) => merge({ hasReleases: triParse(v) })}
+            data={[
+              { label: "Any", value: "any" },
+              { label: "Orphans", value: "false" },
+              { label: "Has releases", value: "true" },
+            ]}
+          />
         </Box>
 
         <Select

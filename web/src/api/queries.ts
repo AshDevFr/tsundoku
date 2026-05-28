@@ -53,6 +53,9 @@ export interface SeriesFilters {
   kind?: string;
   status?: string;
   owned?: boolean;
+  /// `true` keeps only series with ≥1 linked release; `false` keeps only
+  /// orphans. Absent means "no constraint". Mirrors the backend filter.
+  hasReleases?: boolean;
   genre?: string;
   tag?: string;
   sort?: string;
@@ -74,6 +77,10 @@ export function useSeriesList(filters: SeriesFilters) {
     kind: filters.kind || undefined,
     status: filters.status || undefined,
     owned: typeof filters.owned === "boolean" ? filters.owned : undefined,
+    hasReleases:
+      typeof filters.hasReleases === "boolean"
+        ? filters.hasReleases
+        : undefined,
     genre: filters.genre || undefined,
     tag: filters.tag || undefined,
     sort: filters.sort || undefined,
