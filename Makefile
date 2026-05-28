@@ -242,6 +242,7 @@ docker-push: ## Push to a registry (usage: make docker-push REGISTRY=ghcr.io/you
 # ── Changelog (git-cliff) ────────────────────────────────────────────────────
 
 changelog: ## Generate the changelog and prepend to CHANGELOG.md
+	@touch CHANGELOG.md
 	git-cliff --unreleased --prepend CHANGELOG.md
 
 changelog-unreleased: ## Preview unreleased changes
