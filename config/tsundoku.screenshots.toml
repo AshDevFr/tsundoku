@@ -38,14 +38,14 @@ api_base_url = "https://api.mangabaka.dev"
 negative_cache_ttl_days = 7
 timeout_seconds = 60
 
-# Broad English-translated-manga feed, trusted uploaders only — mirrors
-# the dev profile so screenshots come from the same realistic feed.
+# Uploader-specific feed (tsuna69 / 1r0n). Picked because the resulting
+# titles + metadata are cleaner than the broad trusted feed, which makes
+# better screenshots. The capture script triggers a one-shot poll via
+# POST /api/v1/sources/<name>/poll; no cron so a background tick can't
+# race the screenshot pass.
 [[sources]]
 kind = "nyaa"
-name = "nyaa-english-trusted"
-# No cron: the capture script triggers a one-shot poll via
-# POST /api/v1/sources/<name>/poll instead. Leaving cron empty avoids a
-# background poll racing the screenshot pass.
+name = "nyaa-1r0n"
 enabled = true
   [sources.nyaa]
-  feed_url = "https://nyaa.si/?page=rss&c=3_1&f=2"
+  feed_url = "https://nyaa.si/?page=rss&u=tsuna69"

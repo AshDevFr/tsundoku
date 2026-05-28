@@ -1,7 +1,12 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { config } from "../playwright.config.js";
 import { seedAdminToken } from "./utils/auth.js";
-import { getStats, listSources, pollAndWait } from "./utils/api.js";
+import {
+  getStats,
+  listSources,
+  triggerPolls,
+  waitForPollSoak,
+} from "./utils/api.js";
 import { printScreenshotSummary } from "./utils/screenshot.js";
 
 interface ScenarioModule {
@@ -43,12 +48,20 @@ async function main(): Promise<void> {
     await waitForBackend(page);
     console.log("✓ Backend is ready\n");
 
+    // Kick the polls off before doing anything else so the DB has time
+    // to populate (resolver + cover fetches + MangaBaka enrichment)
+    // while we wait. Scenarios only start after the soak window
+    // elapses.
     if (config.pollOnStart) {
       const sources = await resolvePollSources(context);
       if (sources.length === 0) {
         console.log("  ⚠️  No sources configured/enabled; skipping poll.");
       } else {
-        await pollAndWait(context.request, sources);
+        await triggerPolls(context.request, sources);
+        console.log(
+          `  ⏱  Soaking for ${config.pollWaitMinSeconds}s (max ${config.pollWaitMaxSeconds}s)...`,
+        );
+        await waitForPollSoak(context.request);
       }
     }
 
@@ -127,7 +140,7 @@ async function resolvePollSources(context: BrowserContext): Promise<string[]> {
     return config.pollSources;
   }
   const sources = await listSources(context.request);
-  return sources.filter((s) => s.enabled).map((s) => s.name);
+  return sources.filter((s) => s.config.enabled).map((s) => s.name);
 }
 
 async function waitForBackend(

@@ -76,7 +76,8 @@ Tunable via either the compose service env or the surrounding shell:
 | `SCREENSHOTS_ADMIN_TOKEN` | `screenshots-admin-token` | Admin token (must match between backend + Playwright) |
 | `POLL_ON_START` | `true` | Trigger a Nyaa poll before capture. Set `false` for empty-state runs |
 | `POLL_SOURCES` | (every enabled source) | CSV of source names to poll |
-| `POLL_WAIT_MAX_SECONDS` | `300` | How long to wait for releases to land |
+| `POLL_WAIT_MIN_SECONDS` | `180` | Minimum soak after triggering polls — covers MangaBaka enrichment + cover fetches that linger after the resolver drains |
+| `POLL_WAIT_MAX_SECONDS` | `300` | Hard ceiling on the soak window |
 | `BASE_URL` | `http://tsundoku-screenshots:8080` | Backend URL the Playwright container hits |
 | `VIEWPORT_WIDTH` / `VIEWPORT_HEIGHT` | `1440x900` | Viewport |
 | `COLOR_SCHEME` | `dark` | `dark` or `light` |

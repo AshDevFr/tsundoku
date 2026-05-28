@@ -49,6 +49,14 @@ export const config = {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
+  // Minimum soak time after triggering polls — covers cover fetches +
+  // MangaBaka enrichment that lingers after the resolver drains.
+  pollWaitMinSeconds: parseInt(
+    process.env.POLL_WAIT_MIN_SECONDS || "180",
+    10,
+  ),
+  // Hard ceiling. The soak waits at least pollWaitMinSeconds, then
+  // either bails when the resolver drains or holds until this cap.
   pollWaitMaxSeconds: parseInt(
     process.env.POLL_WAIT_MAX_SECONDS || "300",
     10,

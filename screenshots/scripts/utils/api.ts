@@ -18,7 +18,9 @@ export interface StatsResponse {
 interface SourceListItem {
   name: string;
   kind: string;
-  enabled: boolean;
+  // The list endpoint nests the config block; `enabled` lives there
+  // rather than at the top level.
+  config: { enabled: boolean };
 }
 
 export async function getStats(
@@ -42,13 +44,12 @@ export async function listSources(
   return body.items ?? [];
 }
 
-/// Trigger one or more source polls and wait for the resulting releases
-/// to land in the DB. Returns true if anything was resolved during the
-/// wait window.
-export async function pollAndWait(
+/// Fire off the source polls without waiting. Returns immediately so
+/// the caller can spend the soak window on other work.
+export async function triggerPolls(
   request: APIRequestContext,
   sources: string[],
-): Promise<boolean> {
+): Promise<void> {
   console.log(`  ⏳ Triggering polls for: ${sources.join(", ") || "<none>"}`);
 
   for (const name of sources) {
@@ -62,46 +63,68 @@ export async function pollAndWait(
     const body = await res.json().catch(() => ({}));
     console.log(`    → ${name}: ${JSON.stringify(body)}`);
   }
-
-  return waitForReleases(request, config.pollWaitMaxSeconds);
 }
 
-/// Poll /stats until totalReleases > 0 or the deadline elapses.
-async function waitForReleases(
+/// Block until the soak window elapses. Always waits at least
+/// `minSeconds`; if the resolver hasn't drained by then, keeps waiting
+/// up to `maxSeconds`. The minimum window gives MangaBaka enrichment +
+/// cover fetches time to surface richer screenshots than the resolver
+/// drain alone would.
+export async function waitForPollSoak(
   request: APIRequestContext,
-  maxSeconds: number,
-): Promise<boolean> {
-  const deadline = Date.now() + maxSeconds * 1000;
+  minSeconds: number = config.pollWaitMinSeconds,
+  maxSeconds: number = config.pollWaitMaxSeconds,
+): Promise<void> {
+  const start = Date.now();
+  const minDeadline = start + minSeconds * 1000;
+  const maxDeadline = start + Math.max(minSeconds, maxSeconds) * 1000;
   let lastTotal = -1;
+  let lastResolved = -1;
 
-  while (Date.now() < deadline) {
+  const tick = async (): Promise<boolean> => {
     const stats = await getStats(request);
-    if (stats && stats.totalReleases > 0) {
-      if (stats.totalReleases !== lastTotal) {
-        console.log(
-          `    … ${stats.totalReleases} releases ` +
-            `(resolved=${stats.releases.resolved}, ` +
-            `unresolved=${stats.releases.unresolved}, ` +
-            `ambiguous=${stats.releases.ambiguous})`,
-        );
-        lastTotal = stats.totalReleases;
-      }
-      // Give the resolver another beat to finish — but bail early
-      // once resolved + unresolved + ambiguous equals total (i.e. the
-      // pipeline has drained).
-      const counted =
-        stats.releases.resolved +
-        stats.releases.unresolved +
-        stats.releases.ambiguous +
-        stats.releases.reviewPending +
-        stats.releases.rejected;
-      if (counted >= stats.totalReleases) {
-        return true;
-      }
+    if (!stats) return false;
+    if (
+      stats.totalReleases !== lastTotal ||
+      stats.releases.resolved !== lastResolved
+    ) {
+      const elapsed = Math.round((Date.now() - start) / 1000);
+      console.log(
+        `    [+${elapsed}s] ${stats.series} series, ${stats.totalReleases} releases ` +
+          `(resolved=${stats.releases.resolved}, ` +
+          `unresolved=${stats.releases.unresolved}, ` +
+          `ambiguous=${stats.releases.ambiguous}, ` +
+          `review=${stats.releases.reviewPending})`,
+      );
+      lastTotal = stats.totalReleases;
+      lastResolved = stats.releases.resolved;
     }
-    await new Promise((r) => setTimeout(r, 3000));
+    const counted =
+      stats.releases.resolved +
+      stats.releases.unresolved +
+      stats.releases.ambiguous +
+      stats.releases.reviewPending +
+      stats.releases.rejected;
+    return stats.totalReleases > 0 && counted >= stats.totalReleases;
+  };
+
+  // Phase 1: always wait the full minimum, logging progress along the
+  // way. Don't early-exit on drain — we want the soak time for the
+  // metadata layer.
+  while (Date.now() < minDeadline) {
+    await tick();
+    await new Promise((r) => setTimeout(r, 5000));
   }
 
-  console.log("    ⚠️  Poll wait timeout reached, continuing with whatever landed");
-  return false;
+  // Phase 2: if drain has happened by now, stop. Otherwise keep going
+  // until the hard ceiling.
+  while (Date.now() < maxDeadline) {
+    if (await tick()) {
+      console.log("    ✓ Resolver drained");
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+
+  console.log("    ⚠️  Soak ceiling reached, continuing with whatever landed");
 }
