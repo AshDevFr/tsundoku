@@ -56,7 +56,7 @@ data_dir = "./data"
 | -------------------------------- | ------------------------------------- |
 | `${data_dir}/db/tsundoku.db`     | SQLite database (the only stateful file) |
 | `${data_dir}/cache/providers/`   | Metadata provider offline caches (e.g. MangaBaka dump) |
-| `${data_dir}/cache/covers/`      | Reserved for future cover-image cache |
+| `${data_dir}/cache/covers/`      | On-disk cache served by the `/api/v1/covers/*` proxy |
 | `${data_dir}/tmp/`               | Transient downloads, in-progress ingests |
 
 Docker mounts a single volume at `data_dir`. Back up by copying the
