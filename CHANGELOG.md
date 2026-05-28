@@ -2,6 +2,17 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.0.2] - 2026-05-28
+
+### Features
+
+- *(api,web)* Expose app version via /info and show it in the header
+
+### Bug Fixes
+
+- *(web)* Prevent provider/source card action group from shrinking
+- *(web)* Mock /info and /events/jobs in MSW handlers
+
 ## [1.0.1] - 2026-05-28
 
 ### Features
