@@ -68,7 +68,7 @@ impl OfflineStore {
         };
         let stmt = Statement::from_sql_and_values(
             self.db.get_database_backend(),
-            SELECT_BY_ID,
+            select_by_id_sql(),
             [parsed.into()],
         );
         let row = RawRow::find_by_statement(stmt).one(&self.db).await?;
@@ -87,26 +87,9 @@ impl OfflineStore {
         let Some(column) = source_column(mb_source) else {
             return Ok(None);
         };
-        // The CAST in the WHERE clause is what makes the indexes built by
-        // `setup::prepare` usable for both TEXT slugs and INTEGER ids.
-        // The full row select also CASTs source_*_id columns so sqlx can
-        // decode them as Option<String> uniformly.
-        let sql = format!(
-            "SELECT id, title, native_title, romanized_title, \
-            titles, type AS kind, status, year, description, state, genres, tags, \
-            cover_x350_x2, cover_x350_x1, cover_x250_x2, cover_x250_x1, cover_raw_url, \
-            CAST(source_anilist_id AS TEXT) AS source_anilist_id, \
-            CAST(source_my_anime_list_id AS TEXT) AS source_my_anime_list_id, \
-            CAST(source_manga_updates_id AS TEXT) AS source_manga_updates_id, \
-            CAST(source_kitsu_id AS TEXT) AS source_kitsu_id, \
-            CAST(source_shikimori_id AS TEXT) AS source_shikimori_id, \
-            CAST(source_anime_planet_id AS TEXT) AS source_anime_planet_id, \
-            CAST(source_anime_news_network_id AS TEXT) AS source_anime_news_network_id \
-            FROM series WHERE CAST({column} AS TEXT) = ?1 LIMIT 1"
-        );
         let stmt = Statement::from_sql_and_values(
             self.db.get_database_backend(),
-            sql,
+            select_by_source_id_sql(column),
             [external_id.into()],
         );
         let row = RawRow::find_by_statement(stmt).one(&self.db).await?;
@@ -136,7 +119,7 @@ impl OfflineStore {
         let sanitized = sanitize_match(query);
         let stmt = Statement::from_sql_and_values(
             self.db.get_database_backend(),
-            SELECT_FTS,
+            select_fts_sql(),
             [sanitized.into(), (candidate_pool as i64).into()],
         );
         let rows = RawRow::find_by_statement(stmt).all(&self.db).await?;
@@ -185,48 +168,70 @@ impl OfflineStore {
     }
 }
 
-// All `source_*_id` columns are cast to TEXT because the dump mixes
-// INTEGER (anilist, mal, kitsu, shikimori, anime_news_network) and TEXT
-// (manga_updates, anime_planet slugs). The cast lets sqlx decode each as
-// `Option<String>` uniformly.
-// All `source_*_id` columns are cast to TEXT because the dump mixes
-// INTEGER (anilist, mal, kitsu, shikimori, anime_news_network) and TEXT
-// (manga_updates, anime_planet slugs). The cast lets sqlx decode each as
+// Single source of truth for the column list every dump SELECT pulls
+// into `RawRow`. The three call sites (`find_by_id`, `find_by_source_id`,
+// `search_fts`) all hit the same `series` table; the only difference is
+// the surrounding WHERE/JOIN. Centralizing the columns here keeps `RawRow`
+// and the SQL in sync: adding a field to `RawRow` means adding it here
+// once, not in three hand-rolled SELECTs.
+//
+// `prefix` is empty for the unjoined queries and `"s."` for the FTS join.
+// It attaches only to physical-column references; aliases (`AS kind`,
+// `AS rating`, the `source_*_id` casts) stay unprefixed so `RawRow`
+// decodes by stable output names regardless of which query produced the
+// row.
+//
+// `source_*_id` columns are CAST to TEXT because the dump mixes INTEGER
+// (anilist, mal, kitsu, shikimori, anime_news_network) and TEXT
+// (manga_updates, anime_planet slugs); the cast lets sqlx decode each as
 // `Option<String>` uniformly. `type` is aliased to `kind` because
 // `FromQueryResult` does not honor `#[sea_orm(column_name = ...)]`.
 // `rating` is CAST to REAL because the dump occasionally stores it as
 // TEXT alongside the numeric form; the CAST keeps sqlx decoding into
-// `Option<f64>` uniform regardless of the per-row physical type.
-const SELECT_BY_ID: &str = "SELECT id, title, native_title, romanized_title, \
-        titles, type AS kind, status, year, final_volume, total_chapters, \
-        CAST(rating AS REAL) AS rating, \
-        description, state, genres, tags, \
-        cover_x350_x2, cover_x350_x1, cover_x250_x2, cover_x250_x1, cover_raw_url, \
-        CAST(source_anilist_id AS TEXT) AS source_anilist_id, \
-        CAST(source_my_anime_list_id AS TEXT) AS source_my_anime_list_id, \
-        CAST(source_manga_updates_id AS TEXT) AS source_manga_updates_id, \
-        CAST(source_kitsu_id AS TEXT) AS source_kitsu_id, \
-        CAST(source_shikimori_id AS TEXT) AS source_shikimori_id, \
-        CAST(source_anime_planet_id AS TEXT) AS source_anime_planet_id, \
-        CAST(source_anime_news_network_id AS TEXT) AS source_anime_news_network_id \
-        FROM series WHERE id = ?1 LIMIT 1";
+// `Option<f64>` uniform.
+fn raw_row_columns(prefix: &str) -> String {
+    let p = prefix;
+    format!(
+        "{p}id, {p}title, {p}native_title, {p}romanized_title, \
+        {p}titles, {p}type AS kind, {p}status, {p}year, {p}final_volume, {p}total_chapters, \
+        CAST({p}rating AS REAL) AS rating, \
+        {p}description, {p}state, {p}genres, {p}tags, \
+        {p}cover_x350_x2, {p}cover_x350_x1, {p}cover_x250_x2, {p}cover_x250_x1, {p}cover_raw_url, \
+        CAST({p}source_anilist_id AS TEXT) AS source_anilist_id, \
+        CAST({p}source_my_anime_list_id AS TEXT) AS source_my_anime_list_id, \
+        CAST({p}source_manga_updates_id AS TEXT) AS source_manga_updates_id, \
+        CAST({p}source_kitsu_id AS TEXT) AS source_kitsu_id, \
+        CAST({p}source_shikimori_id AS TEXT) AS source_shikimori_id, \
+        CAST({p}source_anime_planet_id AS TEXT) AS source_anime_planet_id, \
+        CAST({p}source_anime_news_network_id AS TEXT) AS source_anime_news_network_id"
+    )
+}
 
-const SELECT_FTS: &str = "SELECT s.id, s.title, s.native_title, s.romanized_title, \
-        s.titles, s.type AS kind, s.status, s.year, s.final_volume, s.total_chapters, \
-        CAST(s.rating AS REAL) AS rating, \
-        s.description, s.state, s.genres, s.tags, \
-        s.cover_x350_x2, s.cover_x350_x1, s.cover_x250_x2, s.cover_x250_x1, s.cover_raw_url, \
-        CAST(s.source_anilist_id AS TEXT) AS source_anilist_id, \
-        CAST(s.source_my_anime_list_id AS TEXT) AS source_my_anime_list_id, \
-        CAST(s.source_manga_updates_id AS TEXT) AS source_manga_updates_id, \
-        CAST(s.source_kitsu_id AS TEXT) AS source_kitsu_id, \
-        CAST(s.source_shikimori_id AS TEXT) AS source_shikimori_id, \
-        CAST(s.source_anime_planet_id AS TEXT) AS source_anime_planet_id, \
-        CAST(s.source_anime_news_network_id AS TEXT) AS source_anime_news_network_id \
-        FROM series_title_fts f \
+fn select_by_id_sql() -> String {
+    format!(
+        "SELECT {cols} FROM series WHERE id = ?1 LIMIT 1",
+        cols = raw_row_columns("")
+    )
+}
+
+/// The CAST in the WHERE clause is what makes the indexes built by
+/// `setup::prepare` usable for both TEXT slugs and INTEGER ids.
+fn select_by_source_id_sql(column: &str) -> String {
+    format!(
+        "SELECT {cols} FROM series WHERE CAST({column} AS TEXT) = ?1 LIMIT 1",
+        cols = raw_row_columns("")
+    )
+}
+
+fn select_fts_sql() -> String {
+    format!(
+        "SELECT {cols} FROM series_title_fts f \
         JOIN series s ON s.id = f.rowid \
         WHERE series_title_fts MATCH ?1 AND (s.state = 'active' OR s.state IS NULL) \
-        ORDER BY rank LIMIT ?2";
+        ORDER BY rank LIMIT ?2",
+        cols = raw_row_columns("s.")
+    )
+}
 
 /// Map MangaBaka's `source` column suffix onto its physical SQLite column.
 /// `None` means "unknown source"; the caller treats it as a miss.
@@ -646,6 +651,13 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(m.external_id, "1677");
+        // The full denormalized payload must come back, not just the id —
+        // see `find_by_source_id_populates_volumes_chapters_rating` for
+        // the regression that originally motivated this assertion.
+        assert_eq!(m.canonical_title, "Chainsaw Man");
+        assert_eq!(m.total_volumes, Some(24));
+        assert_eq!(m.total_chapters, Some(232));
+        assert_eq!(m.rating, Some(8.5));
         // Integer form (anilist).
         let m = store
             .find_by_source_id("anilist", "105778")
@@ -661,6 +673,25 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    /// Regression: a prior version's hand-rolled SELECT in
+    /// `find_by_source_id` did not list `final_volume`, `total_chapters`,
+    /// or `rating`. Because `RawRow`'s fields are `Option<_>`, sea-orm
+    /// decoded the absent columns as `None` silently and persisted NULLs
+    /// for every series resolved via foreign id. This guards against
+    /// future SELECT/RawRow drift on the foreign-id-lookup path.
+    #[tokio::test]
+    async fn find_by_source_id_populates_volumes_chapters_rating() {
+        let store = store_from(fixture_db().await);
+        let m = store
+            .find_by_source_id("anilist", "105778")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(m.total_volumes, Some(24));
+        assert_eq!(m.total_chapters, Some(232));
+        assert_eq!(m.rating, Some(8.5));
     }
 
     #[tokio::test]
