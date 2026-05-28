@@ -2,6 +2,17 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.0.1] - 2026-05-28
+
+### Features
+
+- *(screenshots)* Add Playwright workflow for docs screenshots
+- *(cli,config)* Add init-config command and starter-template bootstrap
+
+### Bug Fixes
+
+- *(makefile)* Touch CHANGELOG.md before git-cliff --prepend
+
 ## [1.0.0] - 2026-05-28
 
 ### Features
