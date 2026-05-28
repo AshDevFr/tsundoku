@@ -10,7 +10,11 @@ shows up: a paginated grid of series the resolver has linked at least
 one release to. Filters scope the set; presets remember combinations
 worth keeping around.
 
+![Browse feed in card view](/img/screenshots/browse/feed-cards.png)
+
 ## Filters
+
+![Filter rail with genre and tag chips](/img/screenshots/browse/feed-with-filters.png)
 
 The left rail lives in the URL — copy the address bar to share or
 bookmark a view, no preset required.
@@ -104,6 +108,8 @@ The **Cards / List** toggle in the page header is sticky via the
 `view` URL param. Cards are the default; list view is denser and
 better for sort-by-count comparisons.
 
+![Browse feed in list view](/img/screenshots/browse/feed-list.png)
+
 Both views show:
 
 - Cover (placeholder when the provider has none).
@@ -128,6 +134,8 @@ can't strand you on page 7 of nothing.
 The detail page (`/series/{id}`) is reached by clicking any card. It
 shows the full description, alternate titles, every external-ID
 mapping the resolver has on file, and the full release list.
+
+![Series detail page](/img/screenshots/series/detail.png)
 
 The release list has a per-row **Move** action: re-link a release
 that landed on the wrong series. The modal accepts either a catalog

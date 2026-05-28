@@ -12,6 +12,17 @@ architecture is source-pluggable via the
 trait — adding a new source means writing a `td-source-<name>` crate
 and adding a config kind, no core changes.
 
+The admin shell at [`/admin/sources`](http://127.0.0.1:8080/admin/sources)
+lists every registered source with its last poll time, last summary,
+and a **Poll now** button that shares its job lock with the cron tick.
+
+![Sources list](/img/screenshots/admin/sources-list.png)
+
+Drilling into a row shows the per-source detail page with recent
+runs, the full effective config, and historical metrics.
+
+![Source detail](/img/screenshots/admin/source-detail.png)
+
 ## Nyaa
 
 The Nyaa source polls an RSS feed and (when `fetch_details = true`,

@@ -16,6 +16,11 @@ It deliberately does **not** track releases for series you already
 have — Codex's `release-nyaa` plugin does that. tsundoku is the
 "discover new things" half of the workflow.
 
+![tsundoku browse feed](/img/screenshots/browse/feed-cards.png)
+
+The [Feature showcase](./showcase.md) is the guided tour if you'd
+rather see than read.
+
 ## How it fits together
 
 ```

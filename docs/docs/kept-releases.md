@@ -17,6 +17,8 @@ They don't appear in the browse feed (which is series-keyed) and
 they don't show up in the review queue. They're also skipped by the
 resolver — neither cron polls nor `retry-all` move them.
 
+![Kept releases page](/img/screenshots/admin/kept.png)
+
 ## Marking a release as kept
 
 From the [review queue](./review-queue.md): the **Keep** button on

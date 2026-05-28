@@ -15,6 +15,18 @@ via the
 trait. Adding one means writing a `td-metadata-<name>` crate plus a
 config block — no core changes.
 
+[`/admin/providers`](http://127.0.0.1:8080/admin/providers) is the
+operator surface. Every registered provider shows up here; the
+active one is marked, and each row surfaces offline-cache age, last
+refresh status, and a **Refresh cache** trigger.
+
+![Providers list](/img/screenshots/admin/providers-list.png)
+
+The per-provider detail page surfaces the offline dump's row count,
+the SHA-1 sidecar that gates re-extraction, and a recent-runs table.
+
+![Provider detail](/img/screenshots/admin/provider-detail.png)
+
 ## Active vs. registered
 
 Multiple providers can be **registered** (so the review UI can search

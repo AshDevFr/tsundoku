@@ -10,6 +10,8 @@ known external ID → foreign-ID lookup → fuzzy title → format-to-kind
 validation. The rest land in the **review queue** at `/review`, where
 an operator decides what to do with them.
 
+![Review queue with candidates and bulk actions](/img/screenshots/admin/review.png)
+
 ## What lands here
 
 | Status | Why it's here |
