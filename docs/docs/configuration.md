@@ -117,6 +117,30 @@ registered (for cross-provider foreign-ID chains and review-UI
 search), but only `active_provider` drives the resolver's fuzzy step.
 Switching is a config-level decision, not a runtime API call.
 
+### `[metadata.series_refresh]`
+
+```toml
+[metadata.series_refresh]
+# cron        = "0 5 * * *"  # disabled by default; omit to keep it off
+batch_size    = 50
+min_age_days  = 7
+```
+
+Re-fetches catalog series rows from the active provider so the
+stored title, description, cover, genres, tags, counts, and rating
+keep up with upstream changes. Distinct from
+[`providers.mangabaka.offline_refresh_cron`](#providersmangabaka),
+which swaps the provider's dump but never touches a series row.
+
+| Field | Default | Purpose |
+|---|---|---|
+| `cron` | unset | Cron for the scheduled job; absent disables it. The `POST /series/refresh-all` and `tsundoku refresh-series` triggers still work. 5-field crons get padded to seconds-0. |
+| `batch_size` | 50 | Max rows refreshed per tick. Each row is one outbound provider call; tune to what the provider's rate limit tolerates. `0` makes every tick a no-op (transient disable without dropping the cron). |
+| `min_age_days` | 7 | Skip rows whose `metadata_fetched_at` is fresher than this many days. Matches MangaBaka's published-dump cadence; tighten or loosen by observed upstream churn. |
+
+The full operator-facing story (UI, CLI, endpoints) is on the
+[Providers page → Series-row refresh](./providers.md#series-row-refresh).
+
 ## `[providers.mangabaka]`
 
 ```toml

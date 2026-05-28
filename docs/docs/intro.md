@@ -43,8 +43,9 @@ one-click provider-search modal.
 - New here? Start with [Getting Started](./getting-started.mdx).
 - Setting up a fresh deploy? [Configuration](./configuration.md) is the
   field-by-field reference.
-- Running it? [Sources](./sources.md), [Providers](./providers.md), and
-  [Review queue](./review-queue.md) cover day-to-day operations.
+- Running it? [Sources](./sources.md), [Providers](./providers.md),
+  the [Browse feed](./browse.md), the [Review queue](./review-queue.md),
+  and [Kept releases](./kept-releases.md) cover day-to-day operations.
 - Going to prod? [Deployment](./deployment.md) and
   [Troubleshooting](./troubleshooting.md).
 - Curious about the design? [Architecture](./architecture.md) is the

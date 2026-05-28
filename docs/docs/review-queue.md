@@ -1,6 +1,6 @@
 ---
 title: Review queue
-sidebar_position: 5
+sidebar_position: 6
 ---
 
 # Review Queue
@@ -38,6 +38,24 @@ If a release auto-resolved via foreign-ID lookup, the search query and
 rule badges still appear — they document what the cleaner *would have*
 produced, which is useful diagnostic data for the operator and for the
 next person debugging a regression.
+
+## Search and filter
+
+The queue header has a filter bar so a sudden flood doesn't bury
+older cards:
+
+- **Search** — debounced (300 ms) substring match against the raw
+  release title. Whitespace-only is treated as absent.
+- **Source** — restrict to a single `[[sources]]` instance by name.
+- **Format** — restrict to releases carrying one detected format
+  (`cbz`, `epub`, …). Matches via the `release_formats` join table,
+  so a multi-format release is included if any of its formats match.
+- **Status** — pin to one of `unresolved`, `ambiguous`,
+  `review_pending`. Any other value is ignored (the queue is always
+  scoped to those three).
+
+Changing any filter resets pagination and drops any in-flight bulk
+selection. "Clear filters" wipes all four at once.
 
 ## Actions
 
@@ -82,14 +100,82 @@ Marks the release as `rejected` and drops it from the queue. Use for
 spam, off-topic content, or releases that genuinely don't have a
 MangaBaka counterpart.
 
+### Keep (as standalone)
+
+Marks a release as `standalone` and moves it out of the queue. Use
+for worthwhile one-shots that aren't a series: a guidebook, an
+artbook, a databook. Kept releases live at
+[`/admin/kept`](./kept-releases.md) and never re-enter resolution
+unless the operator hits **Re-resolve** there.
+
 ## Bulk operations
 
-Not yet — the queue is one-card-at-a-time. If a release pattern
-floods the queue repeatedly (e.g. a new uploader pasting a keyword the
-cleaner doesn't know), the fix is usually:
+Tick the checkbox on multiple cards (or use **Select all matching**
+to target every release matching the current filters, not just the
+current page) and then **Retry** or **Reject** in bulk.
 
-1. Add the keyword to `[ingestion.cleanup.extra_format_keywords]`.
-2. Retry the affected releases.
+**Selection semantics:**
+
+- **Per-card checkboxes** — the explicit set; bulk actions act on
+  exactly these ids.
+- **Select all matching** — overrides the per-card set. The bulk
+  action targets every release matching the active filters, resolved
+  server-side. Switching pages, changing a filter, or changing the
+  search query clears the selection (a stale checkbox can't follow
+  you into a different filtered set).
+
+**Endpoints behind the buttons:**
+
+| Action | Endpoint |
+|---|---|
+| Bulk retry (selected ids) | `POST /releases/bulk/retry` with `{ ids: [...] }` |
+| Bulk reject (selected ids) | `POST /releases/bulk/reject` with `{ ids: [...] }` |
+| Bulk retry (matching filter) | `POST /releases/bulk/retry` with `{ q, sourceName, format, status }` |
+| Bulk retry (whole queue) | `POST /releases/retry-all` |
+
+**Retry the whole queue.** Distinct from bulk retry: `retry-all`
+walks every queue row regardless of filter, batched server-side under
+its own job lock. A concurrent retry-all (or a bulk retry that
+clashes with one already in flight) reports `triggered: false,
+skipped: true` rather than starting a second batch. Use it after a
+provider-cache refresh or a cleanup-rules change — see
+[Re-resolving after a rules change](#re-resolving-after-a-rules-change)
+for the broader version that also re-evaluates rows currently marked
+`resolved`.
+
+If a release pattern keeps flooding the queue (e.g. a new uploader
+pasting a keyword the cleaner doesn't know), the durable fix is
+still: add the keyword to `[ingestion.cleanup.extra_format_keywords]`,
+then bulk-retry the affected releases.
+
+## Re-resolving after a rules change
+
+A standard retry only re-runs rows that aren't already `resolved`.
+After tweaking format-type rules, alias dictionaries, or anything
+else that could change a *confident* match, send `resolved` rows back
+through the pipeline too:
+
+```bash
+# Endpoint (preferred while `serve` runs — single in-process batch).
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:8080/api/v1/releases/retry-all?includeResolved=true"
+```
+
+```bash
+# CLI (offline / one-shot).
+tsundoku resolve --include-resolved
+```
+
+Either path **skips manual links** (`resolution_path = 'manual'`) so
+operator-confirmed decisions are never overwritten. With `--retry-unresolved`
+the CLI also picks up `ambiguous` rows; the endpoint always does.
+
+:::warning Don't run the CLI against a DB a `serve` is using
+The CLI is a separate process — its job locks don't coordinate with a
+running `serve`. Prefer the endpoint while the server is up. See the
+[backfill warning](./sources.md#backfill-historical-catch-up) for the
+SQLite-corruption rationale; the same risk applies here.
+:::
 
 ## Auth
 

@@ -105,6 +105,54 @@ tsundoku refresh-provider-cache --provider mangabaka  # one specific provider
 Both paths share the same `JobLocks` mutex with the cron job — manual
 and scheduled refreshes can't race.
 
+## Series-row refresh
+
+`refresh-provider-cache` swaps the provider's dump. It does **not**
+touch any `series` row — the canonical title, description, cover URL,
+genres, tags, volume / chapter counts, and rating stored on each
+catalog row keep whatever values the resolver wrote when it first
+matched the release.
+
+Over time those rows drift from the provider's current state
+(MangaBaka backfills, the series advances, the description gets
+edited). The series-row refresh job walks the catalog and re-fetches
+each row's metadata from the active provider, persisting the result.
+
+### Config
+
+```toml
+[metadata.series_refresh]
+cron          = "0 5 * * *"   # daily 05:00 UTC. Omit to disable the cron.
+batch_size    = 50            # max rows refreshed per tick. 0 = no-op (transient disable).
+min_age_days  = 7             # skip rows whose metadata is fresher than this.
+```
+
+`min_age_days` defaults to 7 to match MangaBaka's published-dump
+cadence — refreshing a row whose metadata is one day old is wasted
+work because the cache hasn't moved. Loosen or tighten based on the
+upstream provider's churn.
+
+5-field crons are auto-padded to seconds-0, like every other cron in
+tsundoku.
+
+### Triggers
+
+| Path | Use |
+|---|---|
+| Scheduled cron (`metadata.series_refresh.cron`) | Hands-off; runs continuously while `serve` is up. |
+| `POST /api/v1/series/refresh-all` | Kick a batch now, from the admin UI or `curl`. Returns `202` with `{ triggered, skipped, batchSize, minAgeDays, provider }`. |
+| `tsundoku refresh-series` | Same code path; for cron-from-outside or one-shot batches when `serve` isn't running. Accepts `--batch-size` / `--min-age-days` overrides. |
+| `POST /api/v1/series/{id}/refresh-metadata` | Refresh a single series row by id — bypasses `min_age_days`, runs synchronously. Used by the admin UI's per-series action. |
+
+All bulk paths share the same provider-scoped job lock as
+`refresh-provider-cache`: a manual trigger that lands while a refresh
+is already in flight returns `triggered: false, skipped: true` rather
+than starting a second batch.
+
+A series with no mapping for the active provider is skipped silently
+on the bulk path; the single-id endpoint returns `409 Conflict` so
+the operator knows the row needs a manual link first.
+
 ## Metrics
 
 Every refresh attempt writes a row to `provider_refreshes`. Surfaced
