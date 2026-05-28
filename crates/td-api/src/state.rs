@@ -4,6 +4,7 @@
 //! Cheap to clone (everything is `Arc`).
 
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
@@ -95,9 +96,14 @@ pub struct AppState {
     /// Broadcast channel for manual-trigger lifecycle events. The SSE
     /// endpoint subscribes a fresh receiver per connection; manual
     /// trigger handlers publish via [`AppState::send_job_event`]. Cron
-    /// jobs intentionally do **not** publish here — this channel is
+    /// jobs intentionally do **not** publish here, this channel is
     /// the "user is staring at the screen" signal, not full audit log.
     pub job_events: broadcast::Sender<JobEvent>,
+    /// Root for the cover-image proxy cache. `None` disables the
+    /// `/api/v1/covers/*` endpoints (they respond 503). The `serve`
+    /// command populates this from `cfg.storage.paths().cover_cache_dir`;
+    /// test scaffolds default to `None`.
+    pub cover_cache_dir: Option<PathBuf>,
 }
 
 impl AppState {

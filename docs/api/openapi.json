@@ -14,6 +14,110 @@
     "version": "1.0.3"
   },
   "paths": {
+    "/api/v1/covers/by-url": {
+      "get": {
+        "tags": [
+          "covers"
+        ],
+        "summary": "Proxy + cache an arbitrary cover URL after host-allowlist validation.",
+        "operationId": "get_cover_by_url",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "description": "Absolute HTTPS URL of the cover image. Must be on the allowlist.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cover image bytes",
+            "content": {
+              "image/*": {}
+            }
+          },
+          "400": {
+            "description": "Missing, invalid, or disallowed URL"
+          },
+          "502": {
+            "description": "Upstream fetch failed"
+          },
+          "503": {
+            "description": "Cover cache directory not configured"
+          }
+        }
+      }
+    },
+    "/api/v1/covers/invalidate-cache": {
+      "post": {
+        "tags": [
+          "covers"
+        ],
+        "summary": "Wipe every file directly under `cover_cache_dir`. Subdirectories are\npreserved so an operator who keeps a sibling directory for unrelated\nartifacts does not lose it.",
+        "operationId": "invalidate_cover_cache",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidateCoverCacheResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cover cache directory not configured"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/covers/{series_id}": {
+      "get": {
+        "tags": [
+          "covers"
+        ],
+        "summary": "Serve the cached cover for a series, fetching upstream once on miss.",
+        "operationId": "get_cover_by_series_id",
+        "parameters": [
+          {
+            "name": "series_id",
+            "in": "path",
+            "description": "Internal series id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cover image bytes",
+            "content": {
+              "image/*": {}
+            }
+          },
+          "404": {
+            "description": "Series missing or has no cover URL"
+          },
+          "502": {
+            "description": "Upstream fetch failed"
+          },
+          "503": {
+            "description": "Cover cache directory not configured"
+          }
+        }
+      }
+    },
     "/api/v1/events/jobs": {
       "get": {
         "tags": [
@@ -1775,6 +1879,28 @@
             "type": "integer",
             "format": "int64",
             "description": "Epoch seconds the in-flight run started at."
+          }
+        }
+      },
+      "InvalidateCoverCacheResponse": {
+        "type": "object",
+        "description": "Response payload for `POST /api/v1/covers/invalidate-cache`.",
+        "required": [
+          "filesDeleted",
+          "bytesFreed"
+        ],
+        "properties": {
+          "bytesFreed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total bytes freed across the deleted files.",
+            "minimum": 0
+          },
+          "filesDeleted": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of files deleted from `cover_cache_dir`. Subdirectories\nand hidden files are ignored.",
+            "minimum": 0
           }
         }
       },
@@ -3778,6 +3904,10 @@
     {
       "name": "metrics",
       "description": "Per-source / per-provider historical run metrics"
+    },
+    {
+      "name": "covers",
+      "description": "Cover-image proxy and on-disk cache control"
     }
   ]
 }

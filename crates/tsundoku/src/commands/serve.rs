@@ -117,6 +117,7 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
         query_builder,
         mangaupdates_redirector: mu_redirector,
         job_events,
+        cover_cache_dir: Some(cfg.storage.paths().cover_cache_dir),
     };
     let app = td_api::router(state, &cfg);
 

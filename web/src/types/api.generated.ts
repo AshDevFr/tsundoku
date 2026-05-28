@@ -4,6 +4,61 @@
  */
 
 export interface paths {
+    "/api/v1/covers/by-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Proxy + cache an arbitrary cover URL after host-allowlist validation. */
+        get: operations["get_cover_by_url"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/covers/invalidate-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Wipe every file directly under `cover_cache_dir`. Subdirectories are
+         *     preserved so an operator who keeps a sibling directory for unrelated
+         *     artifacts does not lose it.
+         */
+        post: operations["invalidate_cover_cache"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/covers/{series_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Serve the cached cover for a series, fetching upstream once on miss. */
+        get: operations["get_cover_by_series_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events/jobs": {
         parameters: {
             query?: never;
@@ -848,6 +903,20 @@ export interface components {
              */
             startedAt: number;
         };
+        /** @description Response payload for `POST /api/v1/covers/invalidate-cache`. */
+        InvalidateCoverCacheResponse: {
+            /**
+             * Format: int64
+             * @description Total bytes freed across the deleted files.
+             */
+            bytesFreed: number;
+            /**
+             * Format: int32
+             * @description Number of files deleted from `cover_cache_dir`. Subdirectories
+             *     and hidden files are ignored.
+             */
+            filesDeleted: number;
+        };
         /**
          * @description Response from `POST /api/v1/series/invalidate-metadata-hashes`. The
          *     endpoint runs synchronously, so the counts are the actual outcome of
@@ -1590,6 +1659,120 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_cover_by_url: {
+        parameters: {
+            query: {
+                /** @description Absolute HTTPS URL of the cover image. Must be on the allowlist. */
+                url: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cover image bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": unknown;
+                };
+            };
+            /** @description Missing, invalid, or disallowed URL */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Upstream fetch failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Cover cache directory not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    invalidate_cover_cache: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidateCoverCacheResponse"];
+                };
+            };
+            /** @description Cover cache directory not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_cover_by_series_id: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Internal series id */
+                series_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cover image bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": unknown;
+                };
+            };
+            /** @description Series missing or has no cover URL */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Upstream fetch failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Cover cache directory not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     events_jobs: {
         parameters: {
             query?: never;

@@ -17,7 +17,7 @@ use crate::auth;
 use crate::docs::ApiDoc;
 use crate::embed::serve_static;
 use crate::handlers::{
-    events, health, info, metrics, providers, releases, series, sources, stats, tagging,
+    covers, events, health, info, metrics, providers, releases, series, sources, stats, tagging,
 };
 use crate::state::AppState;
 
@@ -50,6 +50,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
             post(providers::refresh_cache),
         )
         .route("/providers/refresh-all", post(providers::refresh_all))
+        .route("/covers/invalidate-cache", post(covers::invalidate_cache))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             auth::require_admin,
@@ -75,6 +76,8 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/metrics/review-queue", get(metrics::review_queue))
         .route("/metrics/id-maps", get(metrics::id_maps))
         .route("/events/jobs", get(events::jobs))
+        .route("/covers/by-url", get(covers::get_by_url))
+        .route("/covers/{series_id}", get(covers::get_by_series_id))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             auth::require_read,

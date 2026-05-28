@@ -39,6 +39,8 @@ utoipa.workspace = true
 utoipa-axum.workspace = true
 utoipa-scalar.workspace = true
 chrono.workspace = true
+reqwest.workspace = true
+sha2.workspace = true
 
 rust-embed = { workspace = true, optional = true }
 mime_guess = { workspace = true, optional = true }
@@ -48,3 +50,4 @@ migration = { path = "../../migration" }
 tower = { workspace = true, features = ["util"] }
 http-body-util.workspace = true
 bytes.workspace = true
+tempfile = "3"

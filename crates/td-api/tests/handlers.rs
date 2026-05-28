@@ -3068,3 +3068,306 @@ async fn invalidate_metadata_hashes_requires_admin_token() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+// Cover-proxy tests.
+//
+// The on-disk cache is content-addressed at `sha256(url).<ext>`; we hand
+// the handler a pre-warmed tempdir so it never has to reach upstream.
+// The "fetches on miss" path is left for manual verification against a
+// real MangaBaka URL; standing up an HTTP stub here would buy little.
+fn covers_cache_filename(url: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(url.as_bytes());
+    let digest = h.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for b in digest {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    let lower = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .to_ascii_lowercase();
+    let ext = if lower.ends_with(".png") {
+        "png"
+    } else if lower.ends_with(".webp") {
+        "webp"
+    } else if lower.ends_with(".gif") {
+        "gif"
+    } else {
+        "jpg"
+    };
+    format!("{hex}.{ext}")
+}
+
+async fn seed_series_with_cover(db: &sea_orm::DatabaseConnection, cover_url: &str) -> i32 {
+    let now = Utc::now().timestamp();
+    let model = series::ActiveModel {
+        canonical_title: Set("With Cover".into()),
+        alternate_titles_json: Set(None),
+        cover_url: Set(Some(cover_url.into())),
+        kind: Set(Some("manga".into())),
+        status: Set(Some("ongoing".into())),
+        year: Set(Some(2020)),
+        metadata_json: Set(None),
+        metadata_source: Set("api".into()),
+        metadata_hash: Set(None),
+        metadata_fetched_at: Set(now),
+        first_seen_at: Set(now),
+        last_release_at: Set(now),
+        highest_volume: Set(None),
+        highest_chapter: Set(None),
+        owned: Set(0),
+        ..Default::default()
+    };
+    model.insert(db).await.unwrap().id
+}
+
+#[tokio::test]
+async fn covers_returns_404_for_missing_series() {
+    let db = fresh_db().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let app = build_app_with_cover_cache(db, open_auth(), tmp.path().to_path_buf());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/covers/9999")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn covers_returns_404_when_series_has_no_cover_url() {
+    let db = fresh_db().await;
+    let id = seed_series(&db, "No Cover", "manga").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let app = build_app_with_cover_cache(db, open_auth(), tmp.path().to_path_buf());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/covers/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn covers_serves_cached_bytes_for_series() {
+    let db = fresh_db().await;
+    let cover_url = "https://cdn.mangabaka.dev/series/42/cover-350.jpg";
+    let id = seed_series_with_cover(&db, cover_url).await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let filename = covers_cache_filename(cover_url);
+    let bytes = b"\xFF\xD8\xFF\xE0fake-jpeg".to_vec();
+    tokio::fs::write(tmp.path().join(&filename), &bytes)
+        .await
+        .unwrap();
+
+    let app = build_app_with_cover_cache(db, open_auth(), tmp.path().to_path_buf());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/covers/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get(header::CONTENT_TYPE).unwrap(),
+        "image/jpeg"
+    );
+    assert_eq!(
+        resp.headers().get(header::CACHE_CONTROL).unwrap(),
+        "public, max-age=3600"
+    );
+    let body = to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+    assert_eq!(body.as_ref(), bytes.as_slice());
+}
+
+#[tokio::test]
+async fn covers_by_url_serves_cached_bytes_for_allowed_host() {
+    let db = fresh_db().await;
+    let cover_url = "https://cdn.mangabaka.dev/series/7/raw.png";
+    let tmp = tempfile::tempdir().unwrap();
+    let filename = covers_cache_filename(cover_url);
+    tokio::fs::write(tmp.path().join(&filename), b"\x89PNG\r\n\x1A\nfake")
+        .await
+        .unwrap();
+
+    let app = build_app_with_cover_cache(db, open_auth(), tmp.path().to_path_buf());
+    let encoded = urlencoding_form(cover_url);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/covers/by-url?url={encoded}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get(header::CONTENT_TYPE).unwrap(),
+        "image/png"
+    );
+}
+
+#[tokio::test]
+async fn covers_by_url_rejects_disallowed_host() {
+    let db = fresh_db().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let app = build_app_with_cover_cache(db, open_auth(), tmp.path().to_path_buf());
+
+    let encoded = urlencoding_form("https://evil.example.com/x.jpg");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/covers/by-url?url={encoded}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn covers_by_url_rejects_http_scheme() {
+    let db = fresh_db().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let app = build_app_with_cover_cache(db, open_auth(), tmp.path().to_path_buf());
+
+    let encoded = urlencoding_form("http://mangabaka.dev/x.jpg");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/covers/by-url?url={encoded}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn covers_invalidate_cache_deletes_files_and_returns_counts() {
+    let db = fresh_db().await;
+    let tmp = tempfile::tempdir().unwrap();
+    tokio::fs::write(tmp.path().join("a.jpg"), vec![1u8; 100])
+        .await
+        .unwrap();
+    tokio::fs::write(tmp.path().join("b.png"), vec![2u8; 50])
+        .await
+        .unwrap();
+    tokio::fs::create_dir(tmp.path().join("keep"))
+        .await
+        .unwrap();
+
+    let app = build_app_with_cover_cache(db, open_auth(), tmp.path().to_path_buf());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/covers/invalidate-cache")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["filesDeleted"], 2);
+    assert_eq!(body["bytesFreed"], 150);
+    assert!(!tmp.path().join("a.jpg").exists());
+    assert!(!tmp.path().join("b.png").exists());
+    assert!(tmp.path().join("keep").exists());
+}
+
+#[tokio::test]
+async fn covers_invalidate_cache_requires_admin_bearer() {
+    let db = fresh_db().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let app = build_app_with_cover_cache(db, open_auth(), tmp.path().to_path_buf());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/covers/invalidate-cache")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn covers_503_when_cache_dir_not_configured() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/covers/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/covers/invalidate-cache")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// Minimal application/x-www-form-urlencoded encoder for query-param
+/// test inputs. Avoids pulling a dep just to encode `:` and `/`.
+fn urlencoding_form(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.as_bytes() {
+        match *b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}

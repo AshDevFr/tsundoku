@@ -9,6 +9,7 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 
 use crate::errors::ApiErrorBody;
+use crate::handlers::covers::InvalidateCoverCacheResponse;
 use crate::handlers::metrics::{
     ErrorKindBucket, ExternalIdMapCount, FetchLatencyDto, IdMapMetrics, MangaupdatesRedirectStats,
     ProviderMetricsBucket, ProviderMetricsDetail, ProviderMetricsSummary,
@@ -36,7 +37,7 @@ use crate::handlers::sources::{
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
 use crate::handlers::{
-    events, health, info, metrics, providers, releases, series, sources, stats, tagging,
+    covers, events, health, info, metrics, providers, releases, series, sources, stats, tagging,
 };
 use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult};
 
@@ -83,6 +84,9 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         metrics::review_queue,
         metrics::id_maps,
         events::jobs,
+        covers::get_by_series_id,
+        covers::get_by_url,
+        covers::invalidate_cache,
     ),
     components(schemas(
         ApiErrorBody,
@@ -147,6 +151,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         JobResult,
         JobProgress,
         InFlight,
+        InvalidateCoverCacheResponse,
     )),
     tags(
         (name = "system", description = "Health and aggregate counters"),
@@ -155,7 +160,8 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         (name = "sources", description = "Discovery-source state and triggers"),
         (name = "providers", description = "Metadata-provider state and triggers"),
         (name = "tagging", description = "Canonical genre and tag lists for filter UI"),
-        (name = "metrics", description = "Per-source / per-provider historical run metrics")
+        (name = "metrics", description = "Per-source / per-provider historical run metrics"),
+        (name = "covers", description = "Cover-image proxy and on-disk cache control"),
     ),
     modifiers(&BearerSecurity)
 )]

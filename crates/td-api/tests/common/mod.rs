@@ -177,8 +177,46 @@ pub fn build_app_with_events(
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
         job_events,
+        cover_cache_dir: None,
     };
     (td_api::router(state, &cfg), events_handle)
+}
+
+/// Router variant for the cover-proxy tests. Wires `cover_cache_dir`
+/// (the only field that matters for `/api/v1/covers/*`) and leaves every
+/// other knob at the same defaults as [`build_app`].
+pub fn build_app_with_cover_cache(
+    db: DatabaseConnection,
+    auth: AuthConfig,
+    cover_cache_dir: std::path::PathBuf,
+) -> Router {
+    let metadata = metadata_registry_with(StubProvider {
+        id: "stub",
+        ..Default::default()
+    });
+    let sources = source_registry_with(vec![]);
+    let cfg = AppConfig {
+        auth: auth.clone(),
+        api: td_config::ApiConfig { docs: false },
+        ..AppConfig::default()
+    };
+    let (job_events, _) = tokio::sync::broadcast::channel(td_api::JOB_EVENT_BUFFER);
+    let state = td_api::AppState {
+        db,
+        sources: Arc::new(sources),
+        metadata: Arc::new(metadata),
+        ingestion: IngestionConfig::default(),
+        auth: Arc::new(auth),
+        locks: Arc::new(JobLocks::default()),
+        sources_config: Arc::new(Vec::new()),
+        providers_config: Arc::new(ProvidersConfig::default()),
+        metadata_config: Arc::new(td_config::MetadataConfig::default()),
+        query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
+        mangaupdates_redirector: None,
+        job_events,
+        cover_cache_dir: Some(cover_cache_dir),
+    };
+    td_api::router(state, &cfg)
 }
 
 pub fn sample_release(id: &str, source_name: &str, title: &str) -> DiscoveredRelease {
