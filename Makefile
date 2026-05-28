@@ -252,50 +252,72 @@ changelog-release: ## Generate the changelog for a version (usage: make changelo
 		echo "$(YELLOW)Error: VERSION not set. Use: make changelog-release VERSION=1.0.0$(NC)"; \
 		exit 1; \
 	fi
+	@touch CHANGELOG.md
 	git-cliff --unreleased --tag v$(VERSION) --prepend CHANGELOG.md
 	@echo "$(GREEN)Changelog generated for v$(VERSION)$(NC)"
 
-# ── Release prep ─────────────────────────────────────────────────────────────
+# ── Release ──────────────────────────────────────────────────────────────────
 
-release-prepare: ## Bump versions + changelog + types (usage: make release-prepare VERSION=1.0.0)
+release-prepare: ## Prepare a release (usage: make release-prepare VERSION=1.0.0)
 	@if [ -z "$(VERSION)" ]; then \
 		echo "$(YELLOW)Error: VERSION not set. Use: make release-prepare VERSION=1.0.0$(NC)"; \
 		exit 1; \
 	fi
 	@echo "$(BLUE)Preparing release v$(VERSION)...$(NC)"
+	@echo ""
+
+	@# Update Cargo.toml version
+	@echo "$(YELLOW)Updating Cargo.toml version...$(NC)";
 	@sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' Cargo.toml && rm Cargo.toml.bak
 	@echo "$(GREEN)✓$(NC) Cargo.toml version set to $(VERSION)"
-	
+
+	@# Update web/package.json version
+	@echo "$(YELLOW)Updating web/package.json version...$(NC)";
 	@cd web && npm version $(VERSION) --no-git-tag-version --allow-same-version >/dev/null 2>&1
 	@echo "$(GREEN)✓$(NC) web/package.json version set to $(VERSION)"
-	
+
+	@# Update docs/package.json version
+	@echo "$(YELLOW)Updating docs/package.json version...$(NC)";
 	@cd docs && npm version $(VERSION) --no-git-tag-version --allow-same-version >/dev/null 2>&1
 	@echo "$(GREEN)✓$(NC) docs/package.json version set to $(VERSION)"
-	
-	@cargo build --quiet 2>/dev/null || cargo build
-	@echo "$(GREEN)✓$(NC) Cargo.lock updated"
-	
-	@$(MAKE) openapi-all
-	@echo "$(GREEN)✓$(NC) Regenerated OpenAPI spec and TS types"
-	
-	@$(MAKE) docs-refresh-api-docs
-	@echo "$(GREEN)✓$(NC) Regenerated docs API reference"
 
-	@# Skip regeneration if CHANGELOG.md has local edits — the operator
-	# may have hand-curated release notes that we shouldn't clobber.
+	@# Update Cargo.lock
+	@echo "$(YELLOW)Updating Cargo.lock...$(NC)";
+	@cargo build --quiet 2>/dev/null || cargo build
+	@echo "$(GREEN)✓$(NC) Updated Cargo.lock"
+
+	@# Regenerate OpenAPI spec and TypeScript types
+	@echo "$(YELLOW)Regenerating OpenAPI spec and TypeScript types...$(NC)";
+	@$(MAKE) openapi-all
+	@echo "$(GREEN)✓$(NC) Regenerated OpenAPI spec and TypeScript types"
+
+	@# Generate changelog (skip if already modified)
+	@echo "$(YELLOW)Generating CHANGELOG.md...$(NC)";
 	@if git diff --quiet CHANGELOG.md 2>/dev/null && git diff --cached --quiet CHANGELOG.md 2>/dev/null; then \
 		$(MAKE) changelog-release VERSION=$(VERSION); \
-		echo "$(GREEN)✓$(NC) Regenerated CHANGELOG.md for v$(VERSION)"; \
+		echo "$(GREEN)✓$(NC) Generated CHANGELOG.md for v$(VERSION)"; \
 	else \
-		echo "$(YELLOW)⊘$(NC) Skipped CHANGELOG.md regeneration (already modified)"; \
-		echo "   To regenerate from scratch:"; \
-		echo "     git checkout CHANGELOG.md && make changelog-release VERSION=$(VERSION)"; \
+		echo "$(YELLOW)⊘$(NC) Skipped CHANGELOG.md (already modified)"; \
+		echo "   To regenerate: git checkout CHANGELOG.md && make changelog-release VERSION=$(VERSION)"; \
 	fi
 	@echo ""
-	@echo "$(GREEN)Release v$(VERSION) prepared.$(NC) Next:"
-	@echo "  git add -A && git commit -m \"chore(release): v$(VERSION)\""
-	@echo "  git tag -a v$(VERSION) -m \"v$(VERSION)\""
-	@echo "  git push && git push --tags"
+	@echo "$(BLUE)═══════════════════════════════════════════════════════════════$(NC)"
+	@echo "$(GREEN)Release v$(VERSION) prepared!$(NC)"
+	@echo "$(BLUE)═══════════════════════════════════════════════════════════════$(NC)"
+	@echo ""
+	@echo "$(YELLOW)Next steps:$(NC)"
+	@echo "  1. Review the changes:"
+	@echo "     $(GREEN)git diff$(NC)"
+	@echo ""
+	@echo "  2. Commit the release:"
+	@echo "     $(GREEN)git add -A && git commit -m \"chore(release): v$(VERSION)\"$(NC)"
+	@echo ""
+	@echo "  3. Create the tag:"
+	@echo "     $(GREEN)git tag -a v$(VERSION) -m \"v$(VERSION)\"$(NC)"
+	@echo ""
+	@echo "  4. Push to remote:"
+	@echo "     $(GREEN)git push && git push --tags$(NC)"
+	@echo ""
 
 # ── Binary distribution (cargo-dist) ─────────────────────────────────────────
 # Note: dist builds embed the frontend, so run `make frontend-build` first
