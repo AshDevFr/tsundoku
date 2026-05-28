@@ -48,7 +48,7 @@ multi-writer model, no read replicas, no PostgreSQL fallback.
 
 A **source** polls some upstream feed and emits `DiscoveredRelease`
 records. v1 ships only Nyaa (RSS feed + per-post HTML enrichment).
-The [`DiscoverySource`](https://github.com/skewb1k/tsundoku/blob/main/crates/td-source/src/source.rs)
+The [`DiscoverySource`](https://github.com/AshDevFr/tsundoku/blob/main/crates/td-source/src/source.rs)
 trait is the contract; adding a new source means writing a
 `td-source-<name>` crate.
 
@@ -78,7 +78,7 @@ land in the [review queue](./review-queue.md).
 A **provider** is a metadata source the resolver talks to. v1 ships
 MangaBaka with an offline-first design — a nightly SQLite dump opened
 read-only as a side database, queried via an FTS5 mirror. The
-[`MetadataProvider`](https://github.com/skewb1k/tsundoku/blob/main/crates/td-metadata/src/provider.rs)
+[`MetadataProvider`](https://github.com/AshDevFr/tsundoku/blob/main/crates/td-metadata/src/provider.rs)
 trait is the contract; adding a new provider means writing a
 `td-metadata-<name>` crate.
 

@@ -11,7 +11,7 @@ and `search` methods to match incoming releases to series.
 
 v1 ships only **MangaBaka**, but the architecture is provider-pluggable
 via the
-[`MetadataProvider`](https://github.com/skewb1k/tsundoku/blob/main/crates/td-metadata/src/provider.rs)
+[`MetadataProvider`](https://github.com/AshDevFr/tsundoku/blob/main/crates/td-metadata/src/provider.rs)
 trait. Adding one means writing a `td-metadata-<name>` crate plus a
 config block — no core changes.
 
@@ -149,12 +149,12 @@ tsundoku.
 
 ### Triggers
 
-| Path | Use |
-|---|---|
-| Scheduled cron (`metadata.series_refresh.cron`) | Hands-off; runs continuously while `serve` is up. |
-| `POST /api/v1/series/refresh-all` | Kick a batch now, from the admin UI or `curl`. Returns `202` with `{ triggered, skipped, batchSize, minAgeDays, provider }`. |
-| `tsundoku refresh-series` | Same code path; for cron-from-outside or one-shot batches when `serve` isn't running. Accepts `--batch-size` / `--min-age-days` overrides. |
-| `POST /api/v1/series/{id}/refresh-metadata` | Refresh a single series row by id — bypasses `min_age_days`, runs synchronously. Used by the admin UI's per-series action. |
+| Path                                            | Use                                                                                                                                        |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Scheduled cron (`metadata.series_refresh.cron`) | Hands-off; runs continuously while `serve` is up.                                                                                          |
+| `POST /api/v1/series/refresh-all`               | Kick a batch now, from the admin UI or `curl`. Returns `202` with `{ triggered, skipped, batchSize, minAgeDays, provider }`.               |
+| `tsundoku refresh-series`                       | Same code path; for cron-from-outside or one-shot batches when `serve` isn't running. Accepts `--batch-size` / `--min-age-days` overrides. |
+| `POST /api/v1/series/{id}/refresh-metadata`     | Refresh a single series row by id — bypasses `min_age_days`, runs synchronously. Used by the admin UI's per-series action.                 |
 
 All bulk paths share the same provider-scoped job lock as
 `refresh-provider-cache`: a manual trigger that lands while a refresh
@@ -179,7 +179,7 @@ on the admin metrics tab:
 ## Adding a new provider
 
 Implement the
-[`MetadataProvider`](https://github.com/skewb1k/tsundoku/blob/main/crates/td-metadata/src/provider.rs)
+[`MetadataProvider`](https://github.com/AshDevFr/tsundoku/blob/main/crates/td-metadata/src/provider.rs)
 trait in a new `td-metadata-<name>` crate, add a `[providers.<name>]`
 config block, and add one line to the registry builder. If the
 provider has an offline dump, ship a nested sea-orm migrator inside

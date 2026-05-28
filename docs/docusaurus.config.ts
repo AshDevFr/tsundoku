@@ -28,7 +28,7 @@ const config: Config = {
 
   // GitHub Pages config would live here if we used GitHub Pages. We don't
   // (Cloudflare Pages), so these are unused but harmless.
-  organizationName: "skewb1k",
+  organizationName: "AshDevFr",
   projectName: "tsundoku",
 
   onBrokenLinks: "throw",
@@ -136,7 +136,7 @@ const config: Config = {
           label: "API",
         },
         {
-          href: "https://github.com/skewb1k/tsundoku",
+          href: "https://github.com/AshDevFr/tsundoku",
           label: "GitHub",
           position: "right",
         },
@@ -156,11 +156,11 @@ const config: Config = {
           items: [
             {
               label: "GitHub",
-              href: "https://github.com/skewb1k/tsundoku",
+              href: "https://github.com/AshDevFr/tsundoku",
             },
             {
               label: "Issues",
-              href: "https://github.com/skewb1k/tsundoku/issues",
+              href: "https://github.com/AshDevFr/tsundoku/issues",
             },
           ],
         },

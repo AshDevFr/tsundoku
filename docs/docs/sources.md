@@ -8,7 +8,7 @@ sidebar_position: 3
 A **source** is a polled discovery feed. Each `[[sources]]` config
 block produces one instance. v1 ships only the Nyaa source, but the
 architecture is source-pluggable via the
-[`DiscoverySource`](https://github.com/skewb1k/tsundoku/blob/main/crates/td-source/src/source.rs)
+[`DiscoverySource`](https://github.com/AshDevFr/tsundoku/blob/main/crates/td-source/src/source.rs)
 trait — adding a new source means writing a `td-source-<name>` crate
 and adding a config kind, no core changes.
 
@@ -35,14 +35,14 @@ step.
 
 The Nyaa search box generates RSS-compatible URLs. Useful filters:
 
-| Query param | Purpose |
-|---|---|
-| `c=3_1` | Literature → English-translated |
-| `c=3_2` | Literature → Untranslated |
-| `c=3_3` | Literature → Raw |
-| `f=2` | Trusted uploaders only |
-| `q=<term>` | Search query |
-| `u=<uploader>` | Filter by uploader name |
+| Query param    | Purpose                         |
+| -------------- | ------------------------------- |
+| `c=3_1`        | Literature → English-translated |
+| `c=3_2`        | Literature → Untranslated       |
+| `c=3_3`        | Literature → Raw                |
+| `f=2`          | Trusted uploaders only          |
+| `q=<term>`     | Search query                    |
+| `u=<uploader>` | Filter by uploader name         |
 
 Example: trusted English-translated manga from a specific uploader:
 
@@ -187,7 +187,7 @@ that don't auto-resolve.
 ## Adding a new source
 
 Implement the
-[`DiscoverySource`](https://github.com/skewb1k/tsundoku/blob/main/crates/td-source/src/source.rs)
+[`DiscoverySource`](https://github.com/AshDevFr/tsundoku/blob/main/crates/td-source/src/source.rs)
 trait in a new `td-source-<name>` crate, add a `[[sources]] kind =
 "<name>"` config schema variant, and register it in the source
 registry builder. No core changes. The PRD's "Future Considerations"

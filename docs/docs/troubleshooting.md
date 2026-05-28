@@ -38,7 +38,7 @@ Use the **Search provider** modal to find the correct series, then
 click "Link" on the right hit. The release transitions to `resolved`
 with `resolution_path = "manual"`. The wrong link is overwritten.
 
-If a *pattern* of wrong matches surfaces (same uploader, same shape),
+If a _pattern_ of wrong matches surfaces (same uploader, same shape),
 file an issue with the cleaned query + the candidate's Dice score —
 the cleaner rule order may need a tweak.
 
@@ -145,7 +145,7 @@ set `logging.json = true` in config.
 
 ## When to file an issue
 
-[github.com/skewb1k/tsundoku/issues](https://github.com/skewb1k/tsundoku/issues).
+[github.com/AshDevFr/tsundoku/issues](https://github.com/AshDevFr/tsundoku/issues).
 
 Useful in the report:
 

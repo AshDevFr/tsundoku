@@ -61,7 +61,7 @@ $EDITOR config/tsundoku.toml
 make prod-up                       # docker compose --profile prod up -d
 ```
 
-Pre-built multi-arch images at `ghcr.io/skewb1k/tsundoku:latest` and
+Pre-built multi-arch images at `ghcr.io/ashdevfr/tsundoku:latest` and
 `:v<version>`.
 
 ## Status

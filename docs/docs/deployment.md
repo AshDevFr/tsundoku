@@ -15,8 +15,8 @@ Pre-built multi-arch images are published to GHCR on every push to
 `main` and on every version tag:
 
 ```bash
-docker pull ghcr.io/skewb1k/tsundoku:latest      # main
-docker pull ghcr.io/skewb1k/tsundoku:v0.1.0      # tagged release
+docker pull ghcr.io/ashdevfr/tsundoku:latest      # main
+docker pull ghcr.io/ashdevfr/tsundoku:v0.1.0      # tagged release
 ```
 
 ### Compose
@@ -49,7 +49,7 @@ make docker-push            # multi-arch via buildx
 
 Cargo-dist publishes platform binaries on every version tag with build
 provenance attestations. Grab one from the
-[releases page](https://github.com/skewb1k/tsundoku/releases) or build
+[releases page](https://github.com/AshDevFr/tsundoku/releases) or build
 from source:
 
 ```bash
@@ -136,11 +136,11 @@ service restarts in seconds.
 
 Two GitHub Actions workflows:
 
-- [`ci.yml`](https://github.com/skewb1k/tsundoku/blob/main/.github/workflows/ci.yml)
+- [`ci.yml`](https://github.com/AshDevFr/tsundoku/blob/main/.github/workflows/ci.yml)
   on every PR: partitioned tests (`cargo-nextest`), Rust lint, frontend
   lint/tests/build, and a multi-arch Docker build pushed to GHCR with
   a PR tag.
-- [`build.yml`](https://github.com/skewb1k/tsundoku/blob/main/.github/workflows/build.yml)
+- [`build.yml`](https://github.com/AshDevFr/tsundoku/blob/main/.github/workflows/build.yml)
   on push to `main` and on version tags: the same checks plus
   `cargo-dist` platform binaries (with provenance attestations) and
   multi-arch Docker images. Tags also create a GitHub Release with

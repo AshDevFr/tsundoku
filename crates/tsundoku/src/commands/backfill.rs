@@ -44,7 +44,7 @@ pub async fn run(config_path: PathBuf, source_name: String, pages: u32) -> Resul
     let user_agent = concat!(
         "tsundoku/",
         env!("CARGO_PKG_VERSION"),
-        " (+https://github.com/skewb1k/tsundoku)"
+        " (+https://github.com/AshDevFr/tsundoku)"
     );
     let query_builder = Arc::new(
         QueryBuilder::new(&cfg.ingestion.cleanup.extra_format_keywords)

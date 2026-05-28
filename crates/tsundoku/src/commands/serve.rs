@@ -57,7 +57,7 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
     let user_agent = concat!(
         "tsundoku/",
         env!("CARGO_PKG_VERSION"),
-        " (+https://github.com/skewb1k/tsundoku)"
+        " (+https://github.com/AshDevFr/tsundoku)"
     );
     let mu_redirector = match MangaUpdatesRedirector::new(user_agent, limiter.clone()) {
         Ok(r) => Some(Arc::new(r)),

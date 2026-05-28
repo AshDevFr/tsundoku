@@ -27,7 +27,7 @@ function HomepageHeader() {
           </Link>
           <Link
             className={styles.secondaryButton}
-            href="https://github.com/skewb1k/tsundoku"
+            href="https://github.com/AshDevFr/tsundoku"
           >
             GitHub
           </Link>
@@ -50,7 +50,7 @@ function QuickLinks(): ReactNode {
           </div>
           <div className="col col--4">
             <Link
-              href="https://github.com/skewb1k/tsundoku#readme"
+              href="https://github.com/AshDevFr/tsundoku#readme"
               className={styles.quickLink}
             >
               <span className={styles.quickLinkIcon}>⚙️</span>
@@ -59,7 +59,7 @@ function QuickLinks(): ReactNode {
           </div>
           <div className="col col--4">
             <Link
-              href="https://github.com/skewb1k/tsundoku/issues"
+              href="https://github.com/AshDevFr/tsundoku/issues"
               className={styles.quickLink}
             >
               <span className={styles.quickLinkIcon}>🐛</span>

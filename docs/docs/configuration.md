@@ -22,7 +22,7 @@ local file is gitignored — use it for secrets and host-specific
 overrides.
 
 The canonical reference is
-[`config/tsundoku.example.toml`](https://github.com/skewb1k/tsundoku/blob/main/config/tsundoku.example.toml)
+[`config/tsundoku.example.toml`](https://github.com/AshDevFr/tsundoku/blob/main/config/tsundoku.example.toml)
 with inline documentation for every key. This page is a faster-to-skim
 version organized by section.
 
@@ -52,12 +52,12 @@ data_dir = "./data"
 # tmp_dir            = "./data/tmp"
 ```
 
-| Default                          | Contents                              |
-| -------------------------------- | ------------------------------------- |
-| `${data_dir}/db/tsundoku.db`     | SQLite database (the only stateful file) |
-| `${data_dir}/cache/providers/`   | Metadata provider offline caches (e.g. MangaBaka dump) |
-| `${data_dir}/cache/covers/`      | On-disk cache served by the `/api/v1/covers/*` proxy |
-| `${data_dir}/tmp/`               | Transient downloads, in-progress ingests |
+| Default                        | Contents                                               |
+| ------------------------------ | ------------------------------------------------------ |
+| `${data_dir}/db/tsundoku.db`   | SQLite database (the only stateful file)               |
+| `${data_dir}/cache/providers/` | Metadata provider offline caches (e.g. MangaBaka dump) |
+| `${data_dir}/cache/covers/`    | On-disk cache served by the `/api/v1/covers/*` proxy   |
+| `${data_dir}/tmp/`             | Transient downloads, in-progress ingests               |
 
 Docker mounts a single volume at `data_dir`. Back up by copying the
 directory.
@@ -132,11 +132,11 @@ keep up with upstream changes. Distinct from
 [`providers.mangabaka.offline_refresh_cron`](#providersmangabaka),
 which swaps the provider's dump but never touches a series row.
 
-| Field | Default | Purpose |
-|---|---|---|
-| `cron` | unset | Cron for the scheduled job; absent disables it. The `POST /series/refresh-all` and `tsundoku refresh-series` triggers still work. 5-field crons get padded to seconds-0. |
-| `batch_size` | 50 | Max rows refreshed per tick. Each row is one outbound provider call; tune to what the provider's rate limit tolerates. `0` makes every tick a no-op (transient disable without dropping the cron). |
-| `min_age_days` | 7 | Skip rows whose `metadata_fetched_at` is fresher than this many days. Matches MangaBaka's published-dump cadence; tighten or loosen by observed upstream churn. |
+| Field          | Default | Purpose                                                                                                                                                                                            |
+| -------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cron`         | unset   | Cron for the scheduled job; absent disables it. The `POST /series/refresh-all` and `tsundoku refresh-series` triggers still work. 5-field crons get padded to seconds-0.                           |
+| `batch_size`   | 50      | Max rows refreshed per tick. Each row is one outbound provider call; tune to what the provider's rate limit tolerates. `0` makes every tick a no-op (transient disable without dropping the cron). |
+| `min_age_days` | 7       | Skip rows whose `metadata_fetched_at` is fresher than this many days. Matches MangaBaka's published-dump cadence; tighten or loosen by observed upstream churn.                                    |
 
 The full operator-facing story (UI, CLI, endpoints) is on the
 [Providers page → Series-row refresh](./providers.md#series-row-refresh).
@@ -155,16 +155,16 @@ negative_cache_ttl_days = 7
 timeout_seconds        = 60
 ```
 
-| Field | Purpose |
-|---|---|
-| `enabled` | When false, provider is skipped at boot. |
-| `api_base_url` | Live-API endpoint. Used for `api_fallback` calls. |
-| `api_key` | Optional. Without it, the provider runs in offline-only mode. |
-| `api_fallback` | When true + `api_key` set, cache misses fall back to a live API call. |
-| `offline_dump_url` | URL of the nightly SQLite dump. Leave unset to disable the offline cache. |
-| `offline_refresh_cron` | Cron expression for periodic dump refresh. 5-field crons are auto-padded to seconds-0. |
-| `negative_cache_ttl_days` | How long to remember "this ID isn't in MangaBaka" before retrying. |
-| `timeout_seconds` | HTTP timeout for both the API and the dump download. |
+| Field                     | Purpose                                                                                |
+| ------------------------- | -------------------------------------------------------------------------------------- |
+| `enabled`                 | When false, provider is skipped at boot.                                               |
+| `api_base_url`            | Live-API endpoint. Used for `api_fallback` calls.                                      |
+| `api_key`                 | Optional. Without it, the provider runs in offline-only mode.                          |
+| `api_fallback`            | When true + `api_key` set, cache misses fall back to a live API call.                  |
+| `offline_dump_url`        | URL of the nightly SQLite dump. Leave unset to disable the offline cache.              |
+| `offline_refresh_cron`    | Cron expression for periodic dump refresh. 5-field crons are auto-padded to seconds-0. |
+| `negative_cache_ttl_days` | How long to remember "this ID isn't in MangaBaka" before retrying.                     |
+| `timeout_seconds`         | HTTP timeout for both the API and the dump download.                                   |
 
 The full lifecycle of the offline cache lives on the
 [Providers page](./providers.md).
@@ -192,12 +192,12 @@ queue_low_confidence  = true
 
 ### Thresholds
 
-| Field | Default | Meaning |
-|---|---|---|
-| `resolution_threshold` | 0.85 | Dice score above which a fuzzy hit auto-resolves. |
-| `review_threshold` | 0.55 | Minimum score to surface a candidate in the review queue. |
-| `fuzzy_search_limit` | 10 | Cap on `MetadataProvider::search` candidates inspected per release. |
-| `queue_low_confidence` | true | When false, sub-threshold hits leave the release `unresolved` without writing candidates. |
+| Field                  | Default | Meaning                                                                                   |
+| ---------------------- | ------- | ----------------------------------------------------------------------------------------- |
+| `resolution_threshold` | 0.85    | Dice score above which a fuzzy hit auto-resolves.                                         |
+| `review_threshold`     | 0.55    | Minimum score to surface a candidate in the review queue.                                 |
+| `fuzzy_search_limit`   | 10      | Cap on `MetadataProvider::search` candidates inspected per release.                       |
+| `queue_low_confidence` | true    | When false, sub-threshold hits leave the release `unresolved` without writing candidates. |
 
 ### `[[ingestion.format_type_rules]]`
 
@@ -239,16 +239,16 @@ enabled = true
   site_base_url   = "https://nyaa.si"
 ```
 
-| Field | Purpose |
-|---|---|
-| `kind` | Implementation selector. v1 ships only `"nyaa"`. |
-| `name` | Stable identifier. Used in URLs, metrics, and config overrides. |
-| `cron` | Schedule. Omit to skip the scheduled poll; the CLI one-shot still works. |
-| `enabled` | Set to false to keep the entry around without polling. |
-| `sources.nyaa.feed_url` | The RSS URL to poll. Tune per the [Sources page](./sources.md). |
-| `sources.nyaa.fetch_details` | Fetch each post's detail page for richer file/link data. Default true. |
-| `sources.nyaa.timeout_seconds` | HTTP timeout for feed + detail fetches. |
-| `sources.nyaa.site_base_url` | Override for proxied feeds. Defaults to `https://nyaa.si`. |
+| Field                          | Purpose                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| `kind`                         | Implementation selector. v1 ships only `"nyaa"`.                         |
+| `name`                         | Stable identifier. Used in URLs, metrics, and config overrides.          |
+| `cron`                         | Schedule. Omit to skip the scheduled poll; the CLI one-shot still works. |
+| `enabled`                      | Set to false to keep the entry around without polling.                   |
+| `sources.nyaa.feed_url`        | The RSS URL to poll. Tune per the [Sources page](./sources.md).          |
+| `sources.nyaa.fetch_details`   | Fetch each post's detail page for richer file/link data. Default true.   |
+| `sources.nyaa.timeout_seconds` | HTTP timeout for feed + detail fetches.                                  |
+| `sources.nyaa.site_base_url`   | Override for proxied feeds. Defaults to `https://nyaa.si`.               |
 
 Multiple `[[sources]]` blocks polling the same `kind` are supported —
 useful for distinct uploader feeds, language subcategories, or

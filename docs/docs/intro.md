@@ -9,7 +9,7 @@ sidebar_position: 0
 **tsundoku** (積ん読 — "pile of unread books") is a manga-discovery
 sidecar for [Codex](https://codex.4sh.dev). It polls release sources
 like Nyaa, resolves each release to a canonical
-[MangaBaka](https://mangabaka.dev) series, and surfaces what you
+[MangaBaka](https://mangabaka.org) series, and surfaces what you
 **don't** own yet.
 
 It deliberately does **not** track releases for series you already
@@ -57,4 +57,4 @@ one-click provider-search modal.
   short tour.
 
 The source lives at
-[github.com/skewb1k/tsundoku](https://github.com/skewb1k/tsundoku).
+[github.com/AshDevFr/tsundoku](https://github.com/AshDevFr/tsundoku).
