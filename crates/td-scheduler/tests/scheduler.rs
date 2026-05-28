@@ -237,13 +237,11 @@ async fn poll_tick_persists_releases_and_updates_source_state() {
     let provider = Arc::new(FakeProvider::new("mangabaka", RefreshStatus::NotSupported));
     let metadata = build_registry(provider);
 
-    let locks = Arc::new(JobLocks::default());
     jobs::poll_source::run_tick(
         source.clone() as Arc<dyn DiscoverySource>,
         db.clone(),
         metadata,
         IngestionConfig::default(),
-        locks,
         Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         None,
         detached_events(),
@@ -315,13 +313,11 @@ async fn poll_tick_batches_persists_across_chunks_with_uneven_tail() {
         poll_write_batch_size: 2,
         ..IngestionConfig::default()
     };
-    let locks = Arc::new(JobLocks::default());
     jobs::poll_source::run_tick(
         source.clone() as Arc<dyn DiscoverySource>,
         db.clone(),
         metadata,
         ingestion,
-        locks,
         Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         None,
         detached_events(),
@@ -350,48 +346,11 @@ async fn poll_tick_batches_persists_across_chunks_with_uneven_tail() {
     assert_eq!(runs[0].progress_current, Some(5));
 }
 
-#[tokio::test]
-async fn poll_tick_with_held_lock_is_a_noop() {
-    let db = fresh_db().await;
-    let source = Arc::new(FakeSource::new(
-        "trusted",
-        "fake",
-        PollOutcome::from_releases(vec![discovered_release("trusted", "ext-1", "Chainsaw Man")]),
-    ));
-    let provider = Arc::new(FakeProvider::new("mangabaka", RefreshStatus::NotSupported));
-    let metadata = build_registry(provider);
-
-    let locks = Arc::new(JobLocks::default());
-
-    // Hold the per-source lock so the tick should bail immediately.
-    let lock = locks.source_lock("trusted");
-    let _guard = lock.lock().await;
-
-    jobs::poll_source::run_tick(
-        source.clone() as Arc<dyn DiscoverySource>,
-        db.clone(),
-        metadata,
-        IngestionConfig::default(),
-        locks.clone(),
-        Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
-        None,
-        detached_events(),
-        "cron",
-    )
-    .await;
-
-    assert_eq!(
-        source.polls(),
-        0,
-        "tick should have skipped while lock was held"
-    );
-    let count = td_db::entities::releases::Entity::find()
-        .all(&db)
-        .await
-        .unwrap()
-        .len();
-    assert_eq!(count, 0);
-}
+// Contention behaviour (per-source lock + skipped-row recording) lives in
+// `dispatch::try_dispatch` now; see the tests in
+// [`td_scheduler::dispatch::tests`]. `run_tick` is a pure work body that
+// assumes the caller already holds the lock, so the old "held-lock is a
+// noop" test no longer applies at this layer.
 
 #[tokio::test]
 async fn poll_tick_handles_source_failure_without_panicking() {
@@ -415,14 +374,12 @@ async fn poll_tick_handles_source_failure_without_panicking() {
     let db = fresh_db().await;
     let provider = Arc::new(FakeProvider::new("mangabaka", RefreshStatus::NotSupported));
     let metadata = build_registry(provider);
-    let locks = Arc::new(JobLocks::default());
 
     jobs::poll_source::run_tick(
         Arc::new(FailingSource),
         db.clone(),
         metadata,
         IngestionConfig::default(),
-        locks,
         Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         None,
         detached_events(),
@@ -454,12 +411,10 @@ async fn refresh_tick_appends_provider_cache_state_on_refreshed_status() {
             version: Some("v1".into()),
         },
     ));
-    let locks = Arc::new(JobLocks::default());
 
     jobs::refresh_provider_cache::run_tick(
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
-        locks,
         detached_events(),
         "cron",
     )
@@ -528,11 +483,9 @@ async fn refresh_tick_leaves_manual_series_untouched() {
             version: Some("v2".into()),
         },
     ));
-    let locks = Arc::new(JobLocks::default());
     jobs::refresh_provider_cache::run_tick(
         provider as Arc<dyn MetadataProvider>,
         db.clone(),
-        locks,
         detached_events(),
         "cron",
     )
@@ -555,12 +508,10 @@ async fn refresh_tick_leaves_manual_series_untouched() {
 async fn refresh_tick_skips_persistence_for_not_supported() {
     let db = fresh_db().await;
     let provider = Arc::new(FakeProvider::new("mangabaka", RefreshStatus::NotSupported));
-    let locks = Arc::new(JobLocks::default());
 
     jobs::refresh_provider_cache::run_tick(
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
-        locks,
         detached_events(),
         "cron",
     )
@@ -574,36 +525,8 @@ async fn refresh_tick_skips_persistence_for_not_supported() {
     assert!(latest.is_none());
 }
 
-#[tokio::test]
-async fn refresh_tick_with_held_lock_is_a_noop() {
-    let db = fresh_db().await;
-    let provider = Arc::new(FakeProvider::new(
-        "mangabaka",
-        RefreshStatus::Refreshed {
-            records: 1,
-            version: None,
-        },
-    ));
-    let locks = Arc::new(JobLocks::default());
-
-    let lock = locks.provider_lock("mangabaka");
-    let _guard = lock.lock().await;
-
-    jobs::refresh_provider_cache::run_tick(
-        provider.clone() as Arc<dyn MetadataProvider>,
-        db.clone(),
-        locks.clone(),
-        detached_events(),
-        "cron",
-    )
-    .await;
-
-    assert_eq!(provider.refreshes(), 0);
-    let latest = provider_cache_state_repo::latest(&db, "mangabaka")
-        .await
-        .unwrap();
-    assert!(latest.is_none());
-}
+// Contention behaviour for refresh-provider-cache also lives in
+// `dispatch::try_dispatch` now; see its dedicated tests.
 
 // -----------------------------------------------------------------------------
 // refresh_series_metadata::run_tick
@@ -717,7 +640,6 @@ async fn series_refresh_tick_refreshes_stale_rows_against_provider() {
     jobs::refresh_series_metadata::run_tick(
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
-        Arc::new(JobLocks::default()),
         10,
         0,
         detached_events(),
@@ -780,7 +702,6 @@ async fn series_refresh_tick_counts_unchanged_when_hash_matches() {
     jobs::refresh_series_metadata::run_tick(
         provider as Arc<dyn MetadataProvider>,
         db.clone(),
-        Arc::new(JobLocks::default()),
         10,
         0,
         detached_events(),
@@ -822,7 +743,6 @@ async fn series_refresh_tick_bumps_fetched_at_when_provider_returns_none() {
     jobs::refresh_series_metadata::run_tick(
         provider as Arc<dyn MetadataProvider>,
         db.clone(),
-        Arc::new(JobLocks::default()),
         10,
         0,
         detached_events(),
@@ -869,7 +789,6 @@ async fn series_refresh_tick_aborts_batch_on_provider_error() {
     jobs::refresh_series_metadata::run_tick(
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
-        Arc::new(JobLocks::default()),
         10,
         0,
         detached_events(),
@@ -893,44 +812,8 @@ async fn series_refresh_tick_aborts_batch_on_provider_error() {
     assert!(run.error_message.is_some());
 }
 
-#[tokio::test]
-async fn series_refresh_tick_with_held_lock_is_a_noop() {
-    let db = fresh_db().await;
-    seed_stale_series(&db, "X", 10, Some("h-x"), "api", "mangabaka", "mb-x").await;
-
-    let provider = Arc::new(
-        FakeProvider::new("mangabaka", RefreshStatus::NotSupported).with_get(
-            "mb-x",
-            GetOutcome::Some(Box::new(series_metadata("mb-x", "Fresh", "h-fresh"))),
-        ),
-    );
-    let locks = Arc::new(JobLocks::default());
-    let lock = locks.series_refresh_lock("mangabaka");
-    let _guard = lock.lock().await;
-
-    jobs::refresh_series_metadata::run_tick(
-        provider.clone() as Arc<dyn MetadataProvider>,
-        db.clone(),
-        locks.clone(),
-        10,
-        0,
-        detached_events(),
-        "cron",
-    )
-    .await;
-
-    assert_eq!(provider.gets(), 0, "provider must not be called");
-    let runs = td_db::entities::series_refresh_runs::Entity::find()
-        .all(&db)
-        .await
-        .unwrap();
-    assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0].status, "skipped");
-    assert_eq!(
-        runs[0].error_message.as_deref(),
-        Some("previous refresh still running")
-    );
-}
+// Contention behaviour for refresh-series-metadata also lives in
+// `dispatch::try_dispatch` now; see its dedicated tests.
 
 #[tokio::test]
 async fn series_refresh_tick_with_empty_batch_records_success() {
@@ -941,7 +824,6 @@ async fn series_refresh_tick_with_empty_batch_records_success() {
     jobs::refresh_series_metadata::run_tick(
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
-        Arc::new(JobLocks::default()),
         50,
         0,
         detached_events(),
@@ -1014,7 +896,6 @@ async fn series_refresh_tick_does_not_overwrite_manual_rows() {
     jobs::refresh_series_metadata::run_tick(
         provider.clone() as Arc<dyn MetadataProvider>,
         db.clone(),
-        Arc::new(JobLocks::default()),
         10,
         0,
         detached_events(),

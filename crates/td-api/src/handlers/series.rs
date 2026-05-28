@@ -15,10 +15,12 @@ use serde::{Deserialize, Serialize};
 use td_db::entities::{
     genres, releases, series, series_external_ids, series_genres, series_tags, tags,
 };
+use td_db::repos::run_metrics_repo;
 use td_db::repos::{releases_repo, series_external_ids_repo, series_repo, tagging_repo};
 use td_metadata::SeriesMetadata;
 use td_metadata::scoring::best_dice;
 use td_resolution::persist;
+use td_scheduler::dispatch;
 use td_scheduler::jobs::refresh_series_metadata;
 use utoipa::{IntoParams, ToSchema};
 
@@ -802,21 +804,32 @@ pub async fn refresh_all(
 
     let lock = state.locks.series_refresh_lock(&active_id);
     let db = state.db.clone();
-    let locks = state.locks.clone();
     let events = state.job_events.clone();
-    let triggered = state.try_dispatch(
+    let started_at_ts = chrono::Utc::now().timestamp();
+    let db_for_skip = state.db.clone();
+    let id_for_skip = active_id.clone();
+    let triggered = dispatch::try_dispatch(
+        &state.job_events,
         lock,
         JobKind::SeriesRefresh,
-        &active_id,
+        active_id.clone(),
+        move || async move {
+            refresh_series_metadata::record_skipped(
+                &db_for_skip,
+                &id_for_skip,
+                started_at_ts,
+                run_metrics_repo::trigger::MANUAL,
+            )
+            .await;
+        },
         move || async move {
             refresh_series_metadata::run_tick(
                 provider,
                 db,
-                locks,
                 batch_size,
                 min_age_seconds,
                 events,
-                "manual",
+                run_metrics_repo::trigger::MANUAL,
             )
             .await;
             JobResult {

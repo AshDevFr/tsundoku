@@ -10,6 +10,7 @@ use td_config::{MangabakaProviderConfig, ProvidersConfig};
 use td_db::repos::{provider_cache_state_repo, run_metrics_repo};
 use td_metadata::{MetadataProvider, SeriesKind, SeriesStatus};
 use td_resolution::scoring::dice;
+use td_scheduler::dispatch;
 use td_scheduler::jobs::refresh_provider_cache;
 use utoipa::{IntoParams, ToSchema};
 
@@ -193,16 +194,39 @@ pub async fn refresh_cache(
 
     let lock = state.locks.provider_lock(&id);
     let db = state.db.clone();
-    let locks = state.locks.clone();
     let events = state.job_events.clone();
-    let triggered = state.try_dispatch(lock, JobKind::Provider, &id, move || async move {
-        refresh_provider_cache::run_tick(provider, db, locks, events, "manual").await;
-        JobResult {
-            triggered: true,
-            skipped: false,
-            ..Default::default()
-        }
-    });
+    let started_at_ts = chrono::Utc::now().timestamp();
+    let db_for_skip = state.db.clone();
+    let id_for_skip = id.clone();
+    let triggered = dispatch::try_dispatch(
+        &state.job_events,
+        lock,
+        JobKind::Provider,
+        id.clone(),
+        move || async move {
+            refresh_provider_cache::record_skipped(
+                &db_for_skip,
+                &id_for_skip,
+                started_at_ts,
+                run_metrics_repo::trigger::MANUAL,
+            )
+            .await;
+        },
+        move || async move {
+            refresh_provider_cache::run_tick(
+                provider,
+                db,
+                events,
+                run_metrics_repo::trigger::MANUAL,
+            )
+            .await;
+            JobResult {
+                triggered: true,
+                skipped: false,
+                ..Default::default()
+            }
+        },
+    );
 
     Ok(Json(RefreshResponse {
         provider: id,
@@ -236,16 +260,39 @@ pub async fn refresh_all(State(state): State<AppState>) -> ApiResult<Json<Refres
         };
         let lock = state.locks.provider_lock(&id);
         let db = state.db.clone();
-        let locks = state.locks.clone();
         let events = state.job_events.clone();
-        let triggered = state.try_dispatch(lock, JobKind::Provider, &id, move || async move {
-            refresh_provider_cache::run_tick(provider, db, locks, events, "manual").await;
-            JobResult {
-                triggered: true,
-                skipped: false,
-                ..Default::default()
-            }
-        });
+        let started_at_ts = chrono::Utc::now().timestamp();
+        let db_for_skip = state.db.clone();
+        let id_for_skip = id.clone();
+        let triggered = dispatch::try_dispatch(
+            &state.job_events,
+            lock,
+            JobKind::Provider,
+            id.clone(),
+            move || async move {
+                refresh_provider_cache::record_skipped(
+                    &db_for_skip,
+                    &id_for_skip,
+                    started_at_ts,
+                    run_metrics_repo::trigger::MANUAL,
+                )
+                .await;
+            },
+            move || async move {
+                refresh_provider_cache::run_tick(
+                    provider,
+                    db,
+                    events,
+                    run_metrics_repo::trigger::MANUAL,
+                )
+                .await;
+                JobResult {
+                    triggered: true,
+                    skipped: false,
+                    ..Default::default()
+                }
+            },
+        );
         results.push(RefreshResponse {
             provider: id,
             triggered,

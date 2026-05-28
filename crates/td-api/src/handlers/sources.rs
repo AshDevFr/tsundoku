@@ -7,7 +7,8 @@ use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 use td_config::SourceConfig;
 use td_db::repos::{run_metrics_repo, sources_repo};
-use td_scheduler::jobs::backfill_source::{self, BackfillOutcome};
+use td_scheduler::dispatch;
+use td_scheduler::jobs::backfill_source;
 use td_scheduler::jobs::poll_source;
 use utoipa::{IntoParams, ToSchema};
 
@@ -171,29 +172,47 @@ pub async fn poll(
     let db = state.db.clone();
     let metadata = state.metadata.clone();
     let ingestion = state.ingestion.clone();
-    let locks = state.locks.clone();
     let query_builder = state.query_builder.clone();
     let mu_redirector = state.mangaupdates_redirector.clone();
     let events = state.job_events.clone();
-    let triggered = state.try_dispatch(lock, JobKind::Source, &name, move || async move {
-        poll_source::run_tick(
-            source,
-            db,
-            metadata,
-            ingestion,
-            locks,
-            query_builder,
-            mu_redirector,
-            events,
-            "manual",
-        )
-        .await;
-        JobResult {
-            triggered: true,
-            skipped: false,
-            ..Default::default()
-        }
-    });
+    let started_at_ts = chrono::Utc::now().timestamp();
+    let db_for_skip = state.db.clone();
+    let name_for_skip = name.clone();
+    let kind_for_skip = source.kind().to_string();
+    let triggered = dispatch::try_dispatch(
+        &state.job_events,
+        lock,
+        JobKind::Source,
+        name.clone(),
+        move || async move {
+            poll_source::record_skipped(
+                &db_for_skip,
+                &name_for_skip,
+                &kind_for_skip,
+                started_at_ts,
+                run_metrics_repo::trigger::MANUAL,
+            )
+            .await;
+        },
+        move || async move {
+            poll_source::run_tick(
+                source,
+                db,
+                metadata,
+                ingestion,
+                query_builder,
+                mu_redirector,
+                events,
+                run_metrics_repo::trigger::MANUAL,
+            )
+            .await;
+            JobResult {
+                triggered: true,
+                skipped: false,
+                ..Default::default()
+            }
+        },
+    );
 
     Ok(Json(ManualPollResponse {
         source: name,
@@ -227,30 +246,48 @@ pub async fn poll_all(State(state): State<AppState>) -> ApiResult<Json<PollAllRe
         let db = state.db.clone();
         let metadata = state.metadata.clone();
         let ingestion = state.ingestion.clone();
-        let locks = state.locks.clone();
         let query_builder = state.query_builder.clone();
         let mu_redirector = state.mangaupdates_redirector.clone();
         let events = state.job_events.clone();
         let spawned: Arc<dyn td_source::DiscoverySource> = source;
-        let triggered = state.try_dispatch(lock, JobKind::Source, &name, move || async move {
-            poll_source::run_tick(
-                spawned,
-                db,
-                metadata,
-                ingestion,
-                locks,
-                query_builder,
-                mu_redirector,
-                events,
-                "manual",
-            )
-            .await;
-            JobResult {
-                triggered: true,
-                skipped: false,
-                ..Default::default()
-            }
-        });
+        let started_at_ts = chrono::Utc::now().timestamp();
+        let db_for_skip = state.db.clone();
+        let name_for_skip = name.clone();
+        let kind_for_skip = spawned.kind().to_string();
+        let triggered = dispatch::try_dispatch(
+            &state.job_events,
+            lock,
+            JobKind::Source,
+            name.clone(),
+            move || async move {
+                poll_source::record_skipped(
+                    &db_for_skip,
+                    &name_for_skip,
+                    &kind_for_skip,
+                    started_at_ts,
+                    run_metrics_repo::trigger::MANUAL,
+                )
+                .await;
+            },
+            move || async move {
+                poll_source::run_tick(
+                    spawned,
+                    db,
+                    metadata,
+                    ingestion,
+                    query_builder,
+                    mu_redirector,
+                    events,
+                    run_metrics_repo::trigger::MANUAL,
+                )
+                .await;
+                JobResult {
+                    triggered: true,
+                    skipped: false,
+                    ..Default::default()
+                }
+            },
+        );
         results.push(ManualPollResponse {
             source: name,
             triggered,
@@ -335,39 +372,57 @@ pub async fn backfill(
     let db = state.db.clone();
     let metadata = state.metadata.clone();
     let ingestion = state.ingestion.clone();
-    let locks = state.locks.clone();
     let query_builder = state.query_builder.clone();
     let mu_redirector = state.mangaupdates_redirector.clone();
     let events = state.job_events.clone();
     let event_name = name.clone();
-    let triggered = state.try_dispatch(lock, JobKind::Source, &name, move || async move {
-        let result = backfill_source::run(
-            source,
-            db,
-            metadata,
-            ingestion,
-            locks,
-            query_builder,
-            mu_redirector,
-            events,
-            pages,
-            "manual",
-        )
-        .await;
-        let new = match &result {
-            Ok(BackfillOutcome::Ran(totals)) => Some(totals.new as i64),
-            _ => None,
-        };
-        if let Err(e) = &result {
-            tracing::warn!(error = ?e, source = %event_name, "manual backfill failed");
-        }
-        JobResult {
-            triggered: true,
-            skipped: false,
-            new,
-            ..Default::default()
-        }
-    });
+    let started_at_ts = chrono::Utc::now().timestamp();
+    let db_for_skip = state.db.clone();
+    let name_for_skip = name.clone();
+    let kind_for_skip = source.kind().to_string();
+    let triggered = dispatch::try_dispatch(
+        &state.job_events,
+        lock,
+        JobKind::Source,
+        name.clone(),
+        move || async move {
+            poll_source::record_skipped(
+                &db_for_skip,
+                &name_for_skip,
+                &kind_for_skip,
+                started_at_ts,
+                run_metrics_repo::trigger::MANUAL,
+            )
+            .await;
+        },
+        move || async move {
+            let result = backfill_source::run(
+                source,
+                db,
+                metadata,
+                ingestion,
+                query_builder,
+                mu_redirector,
+                events,
+                pages,
+                run_metrics_repo::trigger::MANUAL,
+            )
+            .await;
+            let new = match &result {
+                Ok(totals) => Some(totals.new as i64),
+                Err(_) => None,
+            };
+            if let Err(e) = &result {
+                tracing::warn!(error = ?e, source = %event_name, "manual backfill failed");
+            }
+            JobResult {
+                triggered: true,
+                skipped: false,
+                new,
+                ..Default::default()
+            }
+        },
+    );
 
     Ok(Json(ManualBackfillResponse {
         source: name,

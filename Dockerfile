@@ -62,6 +62,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 COPY Cargo.toml Cargo.lock ./
 COPY migration/ ./migration/
 COPY crates/ ./crates/
+# td-config's STARTER_CONFIG_TOML include_str!()s this file at compile time
+COPY config/tsundoku.example.toml ./config/tsundoku.example.toml
 
 # Bring in the built frontend so rust-embed can pick it up at compile time
 COPY --from=frontend-builder /web/dist ./web/dist

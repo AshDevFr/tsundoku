@@ -104,7 +104,7 @@ services:
       - tsundoku_screenshots_data:/app/data
     environment:
       RUST_BACKTRACE: "1"
-      RUST_LOG: info
+      RUST_LOG: debug
       # Wired so the per-host MangaBaka offline dump + live fallback
       # match the prod profile. Set TSUNDOKU_PROVIDERS__MANGABAKA__API_KEY
       # in your .env to unlock the live API fallback during screenshots.

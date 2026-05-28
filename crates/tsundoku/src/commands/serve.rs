@@ -137,6 +137,11 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
 /// loaded offline cache, spawn an off-the-runtime task to perform a one-shot
 /// refresh. Providers that don't support an offline cache return
 /// `RefreshStatus::NotSupported`, which the tick treats as a no-op.
+///
+/// Goes through [`td_scheduler::dispatch::try_dispatch`] so the per-provider
+/// lock is held for the lifetime of the refresh — a cron tick (or an
+/// admin manual trigger) that fires before the startup refresh finishes
+/// gets honestly reported as skipped instead of racing.
 fn spawn_startup_refreshes(
     metadata: Arc<MetadataRegistry>,
     db: DatabaseConnection,
@@ -155,7 +160,40 @@ fn spawn_startup_refreshes(
                 return;
             }
             tracing::info!(provider = %id, "no offline cache on disk; refreshing at startup");
-            refresh_provider_cache::run_tick(provider, db, locks, events, trigger::STARTUP).await;
+            let lock = locks.provider_lock(&id);
+            let started_at_ts = chrono::Utc::now().timestamp();
+            let db_for_skip = db.clone();
+            let id_for_skip = id.clone();
+            let events_for_work = events.clone();
+            td_scheduler::dispatch::try_dispatch(
+                &events,
+                lock,
+                td_scheduler::JobKind::Provider,
+                id.clone(),
+                move || async move {
+                    refresh_provider_cache::record_skipped(
+                        &db_for_skip,
+                        &id_for_skip,
+                        started_at_ts,
+                        trigger::STARTUP,
+                    )
+                    .await;
+                },
+                move || async move {
+                    refresh_provider_cache::run_tick(
+                        provider,
+                        db,
+                        events_for_work,
+                        trigger::STARTUP,
+                    )
+                    .await;
+                    td_scheduler::JobResult {
+                        triggered: true,
+                        skipped: false,
+                        ..Default::default()
+                    }
+                },
+            );
         });
     }
 }

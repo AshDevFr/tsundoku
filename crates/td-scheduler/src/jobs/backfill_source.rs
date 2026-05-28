@@ -8,9 +8,9 @@
 //! from polled ones.
 //!
 //! Both the `tsundoku backfill` CLI and the `POST /sources/{name}/backfill`
-//! API handler call [`run`]; keeping the loop here (not in the binary)
-//! means the manual API trigger shares the same per-source mutex the cron
-//! poll holds, so a backfill can't race a scheduled tick. Idempotent on
+//! API handler call [`run`]; per-source contention against the cron poll
+//! is enforced by [`crate::dispatch::try_dispatch`] (or by being a
+//! separate process for the CLI). Idempotent on
 //! `(source_kind, external_id)`; never touches `source_state`, so it does
 //! not move the cron's ETag / last-poll markers.
 
@@ -29,7 +29,6 @@ use td_resolution::query_builder::QueryBuilder;
 use td_source::DiscoverySource;
 use tokio::sync::broadcast;
 
-use crate::JobLocks;
 use crate::events::{JobEvent, JobKind};
 use crate::jobs::progress::ProgressHandle;
 
@@ -46,19 +45,10 @@ pub struct BackfillSummary {
     pub errors: usize,
 }
 
-/// Result of a [`run`] invocation.
-pub enum BackfillOutcome {
-    /// Backfill ran to completion (or stopped early on an empty/failed page).
-    Ran(BackfillSummary),
-    /// Another poll or backfill for this source held the per-source mutex;
-    /// nothing ran. Same semantics as a skipped poll tick.
-    Skipped,
-}
-
-/// Walk up to `pages` listing pages for `source`, persisting and resolving
-/// every new release. Acquires the per-source mutex first (returning
-/// [`BackfillOutcome::Skipped`] if a poll/backfill is already in flight),
-/// so the manual API trigger and the cron poll can't race.
+/// Reuses the per-source `poll_runs` lane: walks up to `pages` listing
+/// pages, persisting and resolving every new release. Callers handle
+/// per-source contention via [`crate::dispatch::try_dispatch`];
+/// `run` does NOT acquire the per-source lock itself.
 ///
 /// Errors only on setup faults the operator must see (source not
 /// registered for backfill, resolver construction). Per-page and
@@ -70,30 +60,23 @@ pub async fn run(
     db: DatabaseConnection,
     metadata: Arc<MetadataRegistry>,
     ingestion: IngestionConfig,
-    locks: Arc<JobLocks>,
     query_builder: Arc<QueryBuilder>,
     mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
     events: broadcast::Sender<JobEvent>,
     pages: u32,
     trigger: &str,
-) -> Result<BackfillOutcome> {
+) -> Result<BackfillSummary> {
     let pages = pages.max(1);
     let name = source.name().to_string();
     let kind = source.kind().to_string();
 
-    // Reject non-backfillable sources before taking the lock, so the error
-    // is about capability rather than contention.
+    // Reject non-backfillable sources up front, so the error is about
+    // capability rather than runtime failure.
     if source.as_backfillable().is_none() {
         return Err(anyhow!(
             "source {name:?} (kind={kind}) does not support historical backfill"
         ));
     }
-
-    let lock = locks.source_lock(&name);
-    let Ok(_guard) = lock.try_lock() else {
-        tracing::debug!(source = %name, "poll/backfill already running; skipping backfill");
-        return Ok(BackfillOutcome::Skipped);
-    };
 
     let mut resolver =
         Resolver::new(db.clone(), metadata, ingestion).with_query_builder(query_builder);
@@ -244,5 +227,5 @@ pub async fn run(
         }
     }
 
-    Ok(BackfillOutcome::Ran(totals))
+    Ok(totals)
 }

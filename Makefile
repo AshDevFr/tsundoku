@@ -178,6 +178,9 @@ dev-logs-backend: ## Tail backend logs only
 dev-logs-frontend: ## Tail frontend logs only
 	docker compose --profile dev logs -f frontend-dev
 
+dev-logs-screenshots: ## Tail screenshots logs only
+	docker compose --profile dev logs -f tsundoku-screenshots
+
 dev-restart: ## Restart all dev containers
 	docker compose --profile dev restart tsundoku-dev frontend-dev
 

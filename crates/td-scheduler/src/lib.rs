@@ -19,10 +19,12 @@
 //! mandatory at the DB layer anyway; this just makes the intent explicit at
 //! the scheduler boundary.
 
+pub mod dispatch;
 pub mod error_kind;
 pub mod events;
 pub mod jobs;
 
+pub use dispatch::try_dispatch;
 pub use events::{JOB_EVENT_BUFFER, JobEvent, JobKind, JobPhase, JobProgress, JobResult};
 
 use std::sync::Arc;

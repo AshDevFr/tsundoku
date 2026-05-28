@@ -29,6 +29,9 @@ docs = true
 read_requires_auth = false
 admin_token = "screenshots-admin-token"
 
+[ingestion]
+poll_write_batch_size = 1
+
 [metadata]
 active_provider = "mangabaka"
 
@@ -47,5 +50,5 @@ timeout_seconds = 60
 kind = "nyaa"
 name = "nyaa-1r0n"
 enabled = true
-  [sources.nyaa]
-  feed_url = "https://nyaa.si/?page=rss&u=tsuna69"
+[sources.nyaa]
+feed_url = "https://nyaa.si/?page=rss&u=tsuna69"

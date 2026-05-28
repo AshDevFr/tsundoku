@@ -2545,7 +2545,10 @@ async fn manual_poll_publishes_started_and_finished_job_events() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     // The synchronous part of the handler emits `started` before
-    // returning. The spawned tick emits `finished` once it completes.
+    // returning. The spawned tick may emit `progress` frames from inside
+    // run_tick (via ProgressHandle) and then emits `finished` once it
+    // completes. Filter out Progress frames so the test only asserts
+    // on the lifecycle boundaries.
     let started = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
         .await
         .expect("started event should arrive")
@@ -2554,14 +2557,35 @@ async fn manual_poll_publishes_started_and_finished_job_events() {
     assert_eq!(started.id, "feed-a");
     assert!(matches!(started.phase, td_api::JobPhase::Started));
 
-    let finished = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
-        .await
-        .expect("finished event should arrive")
-        .expect("channel still open");
-    assert!(matches!(finished.phase, td_api::JobPhase::Finished));
+    let finished = recv_until_finished(&mut rx, std::time::Duration::from_secs(5)).await;
     let result = finished.result.expect("finished carries a result payload");
     assert!(result.triggered);
     assert!(!result.skipped);
+}
+
+/// Drain Progress frames and return the next Finished event. Used by the
+/// "happy path" lifecycle tests where ProgressHandle inside the job body
+/// may emit intermediate frames that are not load-bearing for the
+/// dispatcher contract.
+async fn recv_until_finished(
+    rx: &mut tokio::sync::broadcast::Receiver<td_api::JobEvent>,
+    timeout: std::time::Duration,
+) -> td_api::JobEvent {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let event = tokio::time::timeout(remaining, rx.recv())
+            .await
+            .expect("finished event should arrive within the budget")
+            .expect("channel still open");
+        if matches!(event.phase, td_api::JobPhase::Finished) {
+            return event;
+        }
+        assert!(
+            matches!(event.phase, td_api::JobPhase::Progress),
+            "unexpected event phase between Started and Finished: {event:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -2652,11 +2676,7 @@ async fn manual_provider_refresh_publishes_finished_job_event() {
     assert!(matches!(started.kind, td_api::JobKind::Provider));
     assert_eq!(started.id, "mb");
 
-    let finished = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
-        .await
-        .expect("finished event")
-        .expect("channel open");
-    assert!(matches!(finished.phase, td_api::JobPhase::Finished));
+    let _finished = recv_until_finished(&mut rx, std::time::Duration::from_secs(5)).await;
 }
 
 #[tokio::test]
@@ -2803,11 +2823,7 @@ async fn series_refresh_all_triggers_when_lock_is_free() {
     assert_eq!(started.id, "mb");
     assert!(matches!(started.phase, td_api::JobPhase::Started));
 
-    let finished = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
-        .await
-        .expect("finished event should arrive")
-        .expect("channel still open");
-    assert!(matches!(finished.phase, td_api::JobPhase::Finished));
+    let finished = recv_until_finished(&mut rx, std::time::Duration::from_secs(5)).await;
     let result = finished.result.expect("finished carries a result payload");
     assert!(result.triggered);
     assert!(!result.skipped);

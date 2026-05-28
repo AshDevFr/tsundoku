@@ -1,18 +1,22 @@
 //! Scheduled poll job for a single [`DiscoverySource`].
 //!
 //! Each tick:
-//! 1. Acquire the per-source mutex (skip the tick if another run is in
-//!    flight — overlapping cron fires are dropped, not queued).
-//! 2. Read the previous `source_state` row to recover the ETag / cursor.
-//! 3. Call `source.poll()`.
-//! 4. Persist every release via
+//! 1. Read the previous `source_state` row to recover the ETag / cursor.
+//! 2. Call `source.poll()`.
+//! 3. Persist every release via
 //!    [`td_db::repos::releases_repo::persist_discovered`].
-//! 5. Run the resolution pipeline on each persisted release.
-//! 6. Upsert `source_state` with the new ETag/cursor and a short summary.
+//! 4. Run the resolution pipeline on each persisted release.
+//! 5. Upsert `source_state` with the new ETag/cursor and a short summary.
 //!
 //! Errors at any step are logged and recorded on `source_state.last_error`
 //! but never propagate out of the tick — a failing source must not poison
 //! the scheduler for the others.
+//!
+//! Per-source contention (overlapping cron fires + manual triggers) is
+//! handled one layer up by [`crate::dispatch::try_dispatch`], which holds
+//! the per-key mutex for the lifetime of the spawned task. `run_tick`
+//! assumes that lock is already held by its caller and never tries to
+//! re-acquire it.
 
 use std::sync::Arc;
 
@@ -35,8 +39,9 @@ use tokio::sync::broadcast;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
 use crate::JobLocks;
+use crate::dispatch;
 use crate::error_kind;
-use crate::events::{JobEvent, JobKind};
+use crate::events::{JobEvent, JobKind, JobResult};
 use crate::jobs::progress::ProgressHandle;
 
 /// Build a scheduled poll job for `source`. The cron must already be in
@@ -65,18 +70,49 @@ pub fn build(
         let mu_redirector = mangaupdates_redirector.clone();
         let events = events.clone();
         Box::pin(async move {
-            run_tick(
-                source,
-                db,
-                metadata,
-                ingestion,
-                locks,
-                query_builder,
-                mu_redirector,
-                events,
-                run_metrics_repo::trigger::CRON,
-            )
-            .await;
+            let name = source.name().to_string();
+            let kind = source.kind().to_string();
+            let lock = locks.source_lock(&name);
+            let started_at_ts = Utc::now().timestamp();
+            let trigger = run_metrics_repo::trigger::CRON;
+            let db_for_skip = db.clone();
+            let name_for_skip = name.clone();
+            let kind_for_skip = kind.clone();
+            let events_for_work = events.clone();
+            dispatch::try_dispatch(
+                &events,
+                lock,
+                JobKind::Source,
+                name.clone(),
+                move || async move {
+                    record_skipped(
+                        &db_for_skip,
+                        &name_for_skip,
+                        &kind_for_skip,
+                        started_at_ts,
+                        trigger,
+                    )
+                    .await;
+                },
+                move || async move {
+                    run_tick(
+                        source,
+                        db,
+                        metadata,
+                        ingestion,
+                        query_builder,
+                        mu_redirector,
+                        events_for_work,
+                        trigger,
+                    )
+                    .await;
+                    JobResult {
+                        triggered: true,
+                        skipped: false,
+                        ..Default::default()
+                    }
+                },
+            );
         })
     })
     .map_err(|e: JobSchedulerError| anyhow!("building poll-source job: {e}"))?;
@@ -84,16 +120,19 @@ pub fn build(
 }
 
 /// One tick of the poll-and-resolve loop. Public for the integration tests
-/// in [`crate::jobs::poll_source::tests`] and for any future "trigger
-/// manually" CLI; the scheduled job uses the same code path so behaviour
-/// matches.
+/// in [`crate::jobs::poll_source::tests`] and for the CLI / API trigger
+/// paths; the scheduled job uses the same code path so behaviour matches.
+///
+/// Callers are responsible for per-source contention via
+/// [`crate::dispatch::try_dispatch`]; this body does **not** acquire the
+/// per-source lock itself. Calling it directly (CLI subcommands, tests)
+/// is fine because there are no concurrent triggers in those contexts.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_tick(
     source: Arc<dyn DiscoverySource>,
     db: DatabaseConnection,
     metadata: Arc<MetadataRegistry>,
     ingestion: IngestionConfig,
-    locks: Arc<JobLocks>,
     query_builder: Arc<QueryBuilder>,
     mangaupdates_redirector: Option<Arc<MangaUpdatesRedirector>>,
     events: broadcast::Sender<JobEvent>,
@@ -104,15 +143,6 @@ pub async fn run_tick(
     let started_at = Utc::now();
     let started_at_ts = started_at.timestamp();
     tracing::info!(source = %name, kind = %kind, trigger = %trigger, "poll tick started");
-
-    let lock = locks.source_lock(&name);
-    let Ok(_guard) = lock.try_lock() else {
-        tracing::debug!(source = %name, "previous tick still running; skipping");
-        // Record the skip so the admin metrics view can still surface
-        // contention (e.g. cron ticks piling up behind a slow source).
-        record_skipped(&db, &name, &kind, started_at_ts, trigger).await;
-        return;
-    };
 
     // Insert a "running" row up front so an aborted process (oom, SIGKILL)
     // leaves a stale row the admin UI can call out, rather than no record.
@@ -388,7 +418,10 @@ async fn persist_chunk(
     })
 }
 
-async fn record_skipped(
+/// Write a `poll_runs` row marked `skipped` so the admin metrics view
+/// surfaces contention. Called by [`crate::dispatch::try_dispatch`] when
+/// a tick lost the per-source lock.
+pub async fn record_skipped(
     db: &DatabaseConnection,
     name: &str,
     kind: &str,

@@ -1,12 +1,14 @@
 //! Scheduled cache-refresh job for a single [`MetadataProvider`].
 //!
 //! Each tick:
-//! 1. Acquire the per-provider mutex (skip if a previous refresh is still
-//!    in flight; cache refreshes can take minutes for the MangaBaka dump).
-//! 2. Call `provider.refresh_cache()`.
-//! 3. On [`RefreshStatus::Refreshed`], append a `provider_cache_state`
+//! 1. Call `provider.refresh_cache()`.
+//! 2. On [`RefreshStatus::Refreshed`], append a `provider_cache_state`
 //!    row. The other statuses (`UpToDate`, `NotSupported`, `Skipped`) are
 //!    logged but don't write a row — they don't represent a fresh cache.
+//!
+//! Per-provider contention (overlapping cron fires + manual triggers) is
+//! handled one layer up by [`crate::dispatch::try_dispatch`]; this body
+//! does not acquire the per-provider lock itself.
 //!
 //! Errors are logged and swallowed: a failing provider must not poison the
 //! scheduler. Operators can retry manually via
@@ -24,8 +26,9 @@ use tokio::sync::broadcast;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
 use crate::JobLocks;
+use crate::dispatch;
 use crate::error_kind;
-use crate::events::{JobEvent, JobKind};
+use crate::events::{JobEvent, JobKind, JobResult};
 use crate::jobs::progress::ProgressHandle;
 
 pub fn build(
@@ -41,31 +44,48 @@ pub fn build(
         let locks = locks.clone();
         let events = events.clone();
         Box::pin(async move {
-            run_tick(provider, db, locks, events, run_metrics_repo::trigger::CRON).await;
+            let id = provider.id().to_string();
+            let lock = locks.provider_lock(&id);
+            let started_at_ts = chrono::Utc::now().timestamp();
+            let trigger = run_metrics_repo::trigger::CRON;
+            let db_for_skip = db.clone();
+            let id_for_skip = id.clone();
+            let events_for_work = events.clone();
+            dispatch::try_dispatch(
+                &events,
+                lock,
+                JobKind::Provider,
+                id.clone(),
+                move || async move {
+                    record_skipped(&db_for_skip, &id_for_skip, started_at_ts, trigger).await;
+                },
+                move || async move {
+                    run_tick(provider, db, events_for_work, trigger).await;
+                    JobResult {
+                        triggered: true,
+                        skipped: false,
+                        ..Default::default()
+                    }
+                },
+            );
         })
     })
     .map_err(|e: JobSchedulerError| anyhow!("building refresh-provider-cache job: {e}"))?;
     Ok(job)
 }
 
-/// One refresh tick. Public so tests (and any future manual-trigger path)
-/// can drive it directly without going through the cron loop.
+/// One refresh tick. Public so tests, CLI subcommands, and the manual
+/// API trigger can drive it directly. Callers handle contention via
+/// [`crate::dispatch::try_dispatch`]; `run_tick` does NOT acquire the
+/// per-provider lock itself.
 pub async fn run_tick(
     provider: Arc<dyn MetadataProvider>,
     db: DatabaseConnection,
-    locks: Arc<JobLocks>,
     events: broadcast::Sender<JobEvent>,
     trigger: &str,
 ) {
     let id = provider.id().to_string();
     let started_at_ts = chrono::Utc::now().timestamp();
-
-    let lock = locks.provider_lock(&id);
-    let Ok(_guard) = lock.try_lock() else {
-        tracing::debug!(provider = %id, "previous refresh still running; skipping");
-        record_skipped(&db, &id, started_at_ts, trigger).await;
-        return;
-    };
 
     let metrics_id = match run_metrics_repo::start_provider_refresh(
         &db,
@@ -217,7 +237,10 @@ pub async fn run_tick(
     }
 }
 
-async fn record_skipped(db: &DatabaseConnection, id: &str, started_at: i64, trigger: &str) {
+/// Write a `provider_refreshes` row marked `skipped` so the admin
+/// metrics view surfaces contention. Called by
+/// [`crate::dispatch::try_dispatch`] when a tick lost the per-provider lock.
+pub async fn record_skipped(db: &DatabaseConnection, id: &str, started_at: i64, trigger: &str) {
     match run_metrics_repo::start_provider_refresh(db, id, started_at, trigger).await {
         Ok(rid) => {
             if let Err(e) = run_metrics_repo::finalize_provider_refresh(

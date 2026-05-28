@@ -2,14 +2,10 @@
 //! active [`MetadataProvider`].
 //!
 //! Each tick:
-//! 1. Acquire the per-provider [`JobLocks::series_refresh_lock`] (skip if
-//!    a previous tick is still running). Skipped ticks still record a
-//!    `series_refresh_runs` row so the admin metrics view shows the gap
-//!    rather than a missing tick.
-//! 2. Pull the next `batch_size` stale rows (oldest first, mapped to the
+//! 1. Pull the next `batch_size` stale rows (oldest first, mapped to the
 //!    active provider, manual rows excluded) via
 //!    [`td_db::repos::series_refresh_repo::select_stale_for_active_provider`].
-//! 3. For each row, call `provider.get(external_id)`:
+//! 2. For each row, call `provider.get(external_id)`:
 //!    - `Ok(Some(meta))` → `persist::upsert_series_from_metadata` with
 //!      `allow_manual_overwrite = false`. Hash-match → `unchanged`,
 //!      otherwise → `refreshed`.
@@ -19,8 +15,12 @@
 //!    - `Err(_)` → record the error, abort the batch. Burning through
 //!      `batch_size` outbound calls when the provider is dead serves
 //!      no one.
-//! 4. Finalise the `series_refresh_runs` row with the per-outcome counts
+//! 3. Finalise the `series_refresh_runs` row with the per-outcome counts
 //!    and a total `fetch_duration_ms`.
+//!
+//! Per-provider contention (overlapping cron fires + manual triggers) is
+//! handled one layer up by [`crate::dispatch::try_dispatch`]; this body
+//! does not acquire the per-provider series-refresh lock itself.
 //!
 //! Failures are swallowed inside the tick (logged + recorded in
 //! `series_refresh_runs`); the scheduler never panics.
@@ -39,8 +39,9 @@ use tokio::sync::broadcast;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
 use crate::JobLocks;
+use crate::dispatch;
 use crate::error_kind;
-use crate::events::{JobEvent, JobKind};
+use crate::events::{JobEvent, JobKind, JobResult};
 use crate::jobs::progress::ProgressHandle;
 
 #[allow(clippy::too_many_arguments)]
@@ -59,29 +60,52 @@ pub fn build(
         let locks = locks.clone();
         let events = events.clone();
         Box::pin(async move {
-            run_tick(
-                provider,
-                db,
-                locks,
-                batch_size,
-                min_age_seconds,
-                events,
-                run_metrics_repo::trigger::CRON,
-            )
-            .await;
+            let provider_id = provider.id().to_string();
+            let lock = locks.series_refresh_lock(&provider_id);
+            let started_at_ts = Utc::now().timestamp();
+            let trigger = run_metrics_repo::trigger::CRON;
+            let db_for_skip = db.clone();
+            let id_for_skip = provider_id.clone();
+            let events_for_work = events.clone();
+            dispatch::try_dispatch(
+                &events,
+                lock,
+                JobKind::SeriesRefresh,
+                provider_id.clone(),
+                move || async move {
+                    record_skipped(&db_for_skip, &id_for_skip, started_at_ts, trigger).await;
+                },
+                move || async move {
+                    run_tick(
+                        provider,
+                        db,
+                        batch_size,
+                        min_age_seconds,
+                        events_for_work,
+                        trigger,
+                    )
+                    .await;
+                    JobResult {
+                        triggered: true,
+                        skipped: false,
+                        ..Default::default()
+                    }
+                },
+            );
         })
     })
     .map_err(|e: JobSchedulerError| anyhow!("building refresh-series-metadata job: {e}"))?;
     Ok(job)
 }
 
-/// One refresh tick. Public so tests and the manual API trigger can drive
-/// it directly without going through the cron loop.
+/// One refresh tick. Public so tests, CLI subcommands, and the manual
+/// API trigger can drive it directly. Callers handle contention via
+/// [`crate::dispatch::try_dispatch`]; `run_tick` does NOT acquire the
+/// per-provider series-refresh lock itself.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_tick(
     provider: Arc<dyn MetadataProvider>,
     db: DatabaseConnection,
-    locks: Arc<JobLocks>,
     batch_size: u32,
     min_age_seconds: i64,
     events: broadcast::Sender<JobEvent>,
@@ -89,16 +113,6 @@ pub async fn run_tick(
 ) {
     let provider_id = provider.id().to_string();
     let started_at_ts = Utc::now().timestamp();
-
-    let lock = locks.series_refresh_lock(&provider_id);
-    let Ok(_guard) = lock.try_lock() else {
-        tracing::debug!(
-            provider = %provider_id,
-            "previous series-refresh tick still running; skipping"
-        );
-        record_skipped(&db, &provider_id, started_at_ts, trigger).await;
-        return;
-    };
 
     let metrics_id =
         match run_metrics_repo::start_series_refresh_run(&db, &provider_id, started_at_ts, trigger)
@@ -301,7 +315,11 @@ pub async fn run_tick(
     .await;
 }
 
-async fn record_skipped(db: &DatabaseConnection, id: &str, started_at: i64, trigger: &str) {
+/// Write a `series_refresh_runs` row marked `skipped` so the admin
+/// metrics view surfaces contention. Called by
+/// [`crate::dispatch::try_dispatch`] when a tick lost the per-provider
+/// series-refresh lock.
+pub async fn record_skipped(db: &DatabaseConnection, id: &str, started_at: i64, trigger: &str) {
     match run_metrics_repo::start_series_refresh_run(db, id, started_at, trigger).await {
         Ok(rid) => {
             if let Err(e) = run_metrics_repo::finalize_series_refresh_run(

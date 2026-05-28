@@ -3,9 +3,11 @@
 //! One-shot bulk refresh of stale series rows against the active
 //! metadata provider. Shares the same tick code as the scheduler cron
 //! and the `POST /api/v1/series/refresh-all` endpoint, so behaviour is
-//! identical regardless of which surface fires it. The same per-provider
-//! mutex applies: if a scheduler tick or another manual trigger is in
-//! flight, this command records a `skipped` row and exits.
+//! identical regardless of which surface fires it. The CLI is a
+//! separate process — it does not coordinate with a running `serve`'s
+//! cron / API triggers via the in-memory per-provider lock; running both
+//! at once is safe (the resolver writes are per-row transactions) but
+//! redundant.
 //!
 //! Flag defaults pull from `metadata.series_refresh.{batch_size,
 //! min_age_days}`; pass `--batch-size 0` to make the tick a no-op
@@ -17,7 +19,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use td_db::repos::run_metrics_repo;
 use td_metadata::MetadataProvider;
-use td_scheduler::{JobLocks, jobs::refresh_series_metadata};
+use td_scheduler::jobs::refresh_series_metadata;
 
 pub async fn run(
     config_path: PathBuf,
@@ -51,14 +53,12 @@ pub async fn run(
         "refresh-series: kicking off one tick"
     );
 
-    let locks = Arc::new(JobLocks::default());
     // CLI has no SSE consumer; a detached sender keeps the tick signature
     // consistent with the API/cron paths.
     let (events, _) = tokio::sync::broadcast::channel(16);
     refresh_series_metadata::run_tick(
         provider,
         db.clone(),
-        locks,
         batch_size,
         min_age_seconds,
         events,
