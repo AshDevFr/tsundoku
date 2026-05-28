@@ -20,8 +20,10 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
+import { notifications } from "@mantine/notifications";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { useRefreshSeriesMetadata } from "@/api/mutations";
 import {
   type ReleaseDto,
   useSeriesDetail,
@@ -43,6 +45,25 @@ export function SeriesDetailPage() {
   const id = Number(idStr);
   const detail = useSeriesDetail(Number.isFinite(id) ? id : undefined);
   const releases = useSeriesReleases(Number.isFinite(id) ? id : undefined);
+  const isAdmin = useAdminAuth((s) => Boolean(s.token));
+  const refresh = useRefreshSeriesMetadata();
+
+  const handleRefresh = () => {
+    if (!Number.isFinite(id)) return;
+    refresh.mutate(id, {
+      onSuccess: () =>
+        notifications.show({
+          color: "blue",
+          message: "Series metadata refreshed",
+        }),
+      onError: (e) =>
+        notifications.show({
+          color: "red",
+          title: "Refresh failed",
+          message: (e as Error).message,
+        }),
+    });
+  };
 
   if (detail.isLoading) {
     return (
@@ -176,11 +197,27 @@ export function SeriesDetailPage() {
             )}
 
             <Box>
-              <Text size="sm" c="dimmed">
-                First seen {formatRelative(s.firstSeenAt)} · last release{" "}
-                {formatRelative(s.lastReleaseAt)} · metadata {s.metadataSource}{" "}
-                ({formatRelative(s.metadataFetchedAt)})
-              </Text>
+              <Group gap="xs" wrap="wrap" align="center">
+                <Text size="sm" c="dimmed">
+                  First seen {formatRelative(s.firstSeenAt)} · last release{" "}
+                  {formatRelative(s.lastReleaseAt)} · metadata{" "}
+                  {s.metadataSource} ({formatRelative(s.metadataFetchedAt)})
+                </Text>
+                {isAdmin && (
+                  <Tooltip label="Re-fetch metadata from the active provider and overwrite this series.">
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      color="gray"
+                      onClick={handleRefresh}
+                      loading={refresh.isPending}
+                      data-testid="refresh-series-metadata"
+                    >
+                      ↻ Refresh
+                    </Button>
+                  </Tooltip>
+                )}
+              </Group>
               {(typeof s.highestVolume === "number" ||
                 typeof s.highestChapter === "number") && (
                 <Text size="sm" c="dimmed">

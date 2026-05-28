@@ -250,3 +250,22 @@ export function useRefreshAllProviders() {
     onSuccess: () => invalidateProviderQueries(qc),
   });
 }
+
+export function useRefreshSeriesMetadata() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (seriesId: number) => {
+      const { data, error } = await api.POST(
+        "/api/v1/series/{id}/refresh-metadata",
+        { params: { path: { id: seriesId } } },
+      );
+      if (error)
+        throw new Error(describeError(error, "failed to refresh series"));
+      return data;
+    },
+    onSuccess: (_data, seriesId) => {
+      qc.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+      qc.invalidateQueries({ queryKey: ["series-list"] });
+    },
+  });
+}

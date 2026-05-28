@@ -260,8 +260,12 @@ function bulkTargets(body: BulkReviewRequest): UnresolvedRelease[] {
 }
 
 function requireAdmin(request: Request): Response | null {
-  const auth = request.headers.get("authorization");
-  if (auth === `Bearer ${ADMIN_TOKEN}`) return null;
+  // Dev convenience: in mock mode any non-empty Bearer is accepted, so the
+  // operator can paste whatever they have in `auth.admin_token` (or any
+  // placeholder) without it needing to match a hard-coded constant. Tests
+  // continue to set `ADMIN_TEST_TOKEN` explicitly via the auth store.
+  const auth = request.headers.get("authorization") ?? "";
+  if (/^Bearer\s+\S+/.test(auth)) return null;
   return new HttpResponse(
     JSON.stringify({ error: "unauthorized", message: "missing admin token" }),
     {
@@ -738,6 +742,41 @@ export const handlers = [
       highestChapter: null,
     };
     return HttpResponse.json(detail, { status: 201 });
+  }),
+
+  http.post("/api/v1/series/:id/refresh-metadata", ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const id = Number(params.id);
+    const found = SERIES.find((s) => s.id === id);
+    if (!found) return new HttpResponse(null, { status: 404 });
+    const body: SeriesDetail = {
+      id: found.id,
+      canonicalTitle: found.canonicalTitle,
+      alternateTitles: found.alternateTitles,
+      coverUrl: found.coverUrl,
+      kind: found.kind,
+      status: found.status,
+      year: found.year,
+      description: found.description,
+      owned: found.owned,
+      genres: found.genres,
+      tags: found.tags,
+      externalIds: [
+        {
+          provider: "mangabaka",
+          externalId: String(found.id * 1111),
+          fetchedAt: NOW,
+        },
+      ],
+      firstSeenAt: found.firstSeenAt,
+      lastReleaseAt: found.lastReleaseAt,
+      metadataFetchedAt: NOW,
+      metadataSource: found.metadataSource,
+      highestVolume: null,
+      highestChapter: null,
+    };
+    return HttpResponse.json(body);
   }),
 
   http.get("/api/v1/series", ({ request }) => {
