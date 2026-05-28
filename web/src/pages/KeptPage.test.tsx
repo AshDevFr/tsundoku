@@ -9,7 +9,13 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { ADMIN_TEST_TOKEN, resetReviewQueue } from "@/mocks/handlers";
@@ -74,6 +80,28 @@ describe("KeptPage", () => {
       (a) => a.textContent?.trim() === "magnet",
     );
     expect(magnet).toBeTruthy();
+  });
+
+  it("surfaces extracted links and an expandable description", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderKept();
+    await screen.findByText(/Shonen Jump Guide to Making Manga/, undefined, {
+      timeout: 3000,
+    });
+    const card = screen.getByTestId("kept-card-nyaa:7001");
+    // The scraped provider link is surfaced, like in the review queue.
+    expect(card.querySelector('[data-testid="extracted-links"]')).toBeTruthy();
+
+    // The description sits behind a show/hide toggle.
+    const desc = card.querySelector<HTMLElement>(
+      '[data-testid="description-block"]',
+    );
+    if (!desc) throw new Error("description block not rendered");
+    const toggle = within(desc).getByRole("button");
+    expect(toggle).toHaveTextContent("show");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveTextContent("hide");
+    expect(within(desc).getByText(/official guidebook/i)).toBeInTheDocument();
   });
 
   it("re-resolves a kept release via the Re-resolve button", async () => {

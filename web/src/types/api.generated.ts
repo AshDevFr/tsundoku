@@ -989,7 +989,14 @@ export interface components {
         };
         ReleaseDto: {
             ddlUrl?: string | null;
+            /**
+             * @description Raw description blob (markdown for Nyaa posts that ran detail fetch;
+             *     the RSS anchor stub otherwise). Omitted when absent. Surfaced so the
+             *     review and kept views can render it inline without opening the post.
+             */
+            descriptionHtml?: string | null;
             externalId: string;
+            extractedLinks?: null | components["schemas"]["ExtractedLinksDto"];
             files: string[];
             formats: string[];
             id: string;
@@ -1310,13 +1317,6 @@ export interface components {
              *     `split_alternates`). Rendered as badge chips on the review card.
              */
             cleanupRulesApplied: string[];
-            /**
-             * @description Raw description blob (markdown for Nyaa posts that ran detail
-             *     fetch; the RSS anchor stub otherwise). The review UI renders this
-             *     inline so the operator can decide without opening the post page.
-             */
-            descriptionHtml?: string | null;
-            extractedLinks?: null | components["schemas"]["ExtractedLinksDto"];
             /**
              * @description Search queries the title cleaner produced for this release
              *     (longest-first). Empty when the release predates the cleaner or

@@ -19,6 +19,10 @@ import { useRetryRelease } from "@/api/mutations";
 import { type ReleaseDto, useKeptReleases } from "@/api/queries";
 import { formatAbsolute, formatRelative } from "@/api/utils";
 import { formatBytes } from "@/components/admin/format";
+import {
+  ExtractedLinks,
+  ReleaseDescription,
+} from "@/components/ReleaseDetails";
 
 /// Browse view for releases the operator marked `standalone`: worthwhile
 /// one-shots (guidebooks, artbooks) that are deliberately not tracked as a
@@ -169,6 +173,8 @@ function KeptCard({ release }: { release: ReleaseDto }) {
               </Anchor>
             )}
           </Group>
+          <ExtractedLinks links={release.extractedLinks} />
+          <ReleaseDescription body={release.descriptionHtml} />
         </Stack>
         <Tooltip label="Send this release back through the resolver (e.g. after a provider refresh).">
           <Button

@@ -1424,6 +1424,58 @@ async fn bulk_retry_skips_when_retry_lock_held() {
 }
 
 #[tokio::test]
+async fn release_dto_exposes_description_and_extracted_links() {
+    let db = fresh_db().await;
+    let mut r = sample_release("d1", "feed", "Some Standalone Guide");
+    r.description_html = Some("# Notes\n\nA **guidebook**.".into());
+    r.external_links = td_source::ExternalLinks {
+        mangaupdates: Some("https://www.mangaupdates.com/series/abc/x".into()),
+        ..Default::default()
+    };
+    let id = releases_repo::persist_discovered(&db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+    // Move it out of the queue so it shows up in a status-filtered list, the
+    // way the Kept view (status=standalone) fetches it.
+    releases_repo::set_resolution(
+        &db,
+        &id,
+        None,
+        Some("standalone".into()),
+        None,
+        "standalone",
+        Utc::now().timestamp(),
+    )
+    .await
+    .unwrap();
+    let app = queue_app(db);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/releases?status=standalone")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let item = &body["items"][0];
+    assert!(
+        item["descriptionHtml"]
+            .as_str()
+            .unwrap()
+            .contains("guidebook"),
+        "descriptionHtml should be present on the release DTO"
+    );
+    assert_eq!(
+        item["extractedLinks"]["mangaupdates"],
+        "https://www.mangaupdates.com/series/abc/x"
+    );
+}
+
+#[tokio::test]
 async fn series_list_filters_by_genre_and_tag_and_combines() {
     let db = fresh_db().await;
     let a = seed_series(&db, "Action+Isekai", "manga").await;

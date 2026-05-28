@@ -202,6 +202,11 @@ const INITIAL_KEPT: ReleaseDto[] = [
     resolutionStatus: "standalone",
     resolutionAttempts: 2,
     lastResolveAttemptAt: NOW - 80_000,
+    descriptionHtml:
+      "# The Shonen Jump Guide\n\nAn **official guidebook**, not a series.",
+    extractedLinks: {
+      mangaupdates: "https://www.mangaupdates.com/series/zzz/x",
+    },
   },
 ];
 

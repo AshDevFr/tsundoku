@@ -7,7 +7,6 @@ import {
   Card,
   Center,
   Checkbox,
-  Collapse,
   Group,
   Image,
   Loader,
@@ -21,14 +20,10 @@ import {
   TextInput,
   Title,
   Tooltip,
-  Typography,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
-import remarkGfm from "remark-gfm";
 import {
   useBulkReject,
   useBulkRetry,
@@ -52,6 +47,10 @@ import {
   useUnresolvedReleases,
 } from "@/api/queries";
 import { formatAbsolute, formatRelative, providerUrl } from "@/api/utils";
+import {
+  ExtractedLinks,
+  ReleaseDescription,
+} from "@/components/ReleaseDetails";
 import type { components } from "@/types/api.generated";
 
 type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
@@ -675,7 +674,7 @@ function ReviewCard({
           </Box>
         </Group>
         <ExtractedLinks links={item.extractedLinks} />
-        <DescriptionBlock body={item.descriptionHtml} />
+        <ReleaseDescription body={item.descriptionHtml} />
         <CleanupTrail
           queries={item.searchQueries}
           rules={item.cleanupRulesApplied}
@@ -1123,125 +1122,6 @@ function CleanupTrail({
         </Group>
       )}
     </Stack>
-  );
-}
-
-/// Provider links the source scraped from the release description.
-/// Shown above the candidate list so the operator can verify a hand-pasted
-/// MangaUpdates / AniList / MAL / MangaDex link without leaving the queue.
-function ExtractedLinks({
-  links,
-}: {
-  links: UnresolvedRelease["extractedLinks"];
-}) {
-  if (!links) {
-    return null;
-  }
-  const entries: { provider: string; label: string; href: string }[] = [
-    ...(links.mangaupdates
-      ? [
-          {
-            provider: "mangaupdates",
-            label: "MangaUpdates",
-            href: links.mangaupdates,
-          },
-        ]
-      : []),
-    ...(links.anilist
-      ? [{ provider: "anilist", label: "AniList", href: links.anilist }]
-      : []),
-    ...(links.mal ? [{ provider: "mal", label: "MAL", href: links.mal }] : []),
-    ...(links.mangadex
-      ? [
-          {
-            provider: "mangadex",
-            label: "MangaDex",
-            href: links.mangadex,
-          },
-        ]
-      : []),
-  ];
-  if (entries.length === 0) {
-    return null;
-  }
-  return (
-    <Group gap={6} wrap="wrap" data-testid="extracted-links">
-      <Text size="xs" c="dimmed" tt="uppercase" fw={500}>
-        links
-      </Text>
-      {entries.map((e) => (
-        <Anchor
-          key={e.provider}
-          href={e.href}
-          target="_blank"
-          rel="noreferrer noopener"
-          size="xs"
-        >
-          <Badge
-            size="sm"
-            variant="light"
-            color="teal"
-            style={{ cursor: "pointer" }}
-          >
-            {e.label}
-          </Badge>
-        </Anchor>
-      ))}
-    </Group>
-  );
-}
-
-/// Collapsible markdown rendering of the post description. Nyaa uploaders
-/// publish bodies in markdown (the `markdown-text` class on the post page);
-/// we render with sanitization and GFM tables so the queue card matches
-/// what the operator would see on Nyaa.
-function DescriptionBlock({ body }: { body: string | null | undefined }) {
-  const [opened, { toggle }] = useDisclosure(false);
-  const trimmed = body?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  return (
-    <Box data-testid="description-block">
-      <Group gap={6} wrap="wrap" mb={opened ? 4 : 0}>
-        <Text size="xs" c="dimmed" tt="uppercase" fw={500}>
-          description
-        </Text>
-        <Anchor
-          component="button"
-          type="button"
-          size="xs"
-          onClick={toggle}
-          aria-expanded={opened}
-        >
-          {opened ? "hide" : "show"}
-        </Anchor>
-      </Group>
-      <Collapse expanded={opened}>
-        <Paper
-          withBorder
-          radius="sm"
-          p="sm"
-          bg="var(--mantine-color-default-hover)"
-        >
-          <Typography fz="sm">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeSanitize]}
-              components={{
-                a: ({ href, children }) => (
-                  <a href={href} target="_blank" rel="noreferrer noopener">
-                    {children}
-                  </a>
-                ),
-              }}
-            >
-              {trimmed}
-            </ReactMarkdown>
-          </Typography>
-        </Paper>
-      </Collapse>
-    </Box>
   );
 }
 

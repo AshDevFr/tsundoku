@@ -42,6 +42,15 @@ pub struct ReleaseDto {
     pub resolution_status: String,
     pub resolution_attempts: i32,
     pub last_resolve_attempt_at: Option<i64>,
+    /// Raw description blob (markdown for Nyaa posts that ran detail fetch;
+    /// the RSS anchor stub otherwise). Omitted when absent. Surfaced so the
+    /// review and kept views can render it inline without opening the post.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description_html: Option<String>,
+    /// External-provider links scraped from the description. Omitted when
+    /// nothing was found.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extracted_links: Option<ExtractedLinksDto>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -110,15 +119,8 @@ pub struct UnresolvedRelease {
     /// Convenience pointer to `candidates[0]`, when present. Lets the
     /// card render without defensive-checking the array on every render.
     pub top_candidate: Option<ReviewCandidateDto>,
-    /// Raw description blob (markdown for Nyaa posts that ran detail
-    /// fetch; the RSS anchor stub otherwise). The review UI renders this
-    /// inline so the operator can decide without opening the post page.
-    pub description_html: Option<String>,
-    /// External-provider links the source scraped from the description.
-    /// `None` when nothing was found; the field is omitted from the
-    /// payload via `skip_serializing_if`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extracted_links: Option<ExtractedLinksDto>,
+    // `description_html` and `extracted_links` are carried by the flattened
+    // `ReleaseDto` above (shared with the kept/feed views).
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -485,16 +487,12 @@ pub async fn list_unresolved(
             .and_then(|j| serde_json::from_str(j).ok())
             .unwrap_or_default();
         let top_candidate = candidates.first().cloned();
-        let description_html = row.description_html.clone();
-        let extracted_links = parse_extracted_links(row.extracted_links_json.as_deref());
         items.push(UnresolvedRelease {
             release: model_to_release(row, formats),
             candidates,
             search_queries,
             cleanup_rules_applied,
             top_candidate,
-            description_html,
-            extracted_links,
         });
     }
 
@@ -929,6 +927,7 @@ fn model_to_release(m: releases::Model, formats: Vec<String>) -> ReleaseDto {
         .as_deref()
         .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
         .unwrap_or_default();
+    let extracted_links = parse_extracted_links(m.extracted_links_json.as_deref());
     ReleaseDto {
         id: m.id,
         source_kind: m.source_kind,
@@ -951,6 +950,8 @@ fn model_to_release(m: releases::Model, formats: Vec<String>) -> ReleaseDto {
         resolution_status: m.resolution_status,
         resolution_attempts: m.resolution_attempts,
         last_resolve_attempt_at: m.last_resolve_attempt_at,
+        description_html: m.description_html,
+        extracted_links,
     }
 }
 
