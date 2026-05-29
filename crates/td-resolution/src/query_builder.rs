@@ -52,6 +52,15 @@ pub const BUILT_IN_FORMAT_WORDS: &[&str] = &[
 /// the review queue instead of auto-resolving.
 const SUBTITLE_SPLIT_WEIGHT: f32 = 0.9;
 
+/// Confidence multiplier for chapter-suffix-stripped queries
+/// (`The Case Study of Vanitas` derived from
+/// `The Case Study of Vanitas 046.5`). Same value and reasoning as
+/// [`SUBTITLE_SPLIT_WEIGHT`]: the trailing number *might* be a chapter
+/// marker or it might be part of the canonical title (`Mob Psycho 100`),
+/// so the original stays primary and the stripped form is offered as a
+/// discounted fallback.
+const CHAPTER_SUFFIX_WEIGHT: f32 = 0.9;
+
 /// Result of cleaning one raw release title.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CleanedQuery {
@@ -197,7 +206,16 @@ impl QueryBuilder {
         // a discount because the head is a lossy guess.
         expand_subtitle_heads(&mut rules, &mut weighted);
 
-        // 13. Empty fallback.
+        // 13. Trailing chapter-like suffix: bare numbers that survived
+        // the marker-anchored rules above (`Vanitas 046.5`, `Berserk of
+        // Gluttony 005`, `Frieren 100`). Additively try the stripped
+        // form as an extra candidate so a title where the trailing
+        // number IS a chapter still has a shot at the canonical series
+        // name. Runs after subtitle expansion so subtitle heads with a
+        // trailing chapter (`Sub - Title 100`) also get stripped.
+        expand_chapter_suffixes(&mut rules, &mut weighted);
+
+        // 14. Empty fallback.
         if weighted.is_empty() {
             rules.push("empty_fallback".into());
             weighted.push((raw.to_string(), 1.0));
@@ -241,6 +259,36 @@ fn expand_subtitle_heads(rules: &mut Vec<String>, weighted: &mut Vec<(String, f3
     }
     if fired {
         rules.push("split_subtitle".into());
+    }
+}
+
+/// For each candidate query ending in a chapter-like bare number
+/// (`Vanitas 046.5`, `Berserk of Gluttony 005`, `Frieren 100`), append
+/// the suffix-stripped form as an extra, lower-weighted candidate
+/// ([`CHAPTER_SUFFIX_WEIGHT`]). Trigger pattern is intentionally wider
+/// than the marker-anchored rules: any zero-padded, fractional, or
+/// 3+-digit trailing token. That intentionally fires on titles where the
+/// number is canonical (`Mob Psycho 100`); the original stays primary
+/// and the noisy extra is filtered by Dice. Skips empty/short stripped
+/// forms and ones already present. Records `split_chapter_suffix` when
+/// it adds anything.
+fn expand_chapter_suffixes(rules: &mut Vec<String>, weighted: &mut Vec<(String, f32)>) {
+    let re = chapter_suffix_re();
+    let stripped: Vec<String> = weighted
+        .iter()
+        .filter(|(text, _)| re.is_match(text))
+        .map(|(text, _)| re.replace(text, "").trim().to_string())
+        .filter(|head| head.chars().count() >= 2)
+        .collect();
+    let mut fired = false;
+    for head in stripped {
+        if !weighted.iter().any(|(text, _)| text == &head) {
+            weighted.push((head, CHAPTER_SUFFIX_WEIGHT));
+            fired = true;
+        }
+    }
+    if fired {
+        rules.push("split_chapter_suffix".into());
     }
 }
 
@@ -363,6 +411,25 @@ fn year_re() -> &'static Regex {
 fn ext_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"(?i)\.(?:zip|cbz|cbr|epub|pdf|rar|7z)\b").unwrap())
+}
+
+fn chapter_suffix_re() -> &'static Regex {
+    // Trailing bare number that looks like a chapter marker — any of:
+    //   * fractional (`14.5`, `046.5`),
+    //   * zero-padded (`046`, `005`, `0125`),
+    //   * 3+ unpadded digits (`100`, `388`).
+    //
+    // No `c`/`ch`/`v` marker required: this exists to catch what
+    // `vol_compact_re` and `chapter_range_re` leave behind (those need
+    // a marker or a hyphenated range respectively). Single- and
+    // two-digit unpadded numbers (`Akira 2`, `Building 99`) are left
+    // alone — too ambiguous to strip even as a fallback candidate.
+    //
+    // Anchored to end-of-string with a leading whitespace boundary so
+    // it only fires on a trailing token; a mid-title number like
+    // `Mob Psycho 100 Live` is untouched.
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"\s+(?:\d+\.\d+|0\d+|\d{3,})\s*$").unwrap())
 }
 
 fn split_alternates_re() -> &'static Regex {
@@ -514,12 +581,81 @@ mod tests {
     }
 
     #[test]
-    fn standalone_number_in_title_is_not_a_chapter_range() {
-        // A single bare number (no `-N` range) must survive — it's part
-        // of the title, not chapter metadata.
+    fn standalone_number_in_title_survives_as_primary_with_stripped_fallback() {
+        // Bare trailing number (no `-N` range, no marker) survives as
+        // primary — `strip_chapter_range` needs a hyphenated range and
+        // `vol_compact_re` needs a `c`/`v` marker, so neither fires.
+        // The `split_chapter_suffix` rule additively offers the stripped
+        // form as a discounted fallback so titles where the number IS a
+        // chapter (`Frieren ... 100`) still have a shot at the canonical
+        // series name. For genuinely-canonical numbers (`Mob Psycho 100`)
+        // Dice picks the original.
         let out = clean("Mob Psycho 100");
-        assert_eq!(out.queries, vec!["Mob Psycho 100".to_string()]);
+        assert_eq!(out.queries[0], "Mob Psycho 100");
+        assert_eq!(out.queries[1], "Mob Psycho");
+        assert_eq!(out.query_weights[0], 1.0);
+        assert_eq!(out.query_weights[1], CHAPTER_SUFFIX_WEIGHT);
+        assert!(out.rules_applied.contains(&"split_chapter_suffix".into()));
         assert!(!out.rules_applied.contains(&"strip_chapter_range".into()));
+    }
+
+    #[test]
+    fn vanitas_fractional_chapter_suffix_adds_stripped_fallback() {
+        // The review-card case: `046.5` is a bare fractional chapter
+        // with no `c`/`ch.` marker, so none of the marker-anchored
+        // rules fire. `split_chapter_suffix` offers the chapter-less
+        // form so the canonical MangaBaka series can match.
+        let out = clean("The Case Study of Vanitas 046.5 (2020) (Digital) (LuCaZ)");
+        assert_eq!(out.queries[0], "The Case Study of Vanitas 046.5");
+        assert_eq!(out.queries[1], "The Case Study of Vanitas");
+        assert_eq!(out.query_weights[1], CHAPTER_SUFFIX_WEIGHT);
+        assert!(out.rules_applied.contains(&"split_chapter_suffix".into()));
+    }
+
+    #[test]
+    fn zero_padded_trailing_number_strips_as_fallback() {
+        let out = clean("Berserk of Gluttony 005");
+        assert_eq!(out.queries[0], "Berserk of Gluttony 005");
+        assert_eq!(out.queries[1], "Berserk of Gluttony");
+        assert!(out.rules_applied.contains(&"split_chapter_suffix".into()));
+    }
+
+    #[test]
+    fn unpadded_one_or_two_digit_trailing_number_is_kept_intact() {
+        // Single digits (`Akira 2`) and bare two-digit unpadded numbers
+        // (`Building 99`) stay as a single query — too ambiguous to
+        // strip even as a fallback. Padded two-digit (`05`) still fires;
+        // that's covered by `zero_padded_two_digit_trailing_number_strips`.
+        let akira = clean("Akira 2");
+        assert_eq!(akira.queries, vec!["Akira 2".to_string()]);
+        assert!(!akira.rules_applied.contains(&"split_chapter_suffix".into()));
+
+        let building = clean("Building 99");
+        assert_eq!(building.queries, vec!["Building 99".to_string()]);
+        assert!(
+            !building
+                .rules_applied
+                .contains(&"split_chapter_suffix".into())
+        );
+    }
+
+    #[test]
+    fn zero_padded_two_digit_trailing_number_strips() {
+        // `05` is unambiguous as a chapter marker (nobody pads a sequel
+        // number with a leading zero), so the fallback still fires.
+        let out = clean("Some Series 05");
+        assert_eq!(out.queries[0], "Some Series 05");
+        assert_eq!(out.queries[1], "Some Series");
+        assert!(out.rules_applied.contains(&"split_chapter_suffix".into()));
+    }
+
+    #[test]
+    fn midtitle_number_is_not_stripped_by_chapter_suffix_rule() {
+        // The rule anchors to end-of-string, so a number in the middle
+        // of the title (`Mob Psycho 100 Live`) doesn't trigger.
+        let out = clean("Mob Psycho 100 Live");
+        assert_eq!(out.queries, vec!["Mob Psycho 100 Live".to_string()]);
+        assert!(!out.rules_applied.contains(&"split_chapter_suffix".into()));
     }
 
     #[test]
