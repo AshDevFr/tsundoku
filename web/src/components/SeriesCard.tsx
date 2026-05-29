@@ -45,6 +45,9 @@ export function SeriesCard({ series }: { series: SeriesListItem }) {
     <Link
       to="/series/$id"
       params={{ id: String(series.id) }}
+      // Carry the current feed filters into the detail route so its
+      // "Back to feed" link can restore them.
+      search={(prev) => prev}
       style={{ textDecoration: "none", color: "inherit", height: "100%" }}
       data-testid={`series-card-${series.id}`}
     >

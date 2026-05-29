@@ -17,17 +17,28 @@ import { SeriesDetailPage } from "./SeriesDetailPage";
 
 // Rebuild the `/series/$id` route locally. `SeriesDetailPage` reads its params
 // via the prod `seriesDetailRoute`, whose id ("/series/$id") matches the path
-// below, so `useParams()` resolves against this match.
-function renderSeriesDetail(id: number) {
+// below, so `useParams()` resolves against this match. `initialEntry` lets a
+// test seed the URL (including the feed filter query string the detail route
+// carries through).
+function renderSeriesDetail(id: number, initialEntry = `/series/${id}`) {
   const root = createRootRoute({ component: Outlet });
+  // A stub feed route so the "Back to feed" Link (`to="/"`) resolves and its
+  // href reflects the carried-through search params.
+  const feed = createRoute({
+    getParentRoute: () => root,
+    path: "/",
+    component: () => null,
+  });
   const series = createRoute({
     getParentRoute: () => root,
     path: "/series/$id",
     component: SeriesDetailPage,
+    // Mirror prod: pass through whatever filter params arrive on the URL.
+    validateSearch: (raw: Record<string, unknown>) => raw,
   });
   const router = createRouter({
-    routeTree: root.addChildren([series]),
-    history: createMemoryHistory({ initialEntries: [`/series/${id}`] }),
+    routeTree: root.addChildren([feed, series]),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
   });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -63,6 +74,20 @@ describe("SeriesDetailPage", () => {
     // Tags.
     expect(screen.getByText("devil hunter")).toBeInTheDocument();
     expect(screen.getByText("gore")).toBeInTheDocument();
+  });
+
+  it("carries the feed filters into the Back to feed link", async () => {
+    renderSeriesDetail(
+      1,
+      "/series/1?kind=manga&genres=action&page=3&view=list",
+    );
+    const back = await screen.findByRole("link", { name: /Back to feed/ });
+    const href = back.getAttribute("href") ?? "";
+    expect(href).toMatch(/^\/\?/); // links to the feed, not just "/series/1"
+    expect(href).toContain("kind=manga");
+    expect(href).toContain("genres=action");
+    expect(href).toContain("page=3");
+    expect(href).toContain("view=list");
   });
 
   it("hides the Move action when no admin token is present", async () => {

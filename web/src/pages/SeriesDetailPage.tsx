@@ -76,6 +76,8 @@ function spanCount(
 
 export function SeriesDetailPage() {
   const { id: idStr } = seriesDetailRoute.useParams();
+  // Filters carried in from the feed; threaded back through "Back to feed".
+  const feedSearch = seriesDetailRoute.useSearch();
   const id = Number(idStr);
   const detail = useSeriesDetail(Number.isFinite(id) ? id : undefined);
   const releases = useSeriesReleases(Number.isFinite(id) ? id : undefined);
@@ -114,7 +116,13 @@ export function SeriesDetailPage() {
         <Alert color="red" title="Failed to load series">
           {(detail.error as Error)?.message ?? "Unknown error"}
         </Alert>
-        <Button component={Link} to="/" mt="md" variant="subtle">
+        <Button
+          component={Link}
+          to="/"
+          search={feedSearch}
+          mt="md"
+          variant="subtle"
+        >
           ← Back to feed
         </Button>
       </Container>
@@ -133,7 +141,14 @@ export function SeriesDetailPage() {
 
   return (
     <Container size="xl" py="lg">
-      <Button component={Link} to="/" mb="md" variant="subtle" size="xs">
+      <Button
+        component={Link}
+        to="/"
+        search={feedSearch}
+        mb="md"
+        variant="subtle"
+        size="xs"
+      >
         ← Back to feed
       </Button>
 

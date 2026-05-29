@@ -47,47 +47,55 @@ const rootRoute = createRootRoute({
   ),
 });
 
+/// Parse the feed filter state out of raw URL search params. Shared by the
+/// feed route and the series-detail route so the active filters can ride
+/// along into the detail view and back, letting "Back to feed" restore the
+/// exact filtered/paginated list the user came from.
+function validateFilterSearch(raw: Record<string, unknown>): FilterSearch {
+  const search: FilterSearch = {};
+  if (typeof raw.kind === "string" && raw.kind) search.kind = raw.kind;
+  if (typeof raw.status === "string" && raw.status) search.status = raw.status;
+  const genres = parseStringList(raw.genres);
+  if (genres.length > 0) search.genres = genres;
+  if (raw.genresMode === "all" || raw.genresMode === "any")
+    search.genresMode = raw.genresMode;
+  const tags = parseStringList(raw.tags);
+  if (tags.length > 0) search.tags = tags;
+  if (raw.tagsMode === "all" || raw.tagsMode === "any")
+    search.tagsMode = raw.tagsMode;
+  if (typeof raw.sort === "string" && raw.sort) search.sort = raw.sort;
+  if (typeof raw.order === "string" && raw.order) search.order = raw.order;
+  if (raw.owned === true || raw.owned === "true") search.owned = true;
+  else if (raw.owned === false || raw.owned === "false") search.owned = false;
+  if (raw.hasReleases === true || raw.hasReleases === "true")
+    search.hasReleases = true;
+  else if (raw.hasReleases === false || raw.hasReleases === "false")
+    search.hasReleases = false;
+  const page = Number(raw.page);
+  if (Number.isFinite(page) && page > 0) search.page = Math.floor(page);
+  const pageSize = Number(raw.pageSize);
+  if ((PAGE_SIZE_OPTIONS as readonly number[]).includes(pageSize))
+    search.pageSize = pageSize;
+  if (typeof raw.q === "string" && raw.q.trim()) search.q = raw.q;
+  if (raw.view === "list") search.view = "list";
+  else if (raw.view === "card") search.view = "card";
+  return search;
+}
+
 export const feedRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: FeedPage,
-  validateSearch: (raw: Record<string, unknown>): FilterSearch => {
-    const search: FilterSearch = {};
-    if (typeof raw.kind === "string" && raw.kind) search.kind = raw.kind;
-    if (typeof raw.status === "string" && raw.status)
-      search.status = raw.status;
-    const genres = parseStringList(raw.genres);
-    if (genres.length > 0) search.genres = genres;
-    if (raw.genresMode === "all" || raw.genresMode === "any")
-      search.genresMode = raw.genresMode;
-    const tags = parseStringList(raw.tags);
-    if (tags.length > 0) search.tags = tags;
-    if (raw.tagsMode === "all" || raw.tagsMode === "any")
-      search.tagsMode = raw.tagsMode;
-    if (typeof raw.sort === "string" && raw.sort) search.sort = raw.sort;
-    if (typeof raw.order === "string" && raw.order) search.order = raw.order;
-    if (raw.owned === true || raw.owned === "true") search.owned = true;
-    else if (raw.owned === false || raw.owned === "false") search.owned = false;
-    if (raw.hasReleases === true || raw.hasReleases === "true")
-      search.hasReleases = true;
-    else if (raw.hasReleases === false || raw.hasReleases === "false")
-      search.hasReleases = false;
-    const page = Number(raw.page);
-    if (Number.isFinite(page) && page > 0) search.page = Math.floor(page);
-    const pageSize = Number(raw.pageSize);
-    if ((PAGE_SIZE_OPTIONS as readonly number[]).includes(pageSize))
-      search.pageSize = pageSize;
-    if (typeof raw.q === "string" && raw.q.trim()) search.q = raw.q;
-    if (raw.view === "list") search.view = "list";
-    else if (raw.view === "card") search.view = "card";
-    return search;
-  },
+  validateSearch: validateFilterSearch,
 });
 
 export const seriesDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/series/$id",
   component: SeriesDetailPage,
+  // Carry the feed's filter state through the detail view so "Back to feed"
+  // can return to the same filtered, paginated list.
+  validateSearch: validateFilterSearch,
 });
 
 // `/admin` is a layout route: the AdminShell hosts the auth gate, the
