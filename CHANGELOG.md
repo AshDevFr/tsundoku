@@ -2,6 +2,20 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.5.1] - 2026-05-29
+
+### Features
+
+- *(web)* Collapse the series tag list with a show-more toggle
+
+### Bug Fixes
+
+- *(source,web)* Parse volume/chapter spans from real-world release names
+
+### Documentation
+
+- Refresh UI screenshots
+
 ## [1.5.0] - 2026-05-29
 
 ### Features
