@@ -1,0 +1,19 @@
+[package]
+name = "td-codex"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Codex HTTP client for tsundoku's presence overlay: /info probe + slim series external-index sweep"
+repository.workspace = true
+
+[dependencies]
+td-http = { path = "../td-http" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

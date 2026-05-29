@@ -1,5 +1,7 @@
 //! sea-orm entities for the tsundoku schema.
 
+pub mod codex_series_link;
+pub mod codex_status;
 pub mod genres;
 pub mod mangaupdates_id_map;
 pub mod poll_runs;
@@ -17,6 +19,8 @@ pub mod series_tags;
 pub mod source_state;
 pub mod tags;
 
+pub use codex_series_link::Entity as CodexSeriesLink;
+pub use codex_status::Entity as CodexStatus;
 pub use genres::Entity as Genres;
 pub use mangaupdates_id_map::Entity as MangaupdatesIdMap;
 pub use poll_runs::Entity as PollRuns;

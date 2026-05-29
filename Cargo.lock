@@ -3816,6 +3816,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "td-codex"
+version = "1.5.3"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "td-http",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "td-config"
 version = "1.5.3"
 dependencies = [
@@ -4382,6 +4395,7 @@ dependencies = [
  "serde",
  "serde_json",
  "td-api",
+ "td-codex",
  "td-config",
  "td-db",
  "td-http",

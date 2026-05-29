@@ -46,6 +46,12 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
     // serialization and min-gap are enforced uniformly.
     let limiter = crate::http_limiter::build(&cfg.ingestion.http);
 
+    // If the Codex integration is enabled, probe its public /info endpoint
+    // once at startup so the operator sees the connected Codex name/version
+    // (or a warning) in the logs immediately. Non-fatal: a Codex that is down
+    // at boot must not block tsundoku from serving; the sync cron retries.
+    spawn_codex_startup_probe(&cfg.codex, limiter.clone());
+
     let sources = Arc::new(crate::source_registry::build_registry(
         &cfg,
         limiter.clone(),
@@ -131,6 +137,47 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
     // cancelled before we exit.
     drop(scheduler);
     Ok(())
+}
+
+/// One-shot, off-the-runtime probe of Codex's public `GET /api/v1/info` when
+/// the integration is enabled. Logs the connected Codex name/version on
+/// success or a warning on failure. A success here proves reachability and
+/// version only — not that the api_key is valid; the first authenticated
+/// `external-index` sweep is what validates credentials.
+fn spawn_codex_startup_probe(codex: &td_config::CodexConfig, limiter: Arc<td_http::HttpLimiter>) {
+    if !codex.enabled {
+        return;
+    }
+    // Validation in `td_config::load` guarantees these are present when
+    // enabled; treat a missing value defensively rather than panicking.
+    let (Some(base_url), Some(api_key)) = (codex.normalized_base_url(), codex.api_key.clone())
+    else {
+        tracing::warn!("codex.enabled is true but base_url/api_key is missing; skipping probe");
+        return;
+    };
+    let timeout = std::time::Duration::from_secs(codex.timeout_seconds as u64);
+    tokio::spawn(async move {
+        let client = match td_codex::CodexClient::new(&base_url, api_key, timeout, limiter) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to build codex client for startup probe");
+                return;
+            }
+        };
+        match client.info().await {
+            Ok(info) => tracing::info!(
+                codex.name = %info.name,
+                codex.version = %info.version,
+                base_url = %base_url,
+                "codex reachable (api_key not yet validated; first sync will confirm)"
+            ),
+            Err(e) => tracing::warn!(
+                error = %e,
+                base_url = %base_url,
+                "codex unreachable at startup; the sync job will retry"
+            ),
+        }
+    });
 }
 
 /// Inspect every registered provider and, for those that don't yet have a

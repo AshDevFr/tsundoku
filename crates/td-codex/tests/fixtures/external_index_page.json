@@ -1,0 +1,27 @@
+{
+  "items": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440002",
+      "externalIds": [
+        {
+          "source": "plugin:mangabaka",
+          "externalId": "12345",
+          "externalUrl": "https://mangabaka.dev/manga/12345"
+        }
+      ],
+      "localMaxVolume": 12,
+      "localMaxChapter": 130.5,
+      "volumesOwned": 12
+    },
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440099",
+      "externalIds": [],
+      "localMaxVolume": null,
+      "localMaxChapter": null,
+      "volumesOwned": null
+    }
+  ],
+  "page": 1,
+  "pageSize": 100,
+  "total": 2
+}

@@ -19,6 +19,7 @@ embed-frontend = ["td-api/embed-frontend"]
 
 [dependencies]
 td-api = { path = "../td-api" }
+td-codex = { path = "../td-codex" }
 td-config = { path = "../td-config" }
 td-db = { path = "../td-db" }
 td-http = { path = "../td-http" }

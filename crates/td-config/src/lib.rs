@@ -37,6 +37,18 @@ pub struct AppConfig {
     #[serde(default)]
     pub sources: Vec<SourceConfig>,
     pub ingestion: IngestionConfig,
+    pub codex: CodexConfig,
+}
+
+impl AppConfig {
+    /// Cross-field validation that figment's per-field deserialization can't
+    /// express. Called at the end of [`load`] so a structurally-valid but
+    /// semantically-incomplete config fails loudly at startup rather than at
+    /// the first request or cron tick.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        self.codex.validate()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,6 +254,76 @@ pub struct MangabakaProviderConfig {
     pub negative_cache_ttl_days: u32,
     /// HTTP timeout per request, in seconds.
     pub timeout_seconds: u32,
+}
+
+/// Codex integration, populated from `[codex]`. Powers the admin-only
+/// "presence overlay" that shows which discovered series the operator already
+/// owns on their Codex library. Disabled by default; when off the block may be
+/// absent entirely and no outbound calls are made.
+///
+/// `api_key` is **Codex's** `X-API-Key` (a Codex account with `series:read`
+/// scope) — it is unrelated to tsundoku's own `auth.api_key` /
+/// `auth.admin_token`. `base_url` does double duty: it is the API base for the
+/// sync sweep AND the host used to build series deep links
+/// (`<base_url>/series/{uuid}`), so there is no separate deep-link setting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CodexConfig {
+    /// Master switch. When false, the cron is not registered, the API surfaces
+    /// no Codex data, and no outbound requests are made.
+    pub enabled: bool,
+    /// Codex base URL, e.g. `https://codex.example.com`. Required when
+    /// `enabled` is true. Trailing slashes are tolerated.
+    pub base_url: Option<String>,
+    /// Codex's `X-API-Key` (Reader scope). Required when `enabled` is true.
+    pub api_key: Option<String>,
+    /// Cron expression for the scheduled sync sweep. `None` disables the
+    /// scheduled sweep; the manual `POST /api/v1/codex/refresh` trigger still
+    /// works.
+    pub sync_cron: Option<String>,
+    /// HTTP timeout per outbound Codex request, in seconds.
+    pub timeout_seconds: u32,
+}
+
+impl Default for CodexConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: None,
+            api_key: None,
+            sync_cron: None,
+            timeout_seconds: 30,
+        }
+    }
+}
+
+impl CodexConfig {
+    /// Fail-fast: an enabled integration with no `base_url`/`api_key` would
+    /// otherwise 401 (or fail to connect) on every tick. Surface it at
+    /// startup, mirroring the `admin_token`-unset philosophy in
+    /// `td-api::auth`.
+    fn validate(&self) -> anyhow::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.base_url.as_deref().unwrap_or("").trim().is_empty() {
+            bail!("codex.enabled is true but codex.base_url is unset or empty");
+        }
+        if self.api_key.as_deref().unwrap_or("").trim().is_empty() {
+            bail!("codex.enabled is true but codex.api_key is unset or empty");
+        }
+        Ok(())
+    }
+
+    /// The configured base URL with any trailing slash trimmed, ready for
+    /// joining `/api/v1/...` paths and building deep links. Returns `None`
+    /// when unset.
+    pub fn normalized_base_url(&self) -> Option<String> {
+        self.base_url
+            .as_deref()
+            .map(|u| u.trim_end_matches('/').to_string())
+            .filter(|u| !u.is_empty())
+    }
 }
 
 impl Default for ServerConfig {
@@ -596,9 +678,12 @@ pub fn load(path: &Path) -> anyhow::Result<AppConfig> {
         fig = merge_file(fig, &local);
     }
 
-    fig.merge(Env::prefixed("TSUNDOKU_").split("__"))
+    let cfg: AppConfig = fig
+        .merge(Env::prefixed("TSUNDOKU_").split("__"))
         .extract()
-        .context("parsing configuration")
+        .context("parsing configuration")?;
+    cfg.validate()?;
+    Ok(cfg)
 }
 
 /// Write [`STARTER_CONFIG_TOML`] to `path`. Creates the parent directory if
@@ -1187,6 +1272,109 @@ admin_token = "write-me"
         assert!(cfg.auth.read_requires_auth);
         assert_eq!(cfg.auth.api_key.as_deref(), Some("read-me"));
         assert_eq!(cfg.auth.admin_token.as_deref(), Some("write-me"));
+    }
+
+    #[test]
+    fn codex_defaults_are_disabled_and_empty() {
+        let cfg = load(&PathBuf::from("does-not-exist.toml")).unwrap();
+        assert!(!cfg.codex.enabled);
+        assert!(cfg.codex.base_url.is_none());
+        assert!(cfg.codex.api_key.is_none());
+        assert!(cfg.codex.sync_cron.is_none());
+        assert_eq!(cfg.codex.timeout_seconds, 30);
+    }
+
+    #[test]
+    fn codex_block_parses() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[codex]
+enabled = true
+base_url = "https://codex.example.com/"
+api_key = "codex-reader-key"
+sync_cron = "0 */6 * * *"
+timeout_seconds = 45
+            "#
+        )
+        .unwrap();
+        let cfg = load(&path).unwrap();
+        assert!(cfg.codex.enabled);
+        assert_eq!(
+            cfg.codex.base_url.as_deref(),
+            Some("https://codex.example.com/")
+        );
+        // Trailing slash is trimmed by the accessor used to build URLs.
+        assert_eq!(
+            cfg.codex.normalized_base_url().as_deref(),
+            Some("https://codex.example.com")
+        );
+        assert_eq!(cfg.codex.api_key.as_deref(), Some("codex-reader-key"));
+        assert_eq!(cfg.codex.sync_cron.as_deref(), Some("0 */6 * * *"));
+        assert_eq!(cfg.codex.timeout_seconds, 45);
+    }
+
+    #[test]
+    fn codex_enabled_without_base_url_fails_to_load() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[codex]
+enabled = true
+api_key = "codex-reader-key"
+            "#
+        )
+        .unwrap();
+        let err = load(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("codex.base_url")
+                || err
+                    .source()
+                    .is_some_and(|s| s.to_string().contains("codex.base_url")),
+            "expected base_url validation error, got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn codex_enabled_without_api_key_fails_to_load() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[codex]
+enabled = true
+base_url = "https://codex.example.com"
+            "#
+        )
+        .unwrap();
+        let err = load(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("codex.api_key")
+                || err
+                    .source()
+                    .is_some_and(|s| s.to_string().contains("codex.api_key")),
+            "expected api_key validation error, got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn codex_disabled_with_absent_block_is_ok() {
+        // The whole block may be omitted when disabled; load must succeed and
+        // validation must not trip on the missing base_url/api_key.
+        let cfg = load(&PathBuf::from("does-not-exist.toml")).unwrap();
+        assert!(!cfg.codex.enabled);
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

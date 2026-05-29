@@ -182,3 +182,24 @@ poll_write_batch_size = 10
 # Steady-state polls fetch the most-recent 75 items only. To seed history
 # after first install, run `tsundoku backfill <name> --pages N` once — it
 # walks the paginated HTML listing pages, which the RSS feed does not.
+
+# --- Codex integration (optional) ----------------------------------------
+# Powers the admin-only "presence overlay": which discovered series you
+# already own on your Codex library, and whether newer volumes/chapters have
+# surfaced since. Disabled by default; the whole block may be omitted.
+#
+# IMPORTANT: `api_key` here is CODEX'S X-API-Key (a Codex account with the
+# `series:read` scope). It is unrelated to tsundoku's own [auth] api_key /
+# admin_token. `base_url` does double duty: it is the API base for the sync
+# sweep AND the host used to build series deep links (<base_url>/series/{uuid}),
+# so there is no separate deep-link setting.
+#
+# When enabled = true, base_url and api_key are REQUIRED — tsundoku refuses to
+# start otherwise (a misconfigured integration would 401 on every tick).
+#
+# [codex]
+# enabled         = true
+# base_url        = "https://codex.example.com"
+# api_key         = "codex-reader-api-key"
+# sync_cron       = "0 */6 * * *"   # every 6 hours; omit to disable the cron (manual refresh still works).
+# timeout_seconds = 30

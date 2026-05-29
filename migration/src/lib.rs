@@ -14,6 +14,7 @@ mod m20260527_000003_series_refresh_runs;
 mod m20260528_000001_run_progress;
 mod m20260528_000002_poll_run_phase_timings;
 mod m20260528_000003_release_information_url;
+mod m20260529_000001_codex_presence;
 
 pub struct Migrator;
 
@@ -37,6 +38,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260528_000001_run_progress::Migration),
             Box::new(m20260528_000002_poll_run_phase_timings::Migration),
             Box::new(m20260528_000003_release_information_url::Migration),
+            Box::new(m20260529_000001_codex_presence::Migration),
         ];
         m.extend(td_metadata_mangabaka::migration::migrations());
         m
