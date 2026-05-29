@@ -1787,6 +1787,12 @@
               "null"
             ]
           },
+          "mangabaka": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "mangadex": {
             "type": [
               "string",

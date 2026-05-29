@@ -52,6 +52,11 @@ pub struct ExternalLinks {
     pub anilist: Option<String>,
     pub mal: Option<String>,
     pub mangadex: Option<String>,
+    /// MangaBaka link. Carried even when MangaBaka is the active provider
+    /// so the resolver can short-circuit fuzzy matching by calling
+    /// `active.get(id)` directly.
+    #[serde(default)]
+    pub mangabaka: Option<String>,
 }
 
 impl ExternalLinks {
@@ -60,6 +65,7 @@ impl ExternalLinks {
             && self.anilist.is_none()
             && self.mal.is_none()
             && self.mangadex.is_none()
+            && self.mangabaka.is_none()
     }
 
     /// Yield `(provider, id_or_url)` pairs for every populated link. The
@@ -70,6 +76,7 @@ impl ExternalLinks {
             ("anilist", self.anilist.as_deref()),
             ("mal", self.mal.as_deref()),
             ("mangadex", self.mangadex.as_deref()),
+            ("mangabaka", self.mangabaka.as_deref()),
         ]
         .into_iter()
         .filter_map(|(k, v)| v.map(|s| (k, s)))
@@ -134,6 +141,7 @@ mod tests {
             anilist: None,
             mal: Some("12345".into()),
             mangadex: None,
+            mangabaka: Some("https://mangabaka.org/42".into()),
         };
         let collected: Vec<(&str, &str)> = links.iter().collect();
         assert_eq!(
@@ -141,6 +149,7 @@ mod tests {
             vec![
                 ("mangaupdates", "https://www.mangaupdates.com/series/abc"),
                 ("mal", "12345"),
+                ("mangabaka", "https://mangabaka.org/42"),
             ]
         );
         assert!(!links.is_empty());

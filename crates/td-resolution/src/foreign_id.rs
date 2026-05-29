@@ -60,7 +60,29 @@ pub fn extract_id(provider: &str, url: &str) -> Option<String> {
         "anilist" => extract_after_segment(trimmed, "/manga/"),
         "mal" => extract_after_segment(trimmed, "/manga/"),
         "mangadex" => extract_after_segment(trimmed, "/title/"),
+        "mangabaka" => extract_mangabaka_id(trimmed),
         _ => None,
+    }
+}
+
+/// Pull the numeric series id from a MangaBaka URL of the shape
+/// `mangabaka.(org|dev)/{id}[/...][?...][#...]`. The site's series pages
+/// live at the domain root (no `/series/` segment), so we can't reuse
+/// [`extract_after_segment`]; we strip the scheme + host and read the
+/// first path token.
+fn extract_mangabaka_id(url: &str) -> Option<String> {
+    let lower = url.to_ascii_lowercase();
+    let host_idx = lower.find("mangabaka.")?;
+    // Advance past "mangabaka.<tld>" by locating the path-start slash.
+    let after_host = url.get(host_idx..)?;
+    let slash = after_host.find('/')?;
+    let path = &after_host[slash + 1..];
+    let end = path.find(['/', '?', '#']).unwrap_or(path.len());
+    let id = &path[..end];
+    if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+        Some(id.to_string())
+    } else {
+        None
     }
 }
 
@@ -263,12 +285,47 @@ mod tests {
     }
 
     #[test]
+    fn mangabaka_id_extracted_from_org_url_with_query() {
+        let id = extract_id(
+            "mangabaka",
+            "https://mangabaka.org/35296?utm_source=nyaa&utm_id=oakminati",
+        );
+        assert_eq!(id.as_deref(), Some("35296"));
+    }
+
+    #[test]
+    fn mangabaka_id_extracted_from_dev_and_www_variants() {
+        for url in [
+            "https://mangabaka.dev/12345",
+            "https://www.mangabaka.org/67890/report",
+            "http://mangabaka.org/1#about",
+        ] {
+            let id = extract_id("mangabaka", url).expect(url);
+            // First numeric path segment.
+            assert!(id.chars().all(|c| c.is_ascii_digit()), "non-numeric: {id}");
+        }
+    }
+
+    #[test]
+    fn mangabaka_rejects_non_numeric_first_segment() {
+        assert_eq!(
+            extract_id("mangabaka", "https://mangabaka.org/search"),
+            None
+        );
+        assert_eq!(
+            extract_id("mangabaka", "https://mangabaka.org/api/v1/series/123"),
+            None
+        );
+    }
+
+    #[test]
     fn pairs_drops_unparseable_links_but_keeps_others() {
         let links = ExternalLinks {
             mangaupdates: Some("https://www.mangaupdates.com/series/abc/foo".into()),
             anilist: Some("not-a-url-but-bare-id".into()),
             mal: Some("https://example.invalid/wrong-shape".into()),
             mangadex: None,
+            mangabaka: None,
         };
         let got = pairs(&links);
         // mangaupdates: parsed; anilist: bare passthrough; mal: contains /, no /manga/ segment → dropped.

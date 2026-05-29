@@ -52,6 +52,15 @@ export function ExtractedLinks({
           },
         ]
       : []),
+    ...(links.mangabaka
+      ? [
+          {
+            provider: "mangabaka",
+            label: "MangaBaka",
+            href: links.mangabaka,
+          },
+        ]
+      : []),
   ];
   if (entries.length === 0) {
     return null;

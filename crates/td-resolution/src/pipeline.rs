@@ -469,21 +469,23 @@ impl Resolver {
         pairs: &[(&'static str, String, Option<String>)],
     ) -> Result<Option<SeriesMetadata>> {
         for (provider, id, _) in pairs {
-            if *provider == active_id {
-                // The active provider's own ID would already have hit
-                // step 1 if it were known. A miss here means the row
-                // genuinely doesn't exist locally; the provider's `get`
-                // would be a better fit than `resolve_by_foreign_id`,
-                // but the spec is explicit that step 2 only handles
-                // *foreign* IDs. Skip and let step 3 handle it.
-                continue;
-            }
-            match active.resolve_by_foreign_id(provider, id).await {
+            let result = if *provider == active_id {
+                // Active-provider's own ID extracted from the release
+                // (e.g. a `mangabaka.org/{id}` link pasted into a Nyaa
+                // post body). Step 1 would have caught it if it were
+                // already in `series_external_ids`; a miss here means
+                // it's just unknown locally, so we ask the provider
+                // directly via `get` rather than skipping to fuzzy.
+                active.get(id).await
+            } else {
+                active.resolve_by_foreign_id(provider, id).await
+            };
+            match result {
                 Ok(Some(metadata)) => return Ok(Some(metadata)),
                 Ok(None) => continue,
                 Err(e) => {
                     tracing::warn!(error = ?e, provider = %provider, id = %id,
-                        "resolve_by_foreign_id failed; continuing chain");
+                        "active-provider lookup failed; continuing chain");
                 }
             }
         }

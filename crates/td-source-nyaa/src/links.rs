@@ -20,6 +20,7 @@ pub fn extract_external_links(html: &str) -> ExternalLinks {
             && out.anilist.is_some()
             && out.mal.is_some()
             && out.mangadex.is_some()
+            && out.mangabaka.is_some()
         {
             break;
         }
@@ -36,7 +37,7 @@ fn iter_urls(html: &str) -> impl Iterator<Item = &str> {
     // don't slurp arbitrary tokens.
     let bare = BARE_RE.get_or_init(|| {
         Regex::new(
-            r#"(?i)https?://(?:www\.)?(?:mangaupdates|anilist|myanimelist|mangadex)[^\s<>"']+"#,
+            r#"(?i)https?://(?:www\.)?(?:mangaupdates|anilist|myanimelist|mangadex|mangabaka)[^\s<>"']+"#,
         )
         .unwrap()
     });
@@ -70,7 +71,24 @@ fn absorb_url(out: &mut ExternalLinks, raw: &str) {
     }
     if out.mangadex.is_none() && lower.contains("mangadex.org/title/") {
         out.mangadex = Some(url.to_string());
+        return;
     }
+    if out.mangabaka.is_none() && is_mangabaka_series_url(&lower) {
+        out.mangabaka = Some(url.to_string());
+    }
+}
+
+/// True when `url` (already lower-cased) points at a MangaBaka series page
+/// of the shape `mangabaka.(org|dev)/<numeric-id>`. Tolerates `www.`,
+/// trailing path segments (`/report`), query strings, and fragments.
+/// Rejects non-numeric first segments (`/search`, `/api/...`) so we don't
+/// store search pages as if they were series IDs.
+fn is_mangabaka_series_url(lower: &str) -> bool {
+    static MB_RE: OnceLock<Regex> = OnceLock::new();
+    let re = MB_RE.get_or_init(|| {
+        Regex::new(r"^https?://(?:www\.)?mangabaka\.(?:org|dev)/(\d+)(?:[/?#].*)?$").unwrap()
+    });
+    re.is_match(lower)
 }
 
 /// Trim trailing punctuation that nyaa descriptions tend to glue onto bare
@@ -171,6 +189,53 @@ mod tests {
             links.mangaupdates.as_deref(),
             Some("https://www.mangaupdates.com/series.html?id=161654"),
         );
+    }
+
+    #[test]
+    fn extracts_mangabaka_org_link_with_utm_params() {
+        // The shape Nyaa uploaders paste: `mangabaka.org/{id}?utm_...`.
+        let html =
+            r#"<a href="https://mangabaka.org/35296?utm_source=nyaa&utm_id=oakminati">MB</a>"#;
+        let links = extract_external_links(html);
+        assert_eq!(
+            links.mangabaka.as_deref(),
+            Some("https://mangabaka.org/35296?utm_source=nyaa&utm_id=oakminati")
+        );
+    }
+
+    #[test]
+    fn extracts_mangabaka_dev_and_www_variants() {
+        for url in [
+            "https://mangabaka.dev/12345",
+            "https://www.mangabaka.org/67890",
+            "http://mangabaka.org/1",
+        ] {
+            let html = format!(r#"<a href="{url}">x</a>"#);
+            let links = extract_external_links(&html);
+            assert_eq!(
+                links.mangabaka.as_deref(),
+                Some(url),
+                "did not extract {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn ignores_non_numeric_mangabaka_paths() {
+        // `/search`, `/api/...` etc. must not be stored as series ids.
+        let html = r#"
+            <a href="https://mangabaka.org/search?q=foo">search</a>
+            <a href="https://mangabaka.org/api/v1/series/123">api</a>
+        "#;
+        let links = extract_external_links(html);
+        assert!(links.mangabaka.is_none(), "got {:?}", links.mangabaka);
+    }
+
+    #[test]
+    fn extracts_bare_mangabaka_url() {
+        let html = "see https://mangabaka.org/42 for details";
+        let links = extract_external_links(html);
+        assert_eq!(links.mangabaka.as_deref(), Some("https://mangabaka.org/42"));
     }
 
     #[test]

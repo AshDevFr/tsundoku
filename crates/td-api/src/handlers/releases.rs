@@ -103,6 +103,8 @@ pub struct ExtractedLinksDto {
     pub anilist: Option<String>,
     pub mal: Option<String>,
     pub mangadex: Option<String>,
+    #[serde(default)]
+    pub mangabaka: Option<String>,
 }
 
 impl ExtractedLinksDto {
@@ -111,6 +113,7 @@ impl ExtractedLinksDto {
             && self.anilist.is_none()
             && self.mal.is_none()
             && self.mangadex.is_none()
+            && self.mangabaka.is_none()
     }
 }
 

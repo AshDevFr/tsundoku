@@ -860,6 +860,7 @@ export interface components {
         ExtractedLinksDto: {
             anilist?: string | null;
             mal?: string | null;
+            mangabaka?: string | null;
             mangadex?: string | null;
             mangaupdates?: string | null;
         };

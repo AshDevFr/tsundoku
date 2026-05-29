@@ -354,6 +354,71 @@ async fn foreign_id_lookup_persists_both_mangabaka_and_mangaupdates_external_ids
 }
 
 #[tokio::test]
+async fn direct_active_provider_link_resolves_via_get_not_fuzzy() {
+    // Regression: a Nyaa post body that embeds a `mangabaka.org/{id}` link
+    // used to fall through to fuzzy matching because step 2 skipped any
+    // pair whose provider matched the active provider's own id. Use a
+    // provider id of `"mangabaka"` (the real value in production) so the
+    // extracted link's canonical tag matches the active provider's id.
+    let db = fresh_db().await;
+    let provider = Arc::new(FakeProvider::new("mangabaka"));
+    provider.register_get(sample_metadata());
+    let mut b = MetadataRegistry::builder();
+    b.register(provider.clone()).unwrap();
+    b.set_active("mangabaka");
+    let registry = Arc::new(b.build().unwrap());
+
+    let links = serde_json::json!({
+        "mangaupdates": null,
+        "anilist": null,
+        "mal": null,
+        "mangadex": null,
+        "mangabaka": "https://mangabaka.org/12345?utm_source=nyaa",
+    });
+    insert_release(
+        &db,
+        "r-mb-direct",
+        // Garbage title on purpose: fuzzy would never match this.
+        "asdf qwer zxcv 12345",
+        Some(&links.to_string()),
+        &["cbz"],
+    )
+    .await;
+
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-mb-direct").await.unwrap();
+
+    assert_eq!(out.path, Some(ResolutionPath::ForeignIdLookup));
+    assert_eq!(out.confidence, Some(1.0));
+    // Provider was asked by its own id; no foreign-id call, no fuzzy search.
+    let calls = provider.calls();
+    assert!(
+        calls.iter().any(|c| c == "get(12345)"),
+        "expected get(12345); got {calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c.starts_with("search(")),
+        "fuzzy search should not run; got {calls:?}"
+    );
+
+    let stored = releases::Entity::find_by_id("r-mb-direct".to_string())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.resolution_status, "resolved");
+    // The mapping is now persisted under the active provider's id, so a
+    // future release with the same link will hit step 1 instead.
+    let map = series_external_ids::Entity::find()
+        .filter(series_external_ids::Column::Provider.eq("mangabaka"))
+        .filter(series_external_ids::Column::ExternalId.eq("12345"))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(map.len(), 1);
+}
+
+#[tokio::test]
 async fn second_resolve_is_idempotent_no_duplicate_external_ids() {
     let db = fresh_db().await;
     let provider = Arc::new(FakeProvider::new("mb"));
