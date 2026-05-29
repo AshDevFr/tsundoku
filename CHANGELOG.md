@@ -2,6 +2,16 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.4.1] - 2026-05-29
+
+### Features
+
+- *(web)* Add results-per-page selector to the series feed
+
+### Performance
+
+- *(web)* Replace genre/tag chip clouds with searchable multi-selects
+
 ## [1.4.0] - 2026-05-29
 
 ### Features
