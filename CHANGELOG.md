@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.2.0] - 2026-05-29
+
+### Features
+
+- *(scheduler,api,web)* Split enrich + resolve timings on poll_runs and surface on metrics card
+
 ## [1.1.2] - 2026-05-29
 
 ### Features
