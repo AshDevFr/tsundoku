@@ -11,6 +11,11 @@ export interface FilterPreset {
 
 export type TagFilterMode = "any" | "all";
 
+/// Page-size choices offered by the feed selector. 25 (not 24) so the
+/// widescreen 5-column grid fills whole rows instead of leaving a stub.
+export const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
+export const DEFAULT_PAGE_SIZE = 25;
+
 export interface FilterSearch {
   kind?: string;
   status?: string;
@@ -31,6 +36,9 @@ export interface FilterSearch {
   sort?: string;
   order?: string;
   page?: number;
+  /// Results per page. One of the values offered by the feed's page-size
+  /// selector; absent means the default. Backend caps at 200.
+  pageSize?: number;
   /// Free-text search query. Whitespace-only treated as absent.
   q?: string;
   /// View mode for the results grid: `card` (default) or `list`.

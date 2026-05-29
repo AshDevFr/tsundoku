@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { DEFAULT_PAGE_SIZE } from "@/stores/filters";
 import type { components } from "@/types/api.generated";
 
 export type AppInfo = components["schemas"]["AppInfo"];
@@ -71,8 +72,6 @@ export interface SeriesFilters {
   /// server avoids the rerank pass for an effectively-empty query.
   q?: string;
 }
-
-const DEFAULT_PAGE_SIZE = 24;
 
 export function useSeriesList(filters: SeriesFilters) {
   const trimmedQ = filters.q?.trim();

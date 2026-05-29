@@ -18,7 +18,7 @@ import { FeedPage } from "@/pages/FeedPage";
 import { KeptPage } from "@/pages/KeptPage";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { SeriesDetailPage } from "@/pages/SeriesDetailPage";
-import type { FilterSearch } from "@/stores/filters";
+import { type FilterSearch, PAGE_SIZE_OPTIONS } from "@/stores/filters";
 
 /// Accept either an array (from a repeated query param) or a CSV string
 /// (from a pasted link or older URL) and normalize to a deduped list of
@@ -74,6 +74,9 @@ export const feedRoute = createRoute({
       search.hasReleases = false;
     const page = Number(raw.page);
     if (Number.isFinite(page) && page > 0) search.page = Math.floor(page);
+    const pageSize = Number(raw.pageSize);
+    if ((PAGE_SIZE_OPTIONS as readonly number[]).includes(pageSize))
+      search.pageSize = pageSize;
     if (typeof raw.q === "string" && raw.q.trim()) search.q = raw.q;
     if (raw.view === "list") search.view = "list";
     else if (raw.view === "card") search.view = "card";

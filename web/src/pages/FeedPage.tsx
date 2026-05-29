@@ -8,6 +8,7 @@ import {
   Loader,
   Pagination,
   SegmentedControl,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -19,7 +20,11 @@ import { FilterPanel } from "@/components/FilterPanel";
 import { SeriesCard } from "@/components/SeriesCard";
 import { SeriesListRow } from "@/components/SeriesListRow";
 import { feedRoute } from "@/router";
-import type { FilterSearch } from "@/stores/filters";
+import {
+  DEFAULT_PAGE_SIZE,
+  type FilterSearch,
+  PAGE_SIZE_OPTIONS,
+} from "@/stores/filters";
 
 export function FeedPage() {
   const search = feedRoute.useSearch();
@@ -30,7 +35,7 @@ export function FeedPage() {
 
   const list = useSeriesList(search);
   const total = list.data?.total ?? 0;
-  const pageSize = list.data?.pageSize ?? 24;
+  const pageSize = list.data?.pageSize ?? DEFAULT_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const view: "card" | "list" = search.view === "list" ? "list" : "card";
 
@@ -54,21 +59,44 @@ export function FeedPage() {
                     : `${total.toLocaleString()} match${total === 1 ? "" : "es"}`}
                 </Text>
               </Group>
-              <SegmentedControl
-                size="xs"
-                value={view}
-                onChange={(v) =>
-                  setSearch({
-                    ...search,
-                    view: v === "list" ? "list" : "card",
-                  })
-                }
-                data={[
-                  { label: "Cards", value: "card" },
-                  { label: "List", value: "list" },
-                ]}
-                data-testid="feed-view-toggle"
-              />
+              <Group gap="sm" align="center" wrap="nowrap">
+                <Select
+                  size="xs"
+                  w={110}
+                  aria-label="Results per page"
+                  data={PAGE_SIZE_OPTIONS.map((n) => ({
+                    value: String(n),
+                    label: `${n} / page`,
+                  }))}
+                  value={String(search.pageSize ?? DEFAULT_PAGE_SIZE)}
+                  onChange={(v) => {
+                    const next = Number(v);
+                    setSearch({
+                      ...search,
+                      // Keep the URL clean: only persist a non-default size.
+                      pageSize: next === DEFAULT_PAGE_SIZE ? undefined : next,
+                      page: 1,
+                    });
+                  }}
+                  allowDeselect={false}
+                  data-testid="feed-page-size"
+                />
+                <SegmentedControl
+                  size="xs"
+                  value={view}
+                  onChange={(v) =>
+                    setSearch({
+                      ...search,
+                      view: v === "list" ? "list" : "card",
+                    })
+                  }
+                  data={[
+                    { label: "Cards", value: "card" },
+                    { label: "List", value: "list" },
+                  ]}
+                  data-testid="feed-view-toggle"
+                />
+              </Group>
             </Group>
 
             {list.isError && (

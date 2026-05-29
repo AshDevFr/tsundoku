@@ -116,7 +116,14 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
   }, SEARCH_DEBOUNCE_MS);
 
   const clearAll = () =>
-    onChange({ sort: search.sort, order: search.order, page: 1 });
+    onChange({
+      sort: search.sort,
+      order: search.order,
+      // Page size is a display preference, not a content filter — clearing
+      // filters shouldn't reset how many results per page the user picked.
+      pageSize: search.pageSize,
+      page: 1,
+    });
 
   const hasActiveFilters =
     Boolean(search.kind) ||
