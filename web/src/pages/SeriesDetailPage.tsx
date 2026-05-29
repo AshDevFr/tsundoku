@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Anchor,
   AspectRatio,
@@ -8,6 +9,7 @@ import {
   Card,
   Center,
   Container,
+  CopyButton,
   Grid,
   Group,
   Image,
@@ -326,6 +328,61 @@ function ReleaseList({ items }: { items: ReleaseDto[] }) {
   );
 }
 
+function CopyLinkButton({ value, label }: { value: string; label: string }) {
+  return (
+    <CopyButton value={value} timeout={1500}>
+      {({ copied, copy }) => (
+        <Tooltip label={copied ? "Copied!" : `Copy ${label}`} withArrow>
+          <ActionIcon
+            size="xs"
+            variant="subtle"
+            color={copied ? "teal" : "gray"}
+            onClick={copy}
+            aria-label={`Copy ${label}`}
+          >
+            {copied ? (
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                role="presentation"
+              >
+                <title>Copied</title>
+                <path d="M20 6L9 17l-5-5" />
+              </svg>
+            ) : (
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                role="presentation"
+              >
+                <title>Copy</title>
+                <rect x="9" y="9" width="11" height="11" rx="2" />
+                <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+              </svg>
+            )}
+          </ActionIcon>
+        </Tooltip>
+      )}
+    </CopyButton>
+  );
+}
+
 function ReleaseRow({ release }: { release: ReleaseDto }) {
   // The relink ("Move") action calls a write endpoint, so only offer it when
   // an admin token is present — the series detail page is otherwise a public
@@ -365,36 +422,48 @@ function ReleaseRow({ release }: { release: ReleaseDto }) {
         </Stack>
         <Group gap={8} wrap="nowrap" align="center">
           {release.magnet && (
-            <Anchor href={release.magnet} size="xs" rel="noreferrer">
-              magnet
-            </Anchor>
+            <Group gap={2} wrap="nowrap" align="center">
+              <Anchor href={release.magnet} size="xs" rel="noreferrer">
+                magnet
+              </Anchor>
+              <CopyLinkButton value={release.magnet} label="magnet link" />
+            </Group>
           )}
           {release.torrentUrl && (
-            <Anchor
-              href={release.torrentUrl}
-              size="xs"
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              .torrent
-            </Anchor>
+            <Group gap={2} wrap="nowrap" align="center">
+              <Anchor
+                href={release.torrentUrl}
+                size="xs"
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                .torrent
+              </Anchor>
+              <CopyLinkButton
+                value={release.torrentUrl}
+                label=".torrent link"
+              />
+            </Group>
           )}
           {release.ddlUrl && (
-            <Anchor
-              href={release.ddlUrl}
-              size="xs"
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              DDL
-            </Anchor>
+            <Group gap={2} wrap="nowrap" align="center">
+              <Anchor
+                href={release.ddlUrl}
+                size="xs"
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                DDL
+              </Anchor>
+              <CopyLinkButton value={release.ddlUrl} label="DDL link" />
+            </Group>
           )}
           {isAdmin && (
             <Tooltip label="Wrong series? Move this release to the correct one.">
               <Button
                 size="compact-xs"
-                variant="subtle"
-                color="gray"
+                variant="light"
+                color="orange"
                 onClick={openMove}
                 data-testid={`move-release-${release.id}`}
               >

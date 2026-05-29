@@ -385,6 +385,7 @@ pub async fn list(
     }
     let total = select.clone().count(&state.db).await.map_err(anyhow_err)?;
     let rows = select
+        .order_by_desc(releases::Column::PostedAt)
         .order_by_desc(releases::Column::ObservedAt)
         .offset(pagination.offset())
         .limit(pagination.limit())
