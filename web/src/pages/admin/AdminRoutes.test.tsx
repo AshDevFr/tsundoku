@@ -280,7 +280,7 @@ describe("admin sources page", () => {
         undefined,
         { timeout: 1500 },
       ),
-    ).toHaveTextContent(/12 \/ 75 \(enriching\)/);
+    ).toHaveTextContent(/12 \/ 75/);
   });
 
   it("flips the source-card pill when a synthetic SSE event arrives", async () => {

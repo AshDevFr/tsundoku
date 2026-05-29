@@ -6,8 +6,10 @@ import type { components } from "@/types/api.generated";
 type InFlight = components["schemas"]["InFlight"];
 type JobProgress = components["schemas"]["JobProgress"];
 
-/// Format the inline "Running… 47 / 200 (indexing)" copy. Falls back to
-/// just "Running…" when neither current nor phase carry useful values.
+/// Inline pill copy. Kept short on purpose: the spinner in the
+/// leftSection already conveys "running", and the phase is surfaced via
+/// the tooltip so the pill stays narrow enough to share a card row with
+/// the title and action buttons.
 function formatRunningLabel(progress: JobProgress | null | undefined): string {
   if (!progress) return "Running…";
   const { current, total, phase } = progress;
@@ -17,9 +19,27 @@ function formatRunningLabel(progress: JobProgress | null | undefined): string {
       : current > 0
         ? current.toLocaleString()
         : null;
-  if (fraction && phase) return `Running… ${fraction} (${phase})`;
-  if (fraction) return `Running… ${fraction}`;
-  if (phase) return `Running… (${phase})`;
+  if (fraction) return fraction;
+  if (phase) return phase;
+  return "Running…";
+}
+
+/// Full descriptive label for the tooltip — the bits we strip out of the
+/// inline label so the pill itself can stay compact.
+function formatRunningTooltip(
+  progress: JobProgress | null | undefined,
+): string {
+  if (!progress) return "Running…";
+  const { current, total, phase } = progress;
+  const fraction =
+    typeof total === "number" && total > 0
+      ? `${current.toLocaleString()} / ${total.toLocaleString()}`
+      : current > 0
+        ? current.toLocaleString()
+        : null;
+  if (fraction && phase) return `Running ${phase}: ${fraction}`;
+  if (fraction) return `Running: ${fraction}`;
+  if (phase) return `Running: ${phase}`;
   return "Running…";
 }
 
@@ -46,15 +66,17 @@ export function JobStatusPill({
   if (!event) {
     if (inFlight) {
       return (
-        <Badge
-          size="xs"
-          variant="light"
-          color="blue"
-          leftSection={<Loader size="xs" color="blue" />}
-          data-testid={`job-pill-${kind}-${id}`}
-        >
-          {formatRunningLabel(inFlight.progress)}
-        </Badge>
+        <Tooltip label={formatRunningTooltip(inFlight.progress)}>
+          <Badge
+            size="xs"
+            variant="light"
+            color="blue"
+            leftSection={<Loader size={10} color="blue" />}
+            data-testid={`job-pill-${kind}-${id}`}
+          >
+            {formatRunningLabel(inFlight.progress)}
+          </Badge>
+        </Tooltip>
       );
     }
     return null;
@@ -66,15 +88,17 @@ export function JobStatusPill({
     // `Started` frame for a job that hasn't ticked yet).
     const progress = event.progress ?? inFlight?.progress ?? null;
     return (
-      <Badge
-        size="xs"
-        variant="light"
-        color="blue"
-        leftSection={<Loader size="xs" color="blue" />}
-        data-testid={`job-pill-${kind}-${id}`}
-      >
-        {formatRunningLabel(progress)}
-      </Badge>
+      <Tooltip label={formatRunningTooltip(progress)}>
+        <Badge
+          size="xs"
+          variant="light"
+          color="blue"
+          leftSection={<Loader size={10} color="blue" />}
+          data-testid={`job-pill-${kind}-${id}`}
+        >
+          {formatRunningLabel(progress)}
+        </Badge>
+      </Tooltip>
     );
   }
 
