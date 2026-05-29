@@ -2,6 +2,13 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.1.2] - 2026-05-29
+
+### Features
+
+- *(web,api)* Sort series releases by post date and add copy-link buttons
+- *(resolution)* Match mangabaka.org links directly instead of falling to fuzzy
+
 ## [1.1.1] - 2026-05-29
 
 ### Features
