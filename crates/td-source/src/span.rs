@@ -91,6 +91,12 @@ fn scan<'a>(texts: impl Iterator<Item = &'a str>) -> ReleaseSpans {
         // real volume/chapter markers always live in the bare stem.
         let stem = strip_metadata_groups(text);
         push_matches(volume_re(), &stem, &mut vols);
+        // The spelled-out keyword form (`Volumes 1 - 7`) is an unambiguous
+        // human-readable range even with a spaced hyphen, so it's matched
+        // separately. The short `v` form deliberately does not allow a spaced
+        // bare endpoint (see `volume_re`), because in per-file naming the ` - `
+        // in `v18 - 1935-A Deep Marble` is a title separator, not a range.
+        push_matches(volume_keyword_range_re(), &stem, &mut vols);
         push_matches(chapter_re(), &stem, &mut chaps);
         // Long-runner convention: `v001-111 + 1134-1176` means "volumes
         // 1-111, plus loose chapters 1134-1176 not yet collected into a
@@ -115,11 +121,13 @@ fn strip_metadata_groups(text: &str) -> String {
     re.replace_all(text, " ").into_owned()
 }
 
-/// Push both capture groups (range start + optional range end) of every
-/// match into `out`. A leading-zero token like `01` parses as `1.0`.
+/// Push every numeric capture group of every match into `out` (the range
+/// start plus whichever range-end alternative fired). Non-numeric or
+/// non-participating groups are skipped. A leading-zero token like `01`
+/// parses as `1.0`.
 fn push_matches(re: &Regex, text: &str, out: &mut Vec<f64>) {
     for caps in re.captures_iter(text) {
-        for idx in [1usize, 2usize] {
+        for idx in 1..caps.len() {
             if let Some(m) = caps.get(idx)
                 && let Ok(n) = m.as_str().parse::<f64>()
             {
@@ -129,15 +137,40 @@ fn push_matches(re: &Regex, text: &str, out: &mut Vec<f64>) {
     }
 }
 
-/// `v01`, `vol 3`, `volume 12`, `volumes 1-7`, `v01-03`, `v1-v5`. The
+/// `v01`, `vol 3`, `volume 12`, `v01-03`, `v1-v5`, `v18 - v22`. The
 /// `v`/`vol`/`volume(s)` prefix is required so bare numbers (years,
 /// resolution, group counts) never read as volumes. Word-boundary anchored
 /// so it won't fire mid-word (`tv01`).
+///
+/// A range endpoint is accepted two ways: a **tight** hyphen (`v18-22`,
+/// `v01-v05`) or a **spaced** hyphen whose endpoint carries its own `v`/`vol`
+/// prefix (`v18 - v22`). A spaced hyphen followed by a *bare* number is NOT a
+/// range: in real file names `v18 - 1935-A Deep Marble` the ` - ` separates
+/// the volume marker from a subtitle that happens to start with a year, and
+/// `v20 - 1931 Winter` is the same shape. Treating those as ranges produced
+/// nonsense spans like "v18-1935". The spelled-out `Volumes 1 - 7` form, which
+/// legitimately uses a spaced bare endpoint, is matched by
+/// [`volume_keyword_range_re`] instead.
 fn volume_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(
-            r"(?i)\bv(?:ol(?:ume)?s?)?\.?\s*(\d+(?:\.\d+)?)(?:\s*[-–]\s*(?:v(?:ol(?:ume)?s?)?\.?\s*)?(\d+(?:\.\d+)?))?",
+            r"(?i)\bv(?:ol(?:ume)?s?)?\.?\s*(\d+(?:\.\d+)?)(?:[-–](?:v(?:ol(?:ume)?s?)?\.?)?(\d+(?:\.\d+)?)|\s*[-–]\s*v(?:ol(?:ume)?s?)?\.?\s*(\d+(?:\.\d+)?))?",
+        )
+        .unwrap()
+    })
+}
+
+/// The spelled-out spaced volume range `Volumes 1 - 7` / `vol. 3 - 9`. Kept
+/// separate from [`volume_re`] because it requires the literal `vol` keyword
+/// (and whitespace before the number), so it can never fire on the short
+/// `v18 - <subtitle>` per-file form that the spaced-bare endpoint would
+/// otherwise mis-read as a range.
+fn volume_keyword_range_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        Regex::new(
+            r"(?i)\bvol(?:ume)?s?\.?\s+(\d+(?:\.\d+)?)\s*[-–]\s*(?:v(?:ol(?:ume)?s?)?\.?\s*)?(\d+(?:\.\d+)?)",
         )
         .unwrap()
     })
@@ -149,11 +182,15 @@ fn volume_re() -> &'static Regex {
 /// can't match inside words like `Disc`; the `#` branch needs no anchor
 /// (it's already non-word). The `#` issue/chapter convention is borrowed
 /// from Codex's filename parser.
+///
+/// Range endpoints follow the same rule as [`volume_re`]: a tight hyphen
+/// (`c001-050`) or a spaced hyphen with a re-stated prefix. A spaced bare
+/// endpoint (`ch 5 - 2019 Special`) is a title separator, not a range.
 fn chapter_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(
-            r"(?i)(?:\b(?:chapters?|chaps?|ch|c)|#)\.?\s*(\d+(?:\.\d+)?)(?:\s*[-–]\s*(?:(?:\b(?:chapters?|chaps?|ch|c)|#)\.?\s*)?(\d+(?:\.\d+)?))?",
+            r"(?i)(?:\b(?:chapters?|chaps?|ch|c)|#)\.?\s*(\d+(?:\.\d+)?)(?:[-–](?:(?:chapters?|chaps?|ch|c|#)\.?)?(\d+(?:\.\d+)?)|\s*[-–]\s*(?:\b(?:chapters?|chaps?|ch|c)|#)\.?\s*(\d+(?:\.\d+)?))?",
         )
         .unwrap()
     })
@@ -336,6 +373,40 @@ mod tests {
         // Comic-style issue numbering, as Codex's filename parser handles.
         let got = detect_spans(&s(&["Batman #001.cbz", "Batman #042.cbz"]), "ignored");
         assert_eq!(got.chapters, span(1.0, 42.0));
+        assert_eq!(got.volumes, None);
+    }
+
+    #[test]
+    fn spaced_bare_endpoint_after_volume_is_a_subtitle_not_a_range() {
+        // Regression: the real Baccano! pack. Each file is `vNN - <Subtitle>`
+        // where the subtitle starts with a year-letter token (`1935-A`) or a
+        // bare year (`1931 Winter`). The ` - ` is a title separator, so each
+        // file contributes only its own volume; the title's `v18-22` (tight)
+        // supplies the range. The endpoint must never read as `1935`/`1931`.
+        let files = s(&[
+            "Baccano! v18 - 1935-A Deep Marble [Yen Press] [Stick].epub",
+            "Baccano! v19 - 1935-B Dr. Feelgreed [Yen Press] [Stick].epub",
+            "Baccano! v20 - 1931 Winter - The Time of the Oasis [Yen Press] [Stick].epub",
+            "Baccano! v21 - 1935-C The Grateful Bet [Yen Press] [Stick].epub",
+            "Baccano! v22 - 1935-D Luckstreet Boys [Yen Press] [Stick].epub",
+        ]);
+        let got = detect_spans(&files, "Baccano! v18-22 [Yen Press] [Stick]");
+        assert_eq!(got.volumes, span(18.0, 22.0));
+        assert_eq!(got.chapters, None);
+    }
+
+    #[test]
+    fn spaced_range_with_restated_prefix_is_a_range() {
+        // `v18 - v22` (spaced, but the endpoint re-states the `v`) is an
+        // unambiguous range and must still parse as one.
+        let got = detect_spans(&[], "Baccano! v18 - v22");
+        assert_eq!(got.volumes, span(18.0, 22.0));
+    }
+
+    #[test]
+    fn spaced_bare_endpoint_after_chapter_is_a_subtitle_not_a_range() {
+        let got = detect_spans(&s(&["Some Series ch 5 - 2019 Special.cbz"]), "ignored");
+        assert_eq!(got.chapters, span(5.0, 5.0));
         assert_eq!(got.volumes, None);
     }
 
