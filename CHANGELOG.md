@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.5.0] - 2026-05-29
+
+### Features
+
+- *(source,db,resolution,api,web)* Track highest volume/chapter across releases
+
 ## [1.4.1] - 2026-05-29
 
 ### Features
