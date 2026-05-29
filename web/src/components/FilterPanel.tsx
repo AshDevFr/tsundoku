@@ -2,13 +2,12 @@ import {
   ActionIcon,
   Box,
   Button,
-  Chip,
   CloseButton,
   Group,
   Menu,
   Modal,
+  MultiSelect,
   Paper,
-  ScrollArea,
   SegmentedControl,
   Select,
   Stack,
@@ -261,7 +260,7 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
           searchable
         />
 
-        <ChipFilterGroup
+        <ComboFilterGroup
           label="Genres"
           testId="filter-genres"
           items={genreItems}
@@ -276,7 +275,7 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
           }
         />
 
-        <ChipFilterGroup
+        <ComboFilterGroup
           label="Tags"
           testId="filter-tags"
           items={tagItems}
@@ -390,15 +389,15 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
   );
 }
 
-interface ChipFilterItem {
+interface ComboFilterItem {
   name: string;
   seriesCount: number;
 }
 
-interface ChipFilterGroupProps {
+interface ComboFilterGroupProps {
   label: string;
   testId: string;
-  items: ChipFilterItem[];
+  items: ComboFilterItem[];
   loading: boolean;
   selected: string[];
   mode: TagFilterMode;
@@ -406,10 +405,13 @@ interface ChipFilterGroupProps {
   onModeChange: (next: TagFilterMode) => void;
 }
 
-/// Multi-select chip grid for genres or tags. Keeps the picker compact
-/// by scrolling the body, surfaces the current `any`/`all` mode inline,
-/// and supports a typeahead filter against the rendered chips.
-function ChipFilterGroup({
+/// Searchable multi-select for genre/tag vocabularies. Tags ship 5k+
+/// values; a chip cloud would mount every option into the DOM and
+/// re-reconcile the whole set on each parent re-render (e.g. every search
+/// keystroke), which locks the main thread. The combobox only renders the
+/// matching slice (`limit`) inside an open dropdown, so typing stays cheap
+/// no matter how large the vocabulary grows.
+function ComboFilterGroup({
   label,
   testId,
   items,
@@ -418,17 +420,16 @@ function ChipFilterGroup({
   mode,
   onSelectedChange,
   onModeChange,
-}: ChipFilterGroupProps) {
-  const [filter, setFilter] = useState("");
-  const visible = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
-    if (!needle) return items;
-    return items.filter((i) => i.name.toLowerCase().includes(needle));
-  }, [items, filter]);
-
-  // Mantine's Chip.Group with `multiple` is the natural fit: it owns the
-  // value array and just calls back with the next selection.
-  const hasSelection = selected.length > 0;
+}: ComboFilterGroupProps) {
+  const data = useMemo(
+    () => items.map((i) => ({ value: i.name, label: i.name })),
+    [items],
+  );
+  const counts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const i of items) m.set(i.name, i.seriesCount);
+    return m;
+  }, [items]);
 
   return (
     <Box data-testid={testId}>
@@ -437,7 +438,7 @@ function ChipFilterGroup({
           <Text size="sm" fw={500}>
             {label}
           </Text>
-          {hasSelection && (
+          {selected.length > 0 && (
             <Tooltip label={`Clear ${label.toLowerCase()}`} withinPortal>
               <CloseButton
                 size="xs"
@@ -458,45 +459,26 @@ function ChipFilterGroup({
           disabled={selected.length < 2}
         />
       </Group>
-      <TextInput
-        size="xs"
+      <MultiSelect
+        data={data}
+        value={selected}
+        onChange={onSelectedChange}
+        searchable
+        clearable
+        hidePickedOptions
+        limit={100}
+        maxDropdownHeight={260}
         placeholder={loading ? "loading…" : `Search ${label.toLowerCase()}…`}
-        value={filter}
-        onChange={(e) => setFilter(e.currentTarget.value)}
-        mb="xs"
-        rightSection={
-          filter ? (
-            <CloseButton
-              size="xs"
-              aria-label="Clear search"
-              onClick={() => setFilter("")}
-            />
-          ) : null
-        }
-      />
-      <ScrollArea.Autosize mah={220} type="auto" offsetScrollbars>
-        <Chip.Group
-          multiple
-          value={selected}
-          onChange={(v) => onSelectedChange(v as string[])}
-        >
-          <Group gap={6}>
-            {visible.map((item) => (
-              <Chip key={item.name} value={item.name} size="xs" variant="light">
-                {item.name}
-                <Text component="span" c="dimmed" ml={4} size="xs">
-                  {item.seriesCount}
-                </Text>
-              </Chip>
-            ))}
-            {!loading && visible.length === 0 && (
-              <Text size="xs" c="dimmed">
-                No matches
-              </Text>
-            )}
+        nothingFoundMessage="No matches"
+        renderOption={({ option }) => (
+          <Group justify="space-between" gap="xs" w="100%" wrap="nowrap">
+            <Text size="sm">{option.label}</Text>
+            <Text size="xs" c="dimmed">
+              {counts.get(option.value) ?? 0}
+            </Text>
           </Group>
-        </Chip.Group>
-      </ScrollArea.Autosize>
+        )}
+      />
     </Box>
   );
 }
