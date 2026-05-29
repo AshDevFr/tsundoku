@@ -47,7 +47,6 @@ import {
   LinkExistingPanel,
   ProviderSearchPanel,
 } from "@/components/ReleaseLinking";
-import { spanBadgeLabel } from "@/components/SeriesCard";
 import { seriesDetailRoute } from "@/router";
 import { useAdminAuth } from "@/stores/auth";
 
@@ -57,6 +56,23 @@ const COVER_PLACEHOLDER =
 // Tags can number in the hundreds; collapse to a manageable count with a
 // click-to-expand affordance so the detail page isn't dominated by the list.
 const MAX_VISIBLE_TAGS = 30;
+
+// `available/published` count label for a metric, e.g. `vol 111/114`. Falls
+// back to available-only (`vol 111`) when the provider has no published total,
+// or published-only (`vol 114`) when no release has been observed yet; null
+// when neither count exists.
+function spanCount(
+  prefix: string,
+  available: number | null | undefined,
+  total: number | null | undefined,
+): string | null {
+  const a = typeof available === "number" ? available : null;
+  const t = typeof total === "number" ? total : null;
+  if (a !== null && t !== null) return `${prefix} ${a}/${t}`;
+  if (a !== null) return `${prefix} ${a}`;
+  if (t !== null) return `${prefix} ${t}`;
+  return null;
+}
 
 export function SeriesDetailPage() {
   const { id: idStr } = seriesDetailRoute.useParams();
@@ -107,6 +123,13 @@ export function SeriesDetailPage() {
 
   if (!detail.data) return null;
   const s = detail.data;
+
+  const spanParts = [
+    spanCount("vol", s.highestVolume, s.totalVolumes),
+    spanCount("ch", s.highestChapter, s.totalChapters),
+  ].filter(Boolean);
+  const hasAvailable =
+    typeof s.highestVolume === "number" || typeof s.highestChapter === "number";
 
   return (
     <Container size="xl" py="lg">
@@ -175,16 +198,11 @@ export function SeriesDetailPage() {
               )}
             </Group>
 
-            {(typeof s.totalVolumes === "number" ||
-              typeof s.totalChapters === "number") && (
+            {spanParts.length > 0 && (
               <Text size="sm">
-                {typeof s.totalVolumes === "number" && `${s.totalVolumes} vol`}
-                {typeof s.totalVolumes === "number" &&
-                  typeof s.totalChapters === "number" &&
-                  " · "}
-                {typeof s.totalChapters === "number" && `${s.totalChapters} ch`}{" "}
+                {spanParts.join(" · ")}{" "}
                 <Text component="span" c="dimmed" size="xs">
-                  published
+                  {hasAvailable ? "available / published" : "published"}
                 </Text>
               </Text>
             )}
@@ -253,21 +271,6 @@ export function SeriesDetailPage() {
                   </Tooltip>
                 )}
               </Group>
-              {(typeof s.highestVolume === "number" ||
-                typeof s.highestChapter === "number") && (
-                <Text size="sm" c="dimmed">
-                  Available across releases:{" "}
-                  {[
-                    spanBadgeLabel("vol", s.highestVolume, s.totalVolumes),
-                    spanBadgeLabel("ch", s.highestChapter, s.totalChapters),
-                  ]
-                    .filter(Boolean)
-                    .join(", ")}{" "}
-                  <Text component="span" size="xs">
-                    (available/published total)
-                  </Text>
-                </Text>
-              )}
             </Box>
 
             {s.externalIds.length > 0 && (
