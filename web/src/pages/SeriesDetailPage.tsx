@@ -54,6 +54,10 @@ import { useAdminAuth } from "@/stores/auth";
 const COVER_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
 
+// Tags can number in the hundreds; collapse to a manageable count with a
+// click-to-expand affordance so the detail page isn't dominated by the list.
+const MAX_VISIBLE_TAGS = 30;
+
 export function SeriesDetailPage() {
   const { id: idStr } = seriesDetailRoute.useParams();
   const id = Number(idStr);
@@ -61,6 +65,7 @@ export function SeriesDetailPage() {
   const releases = useSeriesReleases(Number.isFinite(id) ? id : undefined);
   const isAdmin = useAdminAuth((s) => Boolean(s.token));
   const refresh = useRefreshSeriesMetadata();
+  const [tagsExpanded, setTagsExpanded] = useState(false);
 
   const handleRefresh = () => {
     if (!Number.isFinite(id)) return;
@@ -196,11 +201,27 @@ export function SeriesDetailPage() {
 
             {s.tags.length > 0 && (
               <Group gap={4}>
-                {s.tags.map((t) => (
+                {(tagsExpanded
+                  ? s.tags
+                  : s.tags.slice(0, MAX_VISIBLE_TAGS)
+                ).map((t) => (
                   <Badge key={t} size="sm" variant="light" color="blue">
                     {t}
                   </Badge>
                 ))}
+                {s.tags.length > MAX_VISIBLE_TAGS && (
+                  <Badge
+                    size="sm"
+                    variant="light"
+                    color="gray"
+                    style={{ cursor: "pointer" }}
+                    onClick={() => setTagsExpanded((v) => !v)}
+                  >
+                    {tagsExpanded
+                      ? "show less"
+                      : `+${s.tags.length - MAX_VISIBLE_TAGS} more`}
+                  </Badge>
+                )}
               </Group>
             )}
 
