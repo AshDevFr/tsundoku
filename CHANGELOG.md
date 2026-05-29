@@ -2,6 +2,20 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.1.1] - 2026-05-29
+
+### Features
+
+- *(resolution)* Add split_chapter_suffix rule for bare trailing chapter numbers
+
+### Refactor
+
+- *(web)* Trim job pill copy and move phase into tooltip
+
+### Documentation
+
+- Capture admin maintenance screenshot and refresh the screenshot set
+
 ## [1.1.0] - 2026-05-28
 
 ### Bug Fixes
