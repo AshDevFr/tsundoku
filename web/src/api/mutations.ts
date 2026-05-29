@@ -383,3 +383,29 @@ export function useRefreshAllSeries() {
     },
   });
 }
+
+/// Recompute every release's volume/chapter span and every series'
+/// `highestVolume` / `highestChapter` from the stored file lists (titles as
+/// fallback). Network-free and idempotent; authoritative (a series' marks
+/// are replaced with the MAX across its linked releases, so values can also
+/// go down after a parsing-strategy change). Use it to backfill a catalog
+/// that predates span detection, or after the parser changes.
+export function useRecomputeSpans() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/api/v1/series/recompute-spans",
+        {},
+      );
+      if (error)
+        throw new Error(describeError(error, "failed to recompute spans"));
+      return data;
+    },
+    onSuccess: () => {
+      // Both list badges and detail page read the recomputed marks.
+      qc.invalidateQueries({ queryKey: ["series-list"] });
+      qc.invalidateQueries({ queryKey: ["series-detail"] });
+    },
+  });
+}

@@ -586,6 +586,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/series/recompute-spans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recompute every release's volume/chapter span and every series'
+         *     `highest_volume` / `highest_chapter` mark from the stored file lists
+         *     (titles as fallback). Network-free and idempotent. Unlike the
+         *     incremental bump that runs when a release is linked, this is an
+         *     authoritative pass: a series' marks are *replaced* with the MAX across
+         *     its currently-linked releases, so it also corrects values an earlier,
+         *     more eager parser over-counted and clears marks on series whose releases
+         *     no longer parse to anything.
+         * @description Use it after changing the span-parsing logic, or to backfill a catalog
+         *     whose releases predate span detection. Runs in-process against the same
+         *     pool `serve` uses, so it is safe to trigger on a live instance (it shares
+         *     the single SQLite writer rather than contending with a separate process).
+         */
+        post: operations["recompute_series_spans"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series/refresh-all": {
         parameters: {
             query?: never;
@@ -1235,6 +1265,23 @@ export interface components {
             hits: components["schemas"]["ProviderSearchHit"][];
             provider: string;
         };
+        /**
+         * @description Response from `POST /api/v1/series/recompute-spans`. The endpoint runs
+         *     synchronously, so the counts are the actual outcome of the pass.
+         */
+        RecomputeSpansResponse: {
+            /**
+             * Format: int64
+             * @description Releases whose stored volume/chapter span was rewritten because
+             *     re-parsing the file list (or title) produced a different value.
+             */
+            releasesRewritten: number;
+            /**
+             * Format: int64
+             * @description Series rows whose `highest_volume` / `highest_chapter` changed.
+             */
+            seriesUpdated: number;
+        };
         ReenrichRequest: {
             /**
              * @description Resolution statuses to target. Releases for the source whose
@@ -1493,6 +1540,20 @@ export interface components {
             /** Format: int64 */
             firstSeenAt: number;
             genres: string[];
+            /**
+             * Format: double
+             * @description Highest chapter number seen across linked releases. Pairs with
+             *     [`Self::total_chapters`] for the `ch available/total` card badge.
+             */
+            highestChapter?: number | null;
+            /**
+             * Format: double
+             * @description Highest volume number seen across this series' linked releases (what
+             *     is realistically available), as opposed to [`Self::total_volumes`]
+             *     (the published total). Drives the `vol available/total` card badge
+             *     and the `highest_volume` sort. `None` until a numbered release links.
+             */
+            highestVolume?: number | null;
             /** Format: int32 */
             id: number;
             kind?: string | null;
@@ -2485,10 +2546,10 @@ export interface operations {
                 tagsMode?: string;
                 /**
                  * @description Sort field. Supports `last_release_at` (default), `first_seen_at`,
-                 *     `total_volumes`, and `total_chapters`. The count sorts are
-                 *     nullable-aware: rows without a provider value sink to the end
-                 *     regardless of direction. Ignored when `q` is present (results
-                 *     are ranked by relevance instead).
+                 *     `total_volumes`, `total_chapters`, `highest_volume`, and
+                 *     `highest_chapter`. The count / highest sorts are nullable-aware:
+                 *     rows without a value sink to the end regardless of direction.
+                 *     Ignored when `q` is present (results are ranked by relevance instead).
                  */
                 sort?: string;
                 /** @description `asc` or `desc` (default). */
@@ -2567,6 +2628,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InvalidateMetadataHashesResponse"];
+                };
+            };
+        };
+    };
+    recompute_series_spans: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecomputeSpansResponse"];
                 };
             };
         };

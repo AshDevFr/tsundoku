@@ -64,4 +64,29 @@ describe("SeriesCard", () => {
     expect(await screen.findByText("Test Series")).toBeInTheDocument();
     expect(screen.queryByText("manual")).not.toBeInTheDocument();
   });
+
+  it("renders available/total volume and chapter badges", async () => {
+    renderCard(
+      base({
+        highestVolume: 5,
+        totalVolumes: 11,
+        highestChapter: 40,
+        totalChapters: 97,
+      }),
+    );
+    expect(await screen.findByText("vol 5/11")).toBeInTheDocument();
+    expect(screen.getByText("ch 40/97")).toBeInTheDocument();
+  });
+
+  it("shows available count without a slash when no published total", async () => {
+    renderCard(base({ highestVolume: 3, totalVolumes: null }));
+    expect(await screen.findByText("vol 3")).toBeInTheDocument();
+  });
+
+  it("omits span badges when nothing is available yet", async () => {
+    renderCard(base({ highestVolume: null, highestChapter: null }));
+    expect(await screen.findByText("Test Series")).toBeInTheDocument();
+    expect(screen.queryByText(/^vol /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^ch /)).not.toBeInTheDocument();
+  });
 });

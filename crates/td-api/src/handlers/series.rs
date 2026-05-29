@@ -59,6 +59,14 @@ pub struct SeriesListItem {
     /// Published total chapter count from provider metadata; pair to
     /// [`Self::total_volumes`] for sort-by-chapter results.
     pub total_chapters: Option<i32>,
+    /// Highest volume number seen across this series' linked releases (what
+    /// is realistically available), as opposed to [`Self::total_volumes`]
+    /// (the published total). Drives the `vol available/total` card badge
+    /// and the `highest_volume` sort. `None` until a numbered release links.
+    pub highest_volume: Option<f64>,
+    /// Highest chapter number seen across linked releases. Pairs with
+    /// [`Self::total_chapters`] for the `ch available/total` card badge.
+    pub highest_chapter: Option<f64>,
     /// Provider rating on a 0-10 scale; surfaced on the list view so a
     /// future sort-by-rating has a number to display.
     pub rating: Option<f64>,
@@ -143,10 +151,10 @@ pub struct SeriesListQuery {
     /// `any` (default) or `all`. See [`Self::tags`].
     pub tags_mode: Option<String>,
     /// Sort field. Supports `last_release_at` (default), `first_seen_at`,
-    /// `total_volumes`, and `total_chapters`. The count sorts are
-    /// nullable-aware: rows without a provider value sink to the end
-    /// regardless of direction. Ignored when `q` is present (results
-    /// are ranked by relevance instead).
+    /// `total_volumes`, `total_chapters`, `highest_volume`, and
+    /// `highest_chapter`. The count / highest sorts are nullable-aware:
+    /// rows without a value sink to the end regardless of direction.
+    /// Ignored when `q` is present (results are ranked by relevance instead).
     pub sort: Option<String>,
     /// `asc` or `desc` (default).
     pub order: Option<String>,
@@ -229,18 +237,22 @@ pub async fn list(
         Some("first_seen_at") => series::Column::FirstSeenAt,
         Some("total_volumes") => series::Column::TotalVolumes,
         Some("total_chapters") => series::Column::TotalChapters,
+        Some("highest_volume") => series::Column::HighestVolume,
+        Some("highest_chapter") => series::Column::HighestChapter,
         _ => series::Column::LastReleaseAt,
     };
     let desc = !matches!(q.order.as_deref(), Some("asc"));
     // Nullable count columns: prefix the order with `IS NULL ASC` so rows
-    // without a provider value sink to the bottom for both directions —
-    // otherwise SQLite puts NULLs first on DESC and a "longest first"
-    // sort would lead with rows of unknown length. The default
-    // `last_release_at` / `first_seen_at` columns are NOT NULL and need
-    // no such prefix.
+    // without a value sink to the bottom for both directions — otherwise
+    // SQLite puts NULLs first on DESC and a "longest first" sort would
+    // lead with rows of unknown length. The default `last_release_at` /
+    // `first_seen_at` columns are NOT NULL and need no such prefix.
     if matches!(
         sort_col,
-        series::Column::TotalVolumes | series::Column::TotalChapters
+        series::Column::TotalVolumes
+            | series::Column::TotalChapters
+            | series::Column::HighestVolume
+            | series::Column::HighestChapter
     ) {
         select = select.order_by_asc(Expr::col(sort_col).is_null());
     }
@@ -849,6 +861,51 @@ pub async fn refresh_all(
     }))
 }
 
+/// Response from `POST /api/v1/series/recompute-spans`. The endpoint runs
+/// synchronously, so the counts are the actual outcome of the pass.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecomputeSpansResponse {
+    /// Releases whose stored volume/chapter span was rewritten because
+    /// re-parsing the file list (or title) produced a different value.
+    pub releases_rewritten: u64,
+    /// Series rows whose `highest_volume` / `highest_chapter` changed.
+    pub series_updated: u64,
+}
+
+/// Recompute every release's volume/chapter span and every series'
+/// `highest_volume` / `highest_chapter` mark from the stored file lists
+/// (titles as fallback). Network-free and idempotent. Unlike the
+/// incremental bump that runs when a release is linked, this is an
+/// authoritative pass: a series' marks are *replaced* with the MAX across
+/// its currently-linked releases, so it also corrects values an earlier,
+/// more eager parser over-counted and clears marks on series whose releases
+/// no longer parse to anything.
+///
+/// Use it after changing the span-parsing logic, or to backfill a catalog
+/// whose releases predate span detection. Runs in-process against the same
+/// pool `serve` uses, so it is safe to trigger on a live instance (it shares
+/// the single SQLite writer rather than contending with a separate process).
+#[utoipa::path(
+    post,
+    path = "/api/v1/series/recompute-spans",
+    tag = "series",
+    operation_id = "recompute_series_spans",
+    responses((status = 200, body = RecomputeSpansResponse)),
+    security(("admin" = []))
+)]
+pub async fn recompute_spans(
+    State(state): State<AppState>,
+) -> ApiResult<Json<RecomputeSpansResponse>> {
+    let summary = releases_repo::recompute_all_spans(&state.db)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(RecomputeSpansResponse {
+        releases_rewritten: summary.releases_rewritten,
+        series_updated: summary.series_updated,
+    }))
+}
+
 /// Query string for `POST /api/v1/series/invalidate-metadata-hashes`.
 /// `provider` scopes the operation to rows that have a `series_external_ids`
 /// row for that provider; when omitted, every non-manual row is cleared.
@@ -944,6 +1001,8 @@ fn model_to_list_item(
         release_count,
         total_volumes: m.total_volumes,
         total_chapters: m.total_chapters,
+        highest_volume: m.highest_volume,
+        highest_chapter: m.highest_chapter,
         rating: m.rating,
         owned: m.owned != 0,
     }

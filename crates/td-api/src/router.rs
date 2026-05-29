@@ -27,6 +27,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
     let writes = Router::new()
         .route("/series", post(series::create))
         .route("/series/refresh-all", post(series::refresh_all))
+        .route("/series/recompute-spans", post(series::recompute_spans))
         .route(
             "/series/invalidate-metadata-hashes",
             post(series::invalidate_metadata_hashes),

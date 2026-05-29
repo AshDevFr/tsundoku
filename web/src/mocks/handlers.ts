@@ -840,6 +840,15 @@ export const handlers = [
     });
   }),
 
+  http.post("/api/v1/series/recompute-spans", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({
+      releasesRewritten: 18,
+      seriesUpdated: 5,
+    });
+  }),
+
   http.post("/api/v1/series/:id/refresh-metadata", ({ request, params }) => {
     const denied = requireAdmin(request);
     if (denied) return denied;

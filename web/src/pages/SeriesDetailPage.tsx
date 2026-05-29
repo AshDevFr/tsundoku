@@ -47,6 +47,7 @@ import {
   LinkExistingPanel,
   ProviderSearchPanel,
 } from "@/components/ReleaseLinking";
+import { spanBadgeLabel } from "@/components/SeriesCard";
 import { seriesDetailRoute } from "@/router";
 import { useAdminAuth } from "@/stores/auth";
 
@@ -234,14 +235,16 @@ export function SeriesDetailPage() {
               {(typeof s.highestVolume === "number" ||
                 typeof s.highestChapter === "number") && (
                 <Text size="sm" c="dimmed">
-                  Highest seen across releases:{" "}
-                  {typeof s.highestVolume === "number" &&
-                    `vol ${s.highestVolume}`}
-                  {typeof s.highestVolume === "number" &&
-                    typeof s.highestChapter === "number" &&
-                    ", "}
-                  {typeof s.highestChapter === "number" &&
-                    `ch ${s.highestChapter}`}
+                  Available across releases:{" "}
+                  {[
+                    spanBadgeLabel("vol", s.highestVolume, s.totalVolumes),
+                    spanBadgeLabel("ch", s.highestChapter, s.totalChapters),
+                  ]
+                    .filter(Boolean)
+                    .join(", ")}{" "}
+                  <Text component="span" size="xs">
+                    (available/published total)
+                  </Text>
                 </Text>
               )}
             </Box>

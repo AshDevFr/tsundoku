@@ -115,6 +115,16 @@ enum Commands {
         #[arg(short, long, default_value_t = 1)]
         pages: u32,
     },
+    /// Recompute every release's volume/chapter span and every series'
+    /// `highest_volume` / `highest_chapter` from the stored file lists
+    /// (titles as fallback). Network-free and idempotent. Run after a
+    /// span-parsing change or to backfill a catalog that predates span
+    /// detection. Prefer running with `serve` stopped to avoid SQLite
+    /// write-lock contention.
+    RecomputeSpans {
+        #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
+        config: PathBuf,
+    },
     /// Write the OpenAPI specification to a file
     Openapi {
         #[arg(short, long, default_value = "web/openapi.json")]
@@ -154,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
             source,
             pages,
         } => commands::backfill::run(config, source, pages).await,
+        Commands::RecomputeSpans { config } => commands::recompute_spans::run(config).await,
         Commands::Openapi { output } => commands::openapi::run(&output),
     }
 }

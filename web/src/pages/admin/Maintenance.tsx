@@ -17,6 +17,7 @@ import { useState } from "react";
 import {
   useInvalidateCoverCache,
   useInvalidateMetadataHashes,
+  useRecomputeSpans,
   useReenrichSource,
   useRefreshAllSeries,
 } from "@/api/mutations";
@@ -56,6 +57,7 @@ export function AdminMaintenancePage() {
       </Stack>
       <InvalidateMetadataHashesCard />
       <RefreshAllSeriesCard />
+      <RecomputeSpansCard />
       <ReenrichReleasesCard />
       <InvalidateCoverCacheCard />
     </Stack>
@@ -401,6 +403,82 @@ function formatBytes(bytes: number): string {
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   }
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function RecomputeSpansCard() {
+  const recompute = useRecomputeSpans();
+
+  const handleClick = () => {
+    recompute.mutate(undefined, {
+      onSuccess: (data) => {
+        const releases = data?.releasesRewritten ?? 0;
+        const series = data?.seriesUpdated ?? 0;
+        notifications.show({
+          color: releases > 0 || series > 0 ? "blue" : "gray",
+          title: "Spans recomputed",
+          message:
+            releases > 0 || series > 0
+              ? `${releases} release span(s) rewritten, ${series} series mark(s) updated`
+              : "Everything was already up to date.",
+        });
+      },
+      onError: (e) =>
+        notifications.show({
+          color: "red",
+          title: "Recompute failed",
+          message: (e as Error).message,
+        }),
+    });
+  };
+
+  return (
+    <Card
+      withBorder
+      radius="md"
+      p="md"
+      data-testid="maintenance-recompute-card"
+    >
+      <Stack gap="sm">
+        <Stack gap={2}>
+          <Title order={4}>Recompute volume / chapter spans</Title>
+          <Text size="sm" c="dimmed">
+            Re-parse every release's file names (titles as fallback) and rebuild
+            each series' "available volumes / chapters" marks from the highest
+            number across its linked releases. Makes no network calls.
+          </Text>
+        </Stack>
+        <Text size="xs" c="dimmed">
+          Use this when:
+        </Text>
+        <List size="xs" c="dimmed" withPadding>
+          <List.Item>
+            The span-parsing logic changed and existing rows should be
+            re-evaluated.
+          </List.Item>
+          <List.Item>
+            You're backfilling a catalog whose releases predate span detection
+            (the marks show nothing yet).
+          </List.Item>
+        </List>
+        <Text size="xs" c="dimmed">
+          Authoritative: a series mark is replaced with the max across its
+          linked releases, so values can also go down if an earlier parse
+          over-counted.
+        </Text>
+        <Group justify="flex-end">
+          <Button
+            size="xs"
+            variant="light"
+            onClick={handleClick}
+            loading={recompute.isPending}
+            data-testid="maintenance-recompute-button"
+          >
+            Recompute spans
+          </Button>
+        </Group>
+      </Stack>
+    </Card>
+  );
 }
 
 function RefreshAllSeriesCard() {

@@ -18,9 +18,11 @@ pub mod format;
 pub mod registry;
 pub mod release;
 pub mod source;
+pub mod span;
 
 pub use error::{SourceError, SourceResult};
 pub use format::{Format, detect_formats};
 pub use registry::{SourceRegistry, SourceRegistryBuilder};
 pub use release::{DiscoveredRelease, ExternalLinks, PollContext, PollOutcome};
 pub use source::{Backfillable, DiscoverySource};
+pub use span::{ReleaseSpans, Span, detect_spans};

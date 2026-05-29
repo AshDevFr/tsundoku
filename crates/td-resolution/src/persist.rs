@@ -23,6 +23,7 @@ use sea_orm::{
 use td_db::entities::{releases, series, series_external_ids};
 use td_db::repos::tagging_repo;
 use td_metadata::{ForeignId, SeriesKind, SeriesMetadata, SeriesStatus};
+use td_source::Span;
 
 /// Source-of-truth provenance for the `series.metadata_source` column.
 /// `offline_cache` means "provider served the response from a local dump";
@@ -295,7 +296,92 @@ pub async fn link_release(
         ..Default::default()
     };
     releases::Entity::update(model).exec(db).await?;
+
+    // When a release is attached to a series, raise the series' "highest
+    // volume / chapter seen across releases" markers if this release's
+    // parsed span reaches further than what's recorded. Monotonic by
+    // design: a release moving away (reject, re-link) does not lower the
+    // marks, matching the "best ever observed" semantics the browse UI
+    // wants. Failures here are non-fatal — the link itself already
+    // committed and the next resolve will retry the bump.
+    if let Some(sid) = series_id
+        && let Some(rel) = current.as_ref()
+        && let Err(e) = bump_series_highest(db, sid, rel).await
+    {
+        tracing::warn!(error = ?e, series_id = sid, release_id, "failed to bump series highest volume/chapter");
+    }
     Ok(())
+}
+
+/// Deserialize a release's stored volume / chapter span and, if either end
+/// exceeds the series' current `highest_*`, lift the series mark to it.
+/// Writes only the columns that actually move, leaving the rest untouched.
+async fn bump_series_highest(
+    db: &DatabaseConnection,
+    series_id: i32,
+    release: &releases::Model,
+) -> Result<()> {
+    let mut rel_volume = parse_span_end(release.volume_span_json.as_deref());
+    let mut rel_chapter = parse_span_end(release.chapter_span_json.as_deref());
+    // Legacy rows persisted before span detection shipped have no stored
+    // span JSON. Rather than wait for a re-poll to backfill them, derive
+    // the span on the fly from the same inputs (files, then title) the
+    // persist step uses, so resolving an old release still lifts the marks.
+    if rel_volume.is_none() && rel_chapter.is_none() {
+        let files: Vec<String> = release
+            .files_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+        let spans = td_source::detect_spans(&files, &release.title);
+        rel_volume = spans.volumes.map(|s| s.end);
+        rel_chapter = spans.chapters.map(|s| s.end);
+    }
+    if rel_volume.is_none() && rel_chapter.is_none() {
+        return Ok(());
+    }
+
+    let Some(row) = series::Entity::find_by_id(series_id).one(db).await? else {
+        return Ok(());
+    };
+
+    let new_volume = raise(row.highest_volume, rel_volume);
+    let new_chapter = raise(row.highest_chapter, rel_chapter);
+    if new_volume.is_none() && new_chapter.is_none() {
+        return Ok(());
+    }
+
+    let model = series::ActiveModel {
+        id: Set(series_id),
+        highest_volume: match new_volume {
+            Some(v) => Set(Some(v)),
+            None => NotSet,
+        },
+        highest_chapter: match new_chapter {
+            Some(v) => Set(Some(v)),
+            None => NotSet,
+        },
+        ..Default::default()
+    };
+    series::Entity::update(model).exec(db).await?;
+    Ok(())
+}
+
+/// The `end` (max) of a JSON-encoded [`Span`], or `None` when absent or
+/// unparseable (older rows written before span detection shipped).
+fn parse_span_end(json: Option<&str>) -> Option<f64> {
+    let json = json?;
+    serde_json::from_str::<Span>(json).ok().map(|s| s.end)
+}
+
+/// Return `Some(candidate)` only when it strictly exceeds the current value
+/// (or there is no current value). `None` means "leave the column alone".
+fn raise(current: Option<f64>, candidate: Option<f64>) -> Option<f64> {
+    let candidate = candidate?;
+    match current {
+        Some(c) if candidate <= c => None,
+        _ => Some(candidate),
+    }
 }
 
 async fn find_series_by_id<C: sea_orm::ConnectionTrait>(
@@ -833,5 +919,268 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored2.resolution_attempts, 2);
+    }
+
+    /// Insert a minimal release carrying volume / chapter spans so the
+    /// link-time bump has something to read.
+    async fn insert_release_with_spans(
+        db: &DatabaseConnection,
+        id: &str,
+        volume: Option<Span>,
+        chapter: Option<Span>,
+    ) {
+        let row = releases::ActiveModel {
+            id: Set(id.into()),
+            source_kind: Set("nyaa".into()),
+            source_name: Set("test".into()),
+            external_id: Set(id.into()),
+            title: Set("X".into()),
+            link: Set(format!("https://example.com/{id}")),
+            magnet: Set(None),
+            torrent_url: Set(None),
+            ddl_url: Set(None),
+            info_hash: Set(None),
+            size_bytes: Set(None),
+            files_json: Set(None),
+            description_html: Set(None),
+            extracted_links_json: Set(None),
+            information_url: Set(None),
+            posted_at: Set(1),
+            observed_at: Set(2),
+            series_id: Set(None),
+            resolution_path: Set(None),
+            resolution_confidence: Set(None),
+            resolution_status: Set("unresolved".into()),
+            resolution_attempts: Set(0),
+            last_resolve_attempt_at: Set(None),
+            volume_span_json: Set(volume.map(|s| serde_json::to_string(&s).unwrap())),
+            chapter_span_json: Set(chapter.map(|s| serde_json::to_string(&s).unwrap())),
+            resolved_at: Set(None),
+            search_queries: Set(None),
+            cleanup_rules_applied: Set(None),
+        };
+        releases::Entity::insert(row).exec(db).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn link_release_bumps_series_highest_volume_and_chapter() {
+        let db = fresh_db().await;
+        let upsert = upsert_series_from_metadata(
+            &db,
+            "mangabaka",
+            &sample_metadata(),
+            1_700_000_000,
+            Utc::now(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        insert_release_with_spans(
+            &db,
+            "nyaa:vol",
+            Some(Span {
+                start: 1.0,
+                end: 5.0,
+            }),
+            Some(Span {
+                start: 1.0,
+                end: 40.0,
+            }),
+        )
+        .await;
+        link_release(
+            &db,
+            "nyaa:vol",
+            Some(upsert.series_id),
+            Some("manual"),
+            Some(1.0),
+            "resolved",
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+
+        let row = series::Entity::find_by_id(upsert.series_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.highest_volume, Some(5.0));
+        assert_eq!(row.highest_chapter, Some(40.0));
+    }
+
+    #[tokio::test]
+    async fn link_release_does_not_lower_existing_series_highest() {
+        let db = fresh_db().await;
+        let upsert = upsert_series_from_metadata(
+            &db,
+            "mangabaka",
+            &sample_metadata(),
+            1_700_000_000,
+            Utc::now(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        // First release reaches volume 10 / chapter 90.
+        insert_release_with_spans(
+            &db,
+            "nyaa:hi",
+            Some(Span {
+                start: 1.0,
+                end: 10.0,
+            }),
+            Some(Span {
+                start: 1.0,
+                end: 90.0,
+            }),
+        )
+        .await;
+        link_release(
+            &db,
+            "nyaa:hi",
+            Some(upsert.series_id),
+            Some("manual"),
+            Some(1.0),
+            "resolved",
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+
+        // A later, smaller release must not pull the marks back down, but a
+        // higher chapter still lifts only that column.
+        insert_release_with_spans(
+            &db,
+            "nyaa:lo",
+            Some(Span {
+                start: 1.0,
+                end: 2.0,
+            }),
+            Some(Span {
+                start: 91.0,
+                end: 120.0,
+            }),
+        )
+        .await;
+        link_release(
+            &db,
+            "nyaa:lo",
+            Some(upsert.series_id),
+            Some("manual"),
+            Some(1.0),
+            "resolved",
+            1_700_000_100,
+        )
+        .await
+        .unwrap();
+
+        let row = series::Entity::find_by_id(upsert.series_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.highest_volume, Some(10.0), "volume not lowered");
+        assert_eq!(row.highest_chapter, Some(120.0), "chapter raised");
+    }
+
+    #[tokio::test]
+    async fn link_release_backfills_span_from_files_when_json_absent() {
+        let db = fresh_db().await;
+        let upsert = upsert_series_from_metadata(
+            &db,
+            "mangabaka",
+            &sample_metadata(),
+            1_700_000_000,
+            Utc::now(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Legacy-shaped row: no span JSON, but a file list to parse from.
+        let row = releases::ActiveModel {
+            id: Set("nyaa:legacy".into()),
+            source_kind: Set("nyaa".into()),
+            source_name: Set("test".into()),
+            external_id: Set("legacy".into()),
+            title: Set("Some Series".into()),
+            link: Set("https://example.com/legacy".into()),
+            magnet: Set(None),
+            torrent_url: Set(None),
+            ddl_url: Set(None),
+            info_hash: Set(None),
+            size_bytes: Set(None),
+            files_json: Set(Some(
+                serde_json::to_string(&["Some Series v01-04.cbz"]).unwrap(),
+            )),
+            description_html: Set(None),
+            extracted_links_json: Set(None),
+            information_url: Set(None),
+            posted_at: Set(1),
+            observed_at: Set(2),
+            series_id: Set(None),
+            resolution_path: Set(None),
+            resolution_confidence: Set(None),
+            resolution_status: Set("unresolved".into()),
+            resolution_attempts: Set(0),
+            last_resolve_attempt_at: Set(None),
+            volume_span_json: Set(None),
+            chapter_span_json: Set(None),
+            resolved_at: Set(None),
+            search_queries: Set(None),
+            cleanup_rules_applied: Set(None),
+        };
+        releases::Entity::insert(row).exec(&db).await.unwrap();
+
+        link_release(
+            &db,
+            "nyaa:legacy",
+            Some(upsert.series_id),
+            Some("manual"),
+            Some(1.0),
+            "resolved",
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+
+        let series_row = series::Entity::find_by_id(upsert.series_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(series_row.highest_volume, Some(4.0));
+    }
+
+    #[tokio::test]
+    async fn link_release_without_series_id_does_not_touch_highest() {
+        let db = fresh_db().await;
+        insert_release_with_spans(
+            &db,
+            "nyaa:none",
+            Some(Span {
+                start: 1.0,
+                end: 3.0,
+            }),
+            None,
+        )
+        .await;
+        // Reject path: series_id is None, so there is nothing to bump.
+        link_release(
+            &db,
+            "nyaa:none",
+            None,
+            Some("rejected"),
+            None,
+            "rejected",
+            1,
+        )
+        .await
+        .unwrap();
+        // No series rows exist; the call simply must not error.
+        assert_eq!(series::Entity::find().all(&db).await.unwrap().len(), 0);
     }
 }

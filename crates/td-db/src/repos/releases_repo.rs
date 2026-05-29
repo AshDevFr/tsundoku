@@ -7,7 +7,7 @@ use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
     QueryOrder, QuerySelect, Set, TransactionTrait,
 };
-use td_source::{DiscoveredRelease, detect_formats};
+use td_source::{DiscoveredRelease, detect_formats, detect_spans};
 
 use crate::entities::{release_formats, releases, review_candidates};
 
@@ -133,6 +133,19 @@ fn to_active_model(
         Some(serde_json::to_string(&release.files)?)
     };
 
+    // Volume / chapter spans parsed from the file names (falling back to the
+    // title). Stored so the series-link step can bump `series.highest_*`
+    // without re-parsing, and so a future per-release UI can show the range.
+    let spans = detect_spans(&release.files, &release.title);
+    let volume_span_json = spans
+        .volumes
+        .map(|s| serde_json::to_string(&s))
+        .transpose()?;
+    let chapter_span_json = spans
+        .chapters
+        .map(|s| serde_json::to_string(&s))
+        .transpose()?;
+
     Ok(releases::ActiveModel {
         id: Set(id.to_string()),
         source_kind: Set(release.source_kind.clone()),
@@ -157,8 +170,8 @@ fn to_active_model(
         resolution_status: Set("unresolved".into()),
         resolution_attempts: Set(0),
         last_resolve_attempt_at: Set(None),
-        volume_span_json: Set(None),
-        chapter_span_json: Set(None),
+        volume_span_json: Set(volume_span_json),
+        chapter_span_json: Set(chapter_span_json),
         resolved_at: Set(None),
         search_queries: Set(None),
         cleanup_rules_applied: Set(None),
@@ -317,6 +330,105 @@ pub async fn bulk_reject(db: &DatabaseConnection, ids: &[String], now: i64) -> R
         .await?;
     txn.commit().await?;
     Ok(res.rows_affected)
+}
+
+/// Tallies from [`recompute_all_spans`].
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SpanRecompute {
+    /// Releases whose stored `volume_span_json` / `chapter_span_json` was
+    /// rewritten because re-parsing produced a different value.
+    pub releases_rewritten: u64,
+    /// Series rows whose `highest_volume` / `highest_chapter` changed.
+    pub series_updated: u64,
+}
+
+/// Authoritatively recompute every release's volume/chapter span and every
+/// series' `highest_*` marks from scratch. Unlike the incremental bump in
+/// `td_resolution::persist::link_release` (which only ever raises a series
+/// mark), this is a full pass that *replaces* the series values with the
+/// MAX across their currently-linked releases — so it corrects values that
+/// an earlier, more eager parse inflated, and clears marks on series whose
+/// releases no longer parse to anything. Run it after a parsing-strategy
+/// change or to backfill a catalog that predates span detection.
+///
+/// Pure DB + lexical parsing: makes no network calls and does not touch
+/// resolution state. Idempotent — running it twice in a row leaves the
+/// second run reporting zero changes.
+pub async fn recompute_all_spans(db: &DatabaseConnection) -> Result<SpanRecompute> {
+    use std::collections::HashMap;
+
+    let mut summary = SpanRecompute::default();
+    // series_id -> (max volume end, max chapter end) across linked releases.
+    let mut per_series: HashMap<i32, (Option<f64>, Option<f64>)> = HashMap::new();
+
+    // Walk every release once, re-deriving its span from the stored file
+    // list (falling back to the title) and rewriting the columns when the
+    // re-parse disagrees with what's on disk.
+    let all = releases::Entity::find().all(db).await?;
+    for rel in &all {
+        let files: Vec<String> = rel
+            .files_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+        let spans = detect_spans(&files, &rel.title);
+        let vol_json = spans
+            .volumes
+            .map(|s| serde_json::to_string(&s))
+            .transpose()?;
+        let chap_json = spans
+            .chapters
+            .map(|s| serde_json::to_string(&s))
+            .transpose()?;
+
+        if vol_json != rel.volume_span_json || chap_json != rel.chapter_span_json {
+            let model = releases::ActiveModel {
+                id: Set(rel.id.clone()),
+                volume_span_json: Set(vol_json),
+                chapter_span_json: Set(chap_json),
+                ..Default::default()
+            };
+            releases::Entity::update(model).exec(db).await?;
+            summary.releases_rewritten += 1;
+        }
+
+        if let Some(sid) = rel.series_id {
+            let entry = per_series.entry(sid).or_insert((None, None));
+            entry.0 = max_opt(entry.0, spans.volumes.map(|s| s.end));
+            entry.1 = max_opt(entry.1, spans.chapters.map(|s| s.end));
+        }
+    }
+
+    // Replace each series' marks with the freshly-aggregated MAX. Series
+    // with no linked release that parses sink to NULL. Only rows that
+    // actually move are written.
+    let series_rows = crate::entities::series::Entity::find().all(db).await?;
+    for s in series_rows {
+        let (vol, chap) = per_series.get(&s.id).copied().unwrap_or((None, None));
+        if vol == s.highest_volume && chap == s.highest_chapter {
+            continue;
+        }
+        let model = crate::entities::series::ActiveModel {
+            id: Set(s.id),
+            highest_volume: Set(vol),
+            highest_chapter: Set(chap),
+            ..Default::default()
+        };
+        crate::entities::series::Entity::update(model)
+            .exec(db)
+            .await?;
+        summary.series_updated += 1;
+    }
+
+    Ok(summary)
+}
+
+fn max_opt(a: Option<f64>, b: Option<f64>) -> Option<f64> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) => Some(a),
+        (None, b) => b,
+    }
 }
 
 /// Idempotently attach a format tag to a release.
@@ -524,5 +636,65 @@ mod tests {
 
         // Empty id list is a no-op.
         assert_eq!(bulk_reject(&db, &[], 1).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn recompute_all_spans_sets_series_highest_and_is_idempotent() {
+        use crate::entities::series;
+        use sea_orm::{ActiveModelTrait, Set};
+
+        let db = fresh_db().await;
+        let series_id = series::ActiveModel {
+            canonical_title: Set("Recompute Me".into()),
+            metadata_source: Set("test".into()),
+            metadata_fetched_at: Set(1),
+            first_seen_at: Set(1),
+            last_release_at: Set(1),
+            owned: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap()
+        .id;
+
+        // Two linked releases: v01-03 and v05 → series tops out at volume 5.
+        let mut r1 = sample("feed");
+        r1.external_id = "r1".into();
+        r1.link = "https://nyaa.si/view/r1".into();
+        r1.files = vec!["Series v01-03.cbz".into()];
+        let id1 = persist_discovered(&db, &r1, 1).await.unwrap();
+        let mut r2 = sample("feed");
+        r2.external_id = "r2".into();
+        r2.link = "https://nyaa.si/view/r2".into();
+        r2.files = vec!["Series v05 c050.cbz".into()];
+        let id2 = persist_discovered(&db, &r2, 1).await.unwrap();
+        for id in [&id1, &id2] {
+            set_resolution(
+                &db,
+                id,
+                Some(series_id),
+                Some("test".into()),
+                None,
+                "resolved",
+                1,
+            )
+            .await
+            .unwrap();
+        }
+
+        let first = recompute_all_spans(&db).await.unwrap();
+        assert_eq!(first.series_updated, 1);
+        let row = series::Entity::find_by_id(series_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.highest_volume, Some(5.0));
+        assert_eq!(row.highest_chapter, Some(50.0));
+
+        // Second run is a no-op: spans already stored, series already correct.
+        let second = recompute_all_spans(&db).await.unwrap();
+        assert_eq!(second, SpanRecompute::default());
     }
 }

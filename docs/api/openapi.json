@@ -1156,7 +1156,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "Sort field. Supports `last_release_at` (default), `first_seen_at`,\n`total_volumes`, and `total_chapters`. The count sorts are\nnullable-aware: rows without a provider value sink to the end\nregardless of direction. Ignored when `q` is present (results\nare ranked by relevance instead).",
+            "description": "Sort field. Supports `last_release_at` (default), `first_seen_at`,\n`total_volumes`, `total_chapters`, `highest_volume`, and\n`highest_chapter`. The count / highest sorts are nullable-aware:\nrows without a value sink to the end regardless of direction.\nIgnored when `q` is present (results are ranked by relevance instead).",
             "required": false,
             "schema": {
               "type": "string"
@@ -1262,6 +1262,33 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/InvalidateMetadataHashesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/series/recompute-spans": {
+      "post": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Recompute every release's volume/chapter span and every series'\n`highest_volume` / `highest_chapter` mark from the stored file lists\n(titles as fallback). Network-free and idempotent. Unlike the\nincremental bump that runs when a release is linked, this is an\nauthoritative pass: a series' marks are *replaced* with the MAX across\nits currently-linked releases, so it also corrects values an earlier,\nmore eager parser over-counted and clears marks on series whose releases\nno longer parse to anything.",
+        "description": "Use it after changing the span-parsing logic, or to backfill a catalog\nwhose releases predate span detection. Runs in-process against the same\npool `serve` uses, so it is safe to trigger on a live instance (it shares\nthe single SQLite writer rather than contending with a separate process).",
+        "operationId": "recompute_series_spans",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecomputeSpansResponse"
                 }
               }
             }
@@ -2692,6 +2719,28 @@
           }
         }
       },
+      "RecomputeSpansResponse": {
+        "type": "object",
+        "description": "Response from `POST /api/v1/series/recompute-spans`. The endpoint runs\nsynchronously, so the counts are the actual outcome of the pass.",
+        "required": [
+          "releasesRewritten",
+          "seriesUpdated"
+        ],
+        "properties": {
+          "releasesRewritten": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Releases whose stored volume/chapter span was rewritten because\nre-parsing the file list (or title) produced a different value.",
+            "minimum": 0
+          },
+          "seriesUpdated": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series rows whose `highest_volume` / `highest_chapter` changed.",
+            "minimum": 0
+          }
+        }
+      },
       "ReenrichRequest": {
         "type": "object",
         "required": [
@@ -3374,6 +3423,22 @@
             "items": {
               "type": "string"
             }
+          },
+          "highestChapter": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Highest chapter number seen across linked releases. Pairs with\n[`Self::total_chapters`] for the `ch available/total` card badge."
+          },
+          "highestVolume": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Highest volume number seen across this series' linked releases (what\nis realistically available), as opposed to [`Self::total_volumes`]\n(the published total). Drives the `vol available/total` card badge\nand the `highest_volume` sort. `None` until a numbered release links."
           },
           "id": {
             "type": "integer",

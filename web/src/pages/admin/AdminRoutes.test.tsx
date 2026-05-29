@@ -493,6 +493,24 @@ describe("admin maintenance page", () => {
     });
   });
 
+  it("dispatches the recompute-spans mutation and surfaces the counts", async () => {
+    renderAt("/admin/maintenance");
+    const button = await screen.findByTestId(
+      "maintenance-recompute-button",
+      undefined,
+      { timeout: 3000 },
+    );
+    fireEvent.click(button);
+    // MSW handler returns releasesRewritten=18, seriesUpdated=5.
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /18 release span\(s\) rewritten, 5 series mark\(s\) updated/i,
+        ),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("renders the re-enrich card with the default review statuses", async () => {
     renderAt("/admin/maintenance");
     expect(
