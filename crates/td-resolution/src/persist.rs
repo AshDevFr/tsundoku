@@ -774,6 +774,7 @@ mod tests {
             files_json: Set(None),
             description_html: Set(None),
             extracted_links_json: Set(None),
+            information_url: Set(None),
             posted_at: Set(1),
             observed_at: Set(2),
             series_id: Set(None),

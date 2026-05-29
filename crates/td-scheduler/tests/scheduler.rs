@@ -198,6 +198,7 @@ fn discovered_release(source_name: &str, external_id: &str, title: &str) -> Disc
         files: vec![format!("{title}.cbz")],
         description_html: None,
         external_links: Default::default(),
+        information_url: None,
         posted_at: Utc::now(),
     }
 }
@@ -1188,6 +1189,7 @@ async fn snapshot_review_queue_writes_row_with_pending_breakdown() {
         files_json: Set(None),
         description_html: Set(None),
         extracted_links_json: Set(None),
+        information_url: Set(None),
         posted_at: Set(now - 7_200),
         observed_at: Set(now - 7_200),
         series_id: Set(None),
@@ -1218,6 +1220,7 @@ async fn snapshot_review_queue_writes_row_with_pending_breakdown() {
         files_json: Set(None),
         description_html: Set(None),
         extracted_links_json: Set(None),
+        information_url: Set(None),
         posted_at: Set(now - 300),
         observed_at: Set(now - 300),
         series_id: Set(None),

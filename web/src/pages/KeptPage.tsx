@@ -21,6 +21,7 @@ import { formatAbsolute, formatRelative } from "@/api/utils";
 import { formatBytes } from "@/components/admin/format";
 import {
   ExtractedLinks,
+  InformationLink,
   ReleaseDescription,
   ReleaseFiles,
 } from "@/components/ReleaseDetails";
@@ -175,6 +176,7 @@ function KeptCard({ release }: { release: ReleaseDto }) {
             )}
           </Group>
           <ExtractedLinks links={release.extractedLinks} />
+          <InformationLink url={release.informationUrl} />
           <ReleaseDescription body={release.descriptionHtml} />
           <ReleaseFiles files={release.files} />
         </Stack>

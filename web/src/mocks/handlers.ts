@@ -112,6 +112,7 @@ const INITIAL_QUEUE: UnresolvedRelease[] = [
     resolutionStatus: "ambiguous",
     resolutionAttempts: 2,
     lastResolveAttemptAt: NOW - 1_200,
+    informationUrl: "https://sevenseasentertainment.com/series/mystery-series/",
     candidates: [
       {
         seriesId: 1,

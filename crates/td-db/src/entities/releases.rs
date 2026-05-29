@@ -19,6 +19,10 @@ pub struct Model {
     pub files_json: Option<String>,
     pub description_html: Option<String>,
     pub extracted_links_json: Option<String>,
+    /// URL from the post's "Information" field, verbatim. Kept even when it
+    /// is not a provider link we resolve against, so the review UI can show
+    /// the uploader's cited source.
+    pub information_url: Option<String>,
     pub posted_at: i64,
     pub observed_at: i64,
     pub series_id: Option<i32>,

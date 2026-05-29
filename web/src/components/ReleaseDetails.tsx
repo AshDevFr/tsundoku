@@ -92,6 +92,40 @@ export function ExtractedLinks({
   );
 }
 
+/// The URL from a release's "Information" field, shown verbatim as the
+/// uploader's cited source. Unlike `ExtractedLinks` (provider links we
+/// resolve against), this surfaces any reference (publisher page, Discord
+/// invite, …) so the operator can inspect where a release came from even
+/// when it isn't a link we match on. The hostname is the visible label;
+/// the full URL is the href and the hover title.
+export function InformationLink({ url }: { url: string | null | undefined }) {
+  if (!url) {
+    return null;
+  }
+  let label = url;
+  try {
+    label = new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    // Not a parseable absolute URL; fall back to showing it raw.
+  }
+  return (
+    <Group gap={6} wrap="wrap" data-testid="information-link">
+      <Text size="xs" c="dimmed" tt="uppercase" fw={500}>
+        information
+      </Text>
+      <Anchor
+        href={url}
+        target="_blank"
+        rel="noreferrer noopener"
+        size="xs"
+        title={url}
+      >
+        {label}
+      </Anchor>
+    </Group>
+  );
+}
+
 /// Collapsible markdown rendering of a release's post description. Nyaa
 /// uploaders publish bodies in markdown (the `markdown-text` class on the
 /// post page); we render with sanitization and GFM tables so the card matches

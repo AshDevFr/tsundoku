@@ -170,6 +170,9 @@ impl DiscoverySource for NyaaSource {
         if !detail.external_links.is_empty() {
             release.external_links = detail.external_links;
         }
+        if detail.information_url.is_some() {
+            release.information_url = detail.information_url;
+        }
         if release.magnet.is_none() {
             release.magnet = detail.magnet;
         }

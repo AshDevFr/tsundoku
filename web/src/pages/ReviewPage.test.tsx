@@ -121,6 +121,25 @@ describe("ReviewPage", () => {
     expect(within(card).getByText("manhwa")).toBeInTheDocument();
   });
 
+  it("surfaces the post's Information link even when it is not a matching provider link", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+    const card = screen.getByTestId("review-card-nyaa:9001");
+
+    const infoBlock = card.querySelector(
+      '[data-testid="information-link"]',
+    ) as HTMLElement;
+    expect(infoBlock).toBeInTheDocument();
+    // The hostname is the visible label; the full URL is the href.
+    const anchor = within(infoBlock).getByRole("link");
+    expect(anchor).toHaveTextContent("sevenseasentertainment.com");
+    expect(anchor).toHaveAttribute(
+      "href",
+      "https://sevenseasentertainment.com/series/mystery-series/",
+    );
+  });
+
   it("links a release by picking a candidate and drops it from the queue", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderReview();

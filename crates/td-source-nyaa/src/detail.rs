@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 
 use anyhow::Result;
 use regex::Regex;
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use td_source::ExternalLinks;
 
 use crate::links::extract_external_links;
@@ -23,6 +23,11 @@ pub struct DetailFields {
     pub magnet: Option<String>,
     pub description_html: Option<String>,
     pub external_links: ExternalLinks,
+    /// URL from the post's "Information" row, verbatim. Captured whether or
+    /// not it points at a provider we resolve against — the review UI shows
+    /// it as the uploader's cited source. `None` when the row is absent or
+    /// holds plain text (e.g. Nyaa's "No information.").
+    pub information_url: Option<String>,
 }
 
 pub fn parse_detail(html: &str, _site_base_url: &str) -> Result<DetailFields> {
@@ -36,7 +41,46 @@ pub fn parse_detail(html: &str, _site_base_url: &str) -> Result<DetailFields> {
         Some(desc) => extract_external_links(desc),
         None => extract_external_links(html),
     };
+    out.information_url = parse_information_url(&doc);
     Ok(out)
+}
+
+/// Pull the URL out of the post's "Information" row. The detail page lays
+/// each field as a `col-md-1` label followed by its `col-md-5` value cell;
+/// we find the label whose text is "Information:" and read the first http(s)
+/// link from the sibling cell (anchor `href` first, then bare-URL text).
+/// Returns `None` when the row is missing or its value is not a URL.
+fn parse_information_url(doc: &Html) -> Option<String> {
+    static LABEL_SEL: OnceLock<Selector> = OnceLock::new();
+    static A_SEL: OnceLock<Selector> = OnceLock::new();
+    let label_sel =
+        LABEL_SEL.get_or_init(|| Selector::parse("div.col-md-1").expect("static selector"));
+    let a_sel = A_SEL.get_or_init(|| Selector::parse("a").expect("static selector"));
+    for label in doc.select(label_sel) {
+        if label.text().collect::<String>().trim() != "Information:" {
+            continue;
+        }
+        // The value lives in the next sibling element (a `col-md-5`).
+        let value = label.next_siblings().find_map(ElementRef::wrap)?;
+        if let Some(href) = value
+            .select(a_sel)
+            .next()
+            .and_then(|a| a.value().attr("href"))
+        {
+            let href = href.trim();
+            if is_http_url(href) {
+                return Some(href.to_string());
+            }
+        }
+        let text = value.text().collect::<String>();
+        let text = text.trim();
+        return is_http_url(text).then(|| text.to_string());
+    }
+    None
+}
+
+fn is_http_url(s: &str) -> bool {
+    s.starts_with("http://") || s.starts_with("https://")
 }
 
 fn parse_file_list(doc: &Html) -> Vec<String> {
@@ -112,6 +156,12 @@ mod tests {
         assert!(!magnet.contains("&amp;"));
         // Description block exists for this post.
         assert!(detail.description_html.is_some());
+        // The "Information" row holds a non-provider link (Discord); we
+        // still capture it verbatim for display.
+        assert_eq!(
+            detail.information_url.as_deref(),
+            Some("https://discord.gg/r9gyPwJeqW")
+        );
     }
 
     #[test]
@@ -126,5 +176,25 @@ mod tests {
             );
         }
         assert!(detail.magnet.is_some());
+        assert_eq!(
+            detail.information_url.as_deref(),
+            Some("https://tsundere.services/")
+        );
+    }
+
+    #[test]
+    fn information_url_absent_when_row_is_plain_text() {
+        // Nyaa renders "No information." as plain text when the uploader
+        // left the field empty; that must not be captured as a URL.
+        let html = r#"
+            <div class="panel-body">
+              <div class="row">
+                <div class="col-md-1">Information:</div>
+                <div class="col-md-5">No information.</div>
+              </div>
+            </div>
+        "#;
+        let detail = parse_detail(html, "https://nyaa.si").unwrap();
+        assert_eq!(detail.information_url, None);
     }
 }

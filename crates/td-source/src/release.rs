@@ -40,6 +40,13 @@ pub struct DiscoveredRelease {
     /// Empty fields mean the source could not find that provider's link.
     #[serde(default)]
     pub external_links: ExternalLinks,
+    /// URL the uploader cited in the post's "Information" field, verbatim.
+    /// Unlike [`ExternalLinks`], this is kept even when it points at a site
+    /// we don't resolve against (a publisher page, a Discord invite, …) so
+    /// the review UI can surface it. `None` when the source exposes no such
+    /// field. Persisted to `releases.information_url`.
+    #[serde(default)]
+    pub information_url: Option<String>,
     pub posted_at: DateTime<Utc>,
 }
 

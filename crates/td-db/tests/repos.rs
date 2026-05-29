@@ -56,6 +56,7 @@ fn sample_release(id: &str, series_id: Option<i32>) -> releases::ActiveModel {
         files_json: Set(Some(r#"["Some Release v01.cbz"]"#.into())),
         description_html: Set(None),
         extracted_links_json: Set(None),
+        information_url: Set(None),
         posted_at: Set(1_700_000_000),
         observed_at: Set(1_700_000_100),
         series_id: Set(series_id),
@@ -471,6 +472,7 @@ async fn persist_discovered_upserts_release_and_attaches_formats() {
             anilist: Some("https://anilist.co/manga/123".into()),
             ..Default::default()
         },
+        information_url: Some("https://sevenseasentertainment.com/series/x/".into()),
         posted_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
     };
 
@@ -481,6 +483,10 @@ async fn persist_discovered_upserts_release_and_attaches_formats() {
 
     let got = releases_repo::find_by_id(&db, &id).await.unwrap().unwrap();
     assert_eq!(got.title, "Some Series v01");
+    assert_eq!(
+        got.information_url.as_deref(),
+        Some("https://sevenseasentertainment.com/series/x/")
+    );
     assert_eq!(got.source_kind, "nyaa");
     assert_eq!(got.source_name, "trusted");
     assert_eq!(got.external_id, "2111533");

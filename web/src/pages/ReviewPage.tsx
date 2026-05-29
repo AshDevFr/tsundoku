@@ -49,6 +49,7 @@ import {
 } from "@/api/utils";
 import {
   ExtractedLinks,
+  InformationLink,
   ReleaseDescription,
   ReleaseFiles,
 } from "@/components/ReleaseDetails";
@@ -681,6 +682,7 @@ function ReviewCard({
           </Box>
         </Group>
         <ExtractedLinks links={item.extractedLinks} />
+        <InformationLink url={item.informationUrl} />
         <ReleaseDescription body={item.descriptionHtml} />
         <CleanupTrail
           queries={item.searchQueries}

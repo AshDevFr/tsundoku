@@ -2783,6 +2783,13 @@
               "null"
             ]
           },
+          "informationUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "URL from the post's \"Information\" field, verbatim. Surfaced even when\nit is not a provider link we resolve against (a publisher page, a\nDiscord invite, …) so the review and kept views show the uploader's\ncited source. Omitted when absent."
+          },
           "lastResolveAttemptAt": {
             "type": [
               "integer",

@@ -88,6 +88,7 @@ fn to_active_model(
         files_json: Set(files_json),
         description_html: Set(release.description_html.clone()),
         extracted_links_json: Set(extracted_links_json),
+        information_url: Set(release.information_url.clone()),
         posted_at: Set(release.posted_at.timestamp()),
         observed_at: Set(observed_at),
         series_id: Set(None),
@@ -119,6 +120,7 @@ pub async fn upsert<C: ConnectionTrait>(db: &C, model: releases::ActiveModel) ->
                     releases::Column::FilesJson,
                     releases::Column::DescriptionHtml,
                     releases::Column::ExtractedLinksJson,
+                    releases::Column::InformationUrl,
                     releases::Column::PostedAt,
                     releases::Column::VolumeSpanJson,
                     releases::Column::ChapterSpanJson,
@@ -349,6 +351,7 @@ mod tests {
             files: vec!["Some Manga v01.cbz".into()],
             description_html: None,
             external_links: ExternalLinks::default(),
+            information_url: None,
             posted_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
         }
     }

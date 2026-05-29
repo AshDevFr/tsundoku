@@ -51,6 +51,12 @@ pub struct ReleaseDto {
     /// nothing was found.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extracted_links: Option<ExtractedLinksDto>,
+    /// URL from the post's "Information" field, verbatim. Surfaced even when
+    /// it is not a provider link we resolve against (a publisher page, a
+    /// Discord invite, …) so the review and kept views show the uploader's
+    /// cited source. Omitted when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub information_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -1002,6 +1008,7 @@ fn model_to_release(m: releases::Model, formats: Vec<String>) -> ReleaseDto {
         last_resolve_attempt_at: m.last_resolve_attempt_at,
         description_html: m.description_html,
         extracted_links,
+        information_url: m.information_url,
     }
 }
 

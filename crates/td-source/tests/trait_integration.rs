@@ -40,6 +40,7 @@ impl DiscoverySource for RssLikeSource {
             files: vec!["release.cbz".into()],
             description_html: None,
             external_links: ExternalLinks::default(),
+            information_url: None,
             posted_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
         }]))
     }

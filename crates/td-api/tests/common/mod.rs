@@ -234,6 +234,7 @@ pub fn sample_release(id: &str, source_name: &str, title: &str) -> DiscoveredRel
         files: vec![],
         description_html: None,
         external_links: Default::default(),
+        information_url: None,
         posted_at: chrono::Utc::now(),
     }
 }

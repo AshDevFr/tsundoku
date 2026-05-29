@@ -1264,6 +1264,13 @@ export interface components {
             formats: string[];
             id: string;
             infoHash?: string | null;
+            /**
+             * @description URL from the post's "Information" field, verbatim. Surfaced even when
+             *     it is not a provider link we resolve against (a publisher page, a
+             *     Discord invite, …) so the review and kept views show the uploader's
+             *     cited source. Omitted when absent.
+             */
+            informationUrl?: string | null;
             /** Format: int64 */
             lastResolveAttemptAt?: number | null;
             link: string;
