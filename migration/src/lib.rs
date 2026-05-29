@@ -12,6 +12,7 @@ mod m20260527_000001_series_volume_chapter_counts;
 mod m20260527_000002_series_rating;
 mod m20260527_000003_series_refresh_runs;
 mod m20260528_000001_run_progress;
+mod m20260528_000002_poll_run_phase_timings;
 
 pub struct Migrator;
 
@@ -33,6 +34,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260527_000002_series_rating::Migration),
             Box::new(m20260527_000003_series_refresh_runs::Migration),
             Box::new(m20260528_000001_run_progress::Migration),
+            Box::new(m20260528_000002_poll_run_phase_timings::Migration),
         ];
         m.extend(td_metadata_mangabaka::migration::migrations());
         m

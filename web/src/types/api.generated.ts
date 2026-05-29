@@ -1576,6 +1576,12 @@ export interface components {
             until: number;
         };
         SourceMetricsSummaryItem: {
+            /**
+             * Format: int64
+             * @description Total milliseconds spent in `DiscoverySource::enrich()` across every
+             *     run in the window. `null` when no runs reported it.
+             */
+            enrichDurationMsSum?: number | null;
             /** Format: int64 */
             failureCount: number;
             /** Format: int64 */
@@ -1586,6 +1592,12 @@ export interface components {
             /** Format: int64 */
             newSum?: number | null;
             outcomes: components["schemas"]["ResolutionOutcomeBreakdown"];
+            /**
+             * Format: int64
+             * @description Total milliseconds spent in `Resolver::resolve_one()` across every
+             *     run in the window. `null` when no runs reported it.
+             */
+            resolveDurationMsSum?: number | null;
             /** Format: int64 */
             resolvedSum?: number | null;
             /** Format: int64 */

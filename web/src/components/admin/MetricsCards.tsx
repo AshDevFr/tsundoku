@@ -31,6 +31,15 @@ export function SourceMetricsCard({
     range,
     buckets: 24,
   });
+  // Per-release averages so a single backfill (one row with thousands of
+  // releases) sits on the same scale as a steady-state poll (many rows of
+  // ~75 releases). `null` when nothing's been resolved yet — the
+  // sums-over-zero division would just produce Infinity otherwise.
+  const newSum = item.newSum ?? 0;
+  const avgEnrichMs =
+    newSum > 0 ? (item.enrichDurationMsSum ?? 0) / newSum : null;
+  const avgResolveMs =
+    newSum > 0 ? (item.resolveDurationMsSum ?? 0) / newSum : null;
   return (
     <Paper
       withBorder
@@ -69,6 +78,8 @@ export function SourceMetricsCard({
             label="fetch max"
             value={detail.data?.fetchLatency?.maxMs}
           />
+          <LatencyStat label="enrich avg" value={avgEnrichMs} />
+          <LatencyStat label="resolve avg" value={avgResolveMs} />
           <Stack gap={0} miw={64}>
             <Text size="lg" fw={600} lh={1}>
               {formatDuration(

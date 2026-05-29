@@ -89,6 +89,12 @@ pub struct SourceMetricsSummaryItem {
     pub fetched_sum: Option<i64>,
     pub new_sum: Option<i64>,
     pub resolved_sum: Option<i64>,
+    /// Total milliseconds spent in `DiscoverySource::enrich()` across every
+    /// run in the window. `null` when no runs reported it.
+    pub enrich_duration_ms_sum: Option<i64>,
+    /// Total milliseconds spent in `Resolver::resolve_one()` across every
+    /// run in the window. `null` when no runs reported it.
+    pub resolve_duration_ms_sum: Option<i64>,
     pub last_started_at: Option<i64>,
     pub last_status: Option<String>,
     /// Convenience derivation: `successCount / (successCount + failureCount)`,
@@ -521,6 +527,8 @@ fn map_source_summary(r: run_metrics_repo::SourceSummaryRow) -> SourceMetricsSum
         fetched_sum: r.fetched_sum,
         new_sum: r.new_sum,
         resolved_sum: r.resolved_sum,
+        enrich_duration_ms_sum: r.enrich_duration_ms_sum,
+        resolve_duration_ms_sum: r.resolve_duration_ms_sum,
         last_started_at: r.last_started_at,
         last_status: r.last_status,
     }

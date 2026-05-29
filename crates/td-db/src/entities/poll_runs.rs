@@ -35,6 +35,13 @@ pub struct Model {
     pub progress_current: Option<i64>,
     pub progress_total: Option<i64>,
     pub progress_phase: Option<String>,
+    /// Aggregate wall-clock spent in `DiscoverySource::enrich()` across
+    /// every persisted release this run. Splits the "what's slow" answer
+    /// out of `fetch_duration_ms` (which only covers the listing call).
+    pub enrich_duration_ms: Option<i64>,
+    /// Aggregate wall-clock spent in `Resolver::resolve_one()` across
+    /// every persisted release this run.
+    pub resolve_duration_ms: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

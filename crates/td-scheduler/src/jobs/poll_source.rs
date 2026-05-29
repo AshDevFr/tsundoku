@@ -32,7 +32,6 @@ use td_db::repos::{releases_repo, sources_repo};
 use td_metadata::MetadataRegistry;
 use td_resolution::Resolver;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
-use td_resolution::pipeline::{ResolutionOutcome, ResolutionPath, ResolutionStatus};
 use td_resolution::query_builder::QueryBuilder;
 use td_source::{DiscoveredRelease, DiscoverySource, PollContext, PollOutcome};
 use tokio::sync::broadcast;
@@ -42,6 +41,7 @@ use crate::JobLocks;
 use crate::dispatch;
 use crate::error_kind;
 use crate::events::{JobEvent, JobKind, JobResult};
+use crate::jobs::outcomes::OutcomeBreakdown;
 use crate::jobs::progress::ProgressHandle;
 
 /// Build a scheduled poll job for `source`. The cron must already be in
@@ -249,10 +249,15 @@ pub async fn run_tick(
     let mut resolve_errors = 0usize;
     let mut breakdown = OutcomeBreakdown::default();
     let mut processed = 0usize;
+    let mut enrich_total_ms: u128 = 0;
+    let mut resolve_total_ms: u128 = 0;
     for chunk in outcome.releases.chunks_mut(batch_size) {
         // (A) Enrich the whole chunk first. No DB lock held.
         for release in chunk.iter_mut() {
-            if let Err(e) = source.enrich(release).await {
+            let started = Instant::now();
+            let res = source.enrich(release).await;
+            enrich_total_ms += started.elapsed().as_millis();
+            if let Err(e) = res {
                 tracing::warn!(
                     error = ?e,
                     source = %name,
@@ -277,7 +282,10 @@ pub async fn run_tick(
                 // series_external_ids, ...) per release and the size of
                 // its write set varies enormously per release.
                 for id in &outcome.ids {
-                    match resolver.resolve_one(id).await {
+                    let started = Instant::now();
+                    let res = resolver.resolve_one(id).await;
+                    resolve_total_ms += started.elapsed().as_millis();
+                    match res {
                         Ok(o) => breakdown.record(&o),
                         Err(e) => {
                             tracing::warn!(error = ?e, release_id = %id, "resolver failed; leaving release unresolved");
@@ -315,6 +323,8 @@ pub async fn run_tick(
         }
     }
     progress.flush().await;
+    let enrich_duration_ms = enrich_total_ms.min(i64::MAX as u128) as i64;
+    let resolve_duration_ms = resolve_total_ms.min(i64::MAX as u128) as i64;
 
     let summary = build_summary(
         fetched,
@@ -332,6 +342,8 @@ pub async fn run_tick(
         new: Some(persisted as i32),
         resolved: Some(persisted.saturating_sub(resolve_errors) as i32),
         fetch_duration_ms: Some(fetch_duration_ms),
+        enrich_duration_ms: Some(enrich_duration_ms),
+        resolve_duration_ms: Some(resolve_duration_ms),
         outcome_known_id: Some(breakdown.known_id),
         outcome_foreign_id: Some(breakdown.foreign_id),
         outcome_fuzzy: Some(breakdown.fuzzy),
@@ -347,33 +359,6 @@ pub async fn run_tick(
         None,
     )
     .await;
-}
-
-#[derive(Default)]
-struct OutcomeBreakdown {
-    known_id: i32,
-    foreign_id: i32,
-    fuzzy: i32,
-    review: i32,
-    failed: i32,
-}
-
-impl OutcomeBreakdown {
-    fn record(&mut self, outcome: &ResolutionOutcome) {
-        match (outcome.path, outcome.status) {
-            (Some(ResolutionPath::KnownExternalId), ResolutionStatus::Resolved) => {
-                self.known_id += 1
-            }
-            (Some(ResolutionPath::ForeignIdLookup), ResolutionStatus::Resolved) => {
-                self.foreign_id += 1
-            }
-            (Some(ResolutionPath::FuzzyTitle), ResolutionStatus::Resolved) => self.fuzzy += 1,
-            (_, ResolutionStatus::ReviewPending) | (_, ResolutionStatus::Ambiguous) => {
-                self.review += 1
-            }
-            _ => self.failed += 1,
-        }
-    }
 }
 
 /// Outcome of `persist_chunk` when the commit succeeds. `ids` is the

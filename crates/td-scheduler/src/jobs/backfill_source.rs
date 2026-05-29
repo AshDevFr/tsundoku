@@ -15,6 +15,7 @@
 //! not move the cron's ETag / last-poll markers.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use chrono::Utc;
@@ -30,6 +31,7 @@ use td_source::DiscoverySource;
 use tokio::sync::broadcast;
 
 use crate::events::{JobEvent, JobKind};
+use crate::jobs::outcomes::OutcomeBreakdown;
 use crate::jobs::progress::ProgressHandle;
 
 /// Per-run tallies, surfaced by the CLI summary and the API's progress event.
@@ -123,8 +125,20 @@ pub async fn run(
     progress.set_phase("backfilling").await;
 
     let mut totals = BackfillSummary::default();
+    let mut breakdown = OutcomeBreakdown::default();
+    // Per-phase wall-clock totals. The three numbers add up to "where did
+    // the backfill spend its time" and feed the same poll_runs columns the
+    // poll job populates, so a single backfill row on the metrics card
+    // shows the same enrich/resolve split a steady-state poll would.
+    let mut listing_total_ms: u128 = 0;
+    let mut enrich_total_ms: u128 = 0;
+    let mut resolve_total_ms: u128 = 0;
+    let mut resolve_errors = 0usize;
     for page in 1..=pages {
-        let releases = match backfillable.backfill_page(page).await {
+        let listing_started = Instant::now();
+        let listing_result = backfillable.backfill_page(page).await;
+        listing_total_ms += listing_started.elapsed().as_millis();
+        let releases = match listing_result {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = ?e, source = %name, page, "backfill page failed; stopping");
@@ -139,6 +153,8 @@ pub async fn run(
         let mut page_new = 0usize;
         let mut page_skipped = 0usize;
         let mut page_errors = 0usize;
+        let mut page_enrich_ms: u128 = 0;
+        let mut page_resolve_ms: u128 = 0;
         for mut release in releases {
             let id = id_for(&release.source_kind, &release.external_id);
             // Cheap dedup: if the row already exists, skip the detail
@@ -154,7 +170,11 @@ pub async fn run(
                     tracing::warn!(error = ?e, %id, "find_by_id failed; treating as new");
                 }
             }
-            if let Err(e) = source.enrich(&mut release).await {
+            let enrich_started = Instant::now();
+            let enrich_result = source.enrich(&mut release).await;
+            let enrich_ms = enrich_started.elapsed().as_millis();
+            page_enrich_ms += enrich_ms;
+            if let Err(e) = enrich_result {
                 tracing::warn!(
                     error = ?e,
                     source = %name,
@@ -176,12 +196,30 @@ pub async fn run(
                     continue;
                 }
             };
-            if let Err(e) = resolver.resolve_one(&persisted_id).await {
-                tracing::warn!(error = ?e, release_id = %persisted_id, "resolver failed; release left unresolved");
-                page_errors += 1;
+            let resolve_started = Instant::now();
+            let resolve_result = resolver.resolve_one(&persisted_id).await;
+            let resolve_ms = resolve_started.elapsed().as_millis();
+            page_resolve_ms += resolve_ms;
+            match resolve_result {
+                Ok(o) => breakdown.record(&o),
+                Err(e) => {
+                    tracing::warn!(error = ?e, release_id = %persisted_id, "resolver failed; release left unresolved");
+                    page_errors += 1;
+                    resolve_errors += 1;
+                    breakdown.failed += 1;
+                }
             }
+            tracing::debug!(
+                source = %name,
+                release_id = %persisted_id,
+                enrich_ms = enrich_ms as u64,
+                resolve_ms = resolve_ms as u64,
+                "release processed"
+            );
             page_new += 1;
         }
+        enrich_total_ms += page_enrich_ms;
+        resolve_total_ms += page_resolve_ms;
         tracing::info!(
             source = %name,
             page,
@@ -189,6 +227,8 @@ pub async fn run(
             new = page_new,
             skipped = page_skipped,
             errors = page_errors,
+            enrich_ms = page_enrich_ms as u64,
+            resolve_ms = page_resolve_ms as u64,
             "backfill page complete"
         );
         totals.pages_walked += 1;
@@ -200,10 +240,26 @@ pub async fn run(
     }
     progress.flush().await;
 
+    let fetch_duration_ms = listing_total_ms.min(i64::MAX as u128) as i64;
+    let enrich_duration_ms = enrich_total_ms.min(i64::MAX as u128) as i64;
+    let resolve_duration_ms = resolve_total_ms.min(i64::MAX as u128) as i64;
+    tracing::info!(
+        source = %name,
+        pages = totals.pages_walked,
+        total = totals.total,
+        new = totals.new,
+        already_known = totals.already_known,
+        errors = totals.errors,
+        fetch_duration_ms,
+        enrich_duration_ms,
+        resolve_duration_ms,
+        "backfill complete"
+    );
+
     // Finalize the backfill's poll_runs row so it transitions out of
-    // `running` and the in-flight pill clears. We pass the tallied
-    // `fetched`/`new` numbers so the metrics view stays consistent with
-    // a real poll tick.
+    // `running` and the in-flight pill clears. Counts and timings mirror
+    // the poll path so the metrics card aggregates both kinds of run
+    // without special-casing.
     if let Some(id) = metrics_id {
         let finished_at = Utc::now().timestamp();
         if let Err(e) = run_metrics_repo::finalize_poll_run(
@@ -214,9 +270,15 @@ pub async fn run(
             PollRunCounts {
                 fetched: Some(totals.total as i32),
                 new: Some(totals.new as i32),
-                resolved: Some(totals.new.saturating_sub(totals.errors) as i32),
-                fetch_duration_ms: None,
-                ..Default::default()
+                resolved: Some(totals.new.saturating_sub(resolve_errors) as i32),
+                fetch_duration_ms: Some(fetch_duration_ms),
+                enrich_duration_ms: Some(enrich_duration_ms),
+                resolve_duration_ms: Some(resolve_duration_ms),
+                outcome_known_id: Some(breakdown.known_id),
+                outcome_foreign_id: Some(breakdown.foreign_id),
+                outcome_fuzzy: Some(breakdown.fuzzy),
+                outcome_review: Some(breakdown.review),
+                outcome_failed: Some(breakdown.failed),
             },
             None,
             None,

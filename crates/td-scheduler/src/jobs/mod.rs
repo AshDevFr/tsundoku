@@ -7,6 +7,7 @@
 //! ticks are skipped rather than queued.
 
 pub mod backfill_source;
+pub mod outcomes;
 pub mod poll_source;
 pub mod progress;
 pub mod refresh_provider_cache;

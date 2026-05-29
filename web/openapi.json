@@ -3643,6 +3643,14 @@
           "outcomes"
         ],
         "properties": {
+          "enrichDurationMsSum": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Total milliseconds spent in `DiscoverySource::enrich()` across every\nrun in the window. `null` when no runs reported it."
+          },
           "failureCount": {
             "type": "integer",
             "format": "int64"
@@ -3676,6 +3684,14 @@
           },
           "outcomes": {
             "$ref": "#/components/schemas/ResolutionOutcomeBreakdown"
+          },
+          "resolveDurationMsSum": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Total milliseconds spent in `Resolver::resolve_one()` across every\nrun in the window. `null` when no runs reported it."
           },
           "resolvedSum": {
             "type": [

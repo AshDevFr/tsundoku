@@ -49,8 +49,16 @@ pub struct PollRunCounts {
     pub fetched: Option<i32>,
     pub new: Option<i32>,
     pub resolved: Option<i32>,
-    /// Wall-clock duration of `DiscoverySource::poll()` in milliseconds.
+    /// Wall-clock duration of the listing fetch in milliseconds. For polls,
+    /// this is `DiscoverySource::poll()`; for backfills, the sum of every
+    /// `BackfillableSource::backfill_page()` call across the walked pages.
     pub fetch_duration_ms: Option<i64>,
+    /// Sum of `DiscoverySource::enrich()` wall-clock across every persisted
+    /// release this run, in milliseconds.
+    pub enrich_duration_ms: Option<i64>,
+    /// Sum of `Resolver::resolve_one()` wall-clock across every persisted
+    /// release this run, in milliseconds.
+    pub resolve_duration_ms: Option<i64>,
     /// One counter per `ResolutionOutcome` variant (see
     /// `td-resolution::pipeline::ResolutionPath`/`ResolutionStatus`).
     pub outcome_known_id: Option<i32>,
@@ -134,6 +142,14 @@ pub async fn finalize_poll_run<C: ConnectionTrait>(
         .col_expr(
             poll_runs::Column::FetchDurationMs,
             Expr::value(counts.fetch_duration_ms),
+        )
+        .col_expr(
+            poll_runs::Column::EnrichDurationMs,
+            Expr::value(counts.enrich_duration_ms),
+        )
+        .col_expr(
+            poll_runs::Column::ResolveDurationMs,
+            Expr::value(counts.resolve_duration_ms),
         )
         .col_expr(
             poll_runs::Column::OutcomeKnownId,
@@ -408,6 +424,12 @@ pub struct SourceSummaryRow {
     pub outcome_fuzzy_sum: Option<i64>,
     pub outcome_review_sum: Option<i64>,
     pub outcome_failed_sum: Option<i64>,
+    /// Total milliseconds spent in `DiscoverySource::enrich()` across every
+    /// run in the window. Pair with `new_sum` to derive an average.
+    pub enrich_duration_ms_sum: Option<i64>,
+    /// Total milliseconds spent in `Resolver::resolve_one()` across every
+    /// run in the window. Pair with `new_sum` to derive an average.
+    pub resolve_duration_ms_sum: Option<i64>,
     pub last_started_at: Option<i64>,
     pub last_status: Option<String>,
 }
@@ -492,6 +514,8 @@ pub async fn source_summary(
                 outcome_fuzzy,
                 outcome_review,
                 outcome_failed,
+                enrich_duration_ms,
+                resolve_duration_ms,
                 ROW_NUMBER() OVER (
                     PARTITION BY source_name ORDER BY started_at DESC
                 ) AS rn
@@ -512,6 +536,8 @@ pub async fn source_summary(
             SUM(COALESCE(outcome_fuzzy, 0)) AS outcome_fuzzy_sum,
             SUM(COALESCE(outcome_review, 0)) AS outcome_review_sum,
             SUM(COALESCE(outcome_failed, 0)) AS outcome_failed_sum,
+            SUM(COALESCE(enrich_duration_ms, 0)) AS enrich_duration_ms_sum,
+            SUM(COALESCE(resolve_duration_ms, 0)) AS resolve_duration_ms_sum,
             MAX(started_at) AS last_started_at,
             MAX(CASE WHEN rn = 1 THEN status END) AS last_status
         FROM ranked
