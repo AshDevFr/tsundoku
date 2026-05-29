@@ -493,6 +493,40 @@ describe("admin maintenance page", () => {
     });
   });
 
+  it("renders the re-enrich card with the default review statuses", async () => {
+    renderAt("/admin/maintenance");
+    expect(
+      await screen.findByTestId("maintenance-reenrich-card", undefined, {
+        timeout: 3000,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("maintenance-reenrich-button")).toHaveTextContent(
+      /re-enrich releases/i,
+    );
+  });
+
+  it("dispatches the re-enrich mutation with the selected source + statuses", async () => {
+    renderAt("/admin/maintenance");
+    const button = await screen.findByTestId(
+      "maintenance-reenrich-button",
+      undefined,
+      { timeout: 3000 },
+    );
+    // The button stays disabled until the /sources query resolves and the
+    // source select defaults to the first item.
+    await waitFor(() => expect(button).not.toBeDisabled());
+    fireEvent.click(button);
+    // Source defaults to the first /sources item; statuses default to the
+    // review set. The MSW handler echoes them back.
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /english-manga-trusted: unresolved, ambiguous, review_pending/i,
+        ),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("renders the invalidate-covers card", async () => {
     renderAt("/admin/maintenance");
     expect(

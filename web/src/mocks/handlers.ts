@@ -550,6 +550,18 @@ export const handlers = [
     });
   }),
 
+  http.post("/api/v1/sources/:name/re-enrich", async ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const body = (await request.json()) as { statuses?: string[] };
+    return HttpResponse.json({
+      source: String(params.name),
+      statuses: body.statuses ?? [],
+      triggered: true,
+      skipped: false,
+    });
+  }),
+
   http.get("/api/v1/metrics/sources", () =>
     HttpResponse.json({
       items: [

@@ -729,6 +729,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sources/{name}/re-enrich": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-fetch the detail page for the source's already-persisted releases that
+         *     match `statuses`, refreshing their source-derived columns (files,
+         *     description, extracted links, information URL) without touching resolution
+         *     state. Use after a parser change adds or fixes a detail-page field.
+         *     Shares the per-source mutex, so it cannot race a cron poll / backfill
+         *     (returns `skipped = true` when work is already in flight).
+         */
+        post: operations["reenrich"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stats": {
         parameters: {
             query?: never;
@@ -1068,6 +1092,17 @@ export interface components {
             source: string;
             triggered: boolean;
         };
+        ManualReenrichResponse: {
+            /**
+             * @description `true` when a poll / backfill / re-enrich for this source was already
+             *     in flight; the request is a no-op.
+             */
+            skipped: boolean;
+            source: string;
+            /** @description The (validated) statuses the run targets. */
+            statuses: string[];
+            triggered: boolean;
+        };
         PollAllResponse: {
             results: components["schemas"]["ManualPollResponse"][];
         };
@@ -1199,6 +1234,15 @@ export interface components {
         ProviderSearchResponse: {
             hits: components["schemas"]["ProviderSearchHit"][];
             provider: string;
+        };
+        ReenrichRequest: {
+            /**
+             * @description Resolution statuses to target. Releases for the source whose
+             *     `resolutionStatus` is in this set have their detail page re-fetched
+             *     and their source-derived columns refreshed; resolution state is left
+             *     untouched. Must be non-empty and a subset of the known statuses.
+             */
+            statuses: string[];
         };
         RefreshAllResponse: {
             results: components["schemas"]["RefreshResponse"][];
@@ -2717,6 +2761,46 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ManualPollResponse"];
                 };
+            };
+            /** @description No source with that name registered */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reenrich: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Source instance name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReenrichRequest"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManualReenrichResponse"];
+                };
+            };
+            /** @description Empty or unknown status in the request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description No source with that name registered */
             404: {

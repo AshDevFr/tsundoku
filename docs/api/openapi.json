@@ -1525,6 +1525,59 @@
         ]
       }
     },
+    "/api/v1/sources/{name}/re-enrich": {
+      "post": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "Re-fetch the detail page for the source's already-persisted releases that\nmatch `statuses`, refreshing their source-derived columns (files,\ndescription, extracted links, information URL) without touching resolution\nstate. Use after a parser change adds or fixes a detail-page field.\nShares the per-source mutex, so it cannot race a cron poll / backfill\n(returns `skipped = true` when work is already in flight).",
+        "operationId": "reenrich",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Source instance name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReenrichRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualReenrichResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty or unknown status in the request"
+          },
+          "404": {
+            "description": "No source with that name registered"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/stats": {
       "get": {
         "tags": [
@@ -2174,6 +2227,34 @@
           }
         }
       },
+      "ManualReenrichResponse": {
+        "type": "object",
+        "required": [
+          "source",
+          "statuses",
+          "triggered",
+          "skipped"
+        ],
+        "properties": {
+          "skipped": {
+            "type": "boolean",
+            "description": "`true` when a poll / backfill / re-enrich for this source was already\nin flight; the request is a no-op."
+          },
+          "source": {
+            "type": "string"
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The (validated) statuses the run targets."
+          },
+          "triggered": {
+            "type": "boolean"
+          }
+        }
+      },
       "PollAllResponse": {
         "type": "object",
         "required": [
@@ -2608,6 +2689,21 @@
           },
           "provider": {
             "type": "string"
+          }
+        }
+      },
+      "ReenrichRequest": {
+        "type": "object",
+        "required": [
+          "statuses"
+        ],
+        "properties": {
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Resolution statuses to target. Releases for the source whose\n`resolutionStatus` is in this set have their detail page re-fetched\nand their source-derived columns refreshed; resolution state is left\nuntouched. Must be non-empty and a subset of the known statuses."
           }
         }
       },

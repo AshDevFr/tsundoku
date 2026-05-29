@@ -530,6 +530,108 @@ async fn persist_discovered_upserts_release_and_attaches_formats() {
 }
 
 #[tokio::test]
+async fn select_for_reenrich_filters_by_source_and_status_and_round_trips() {
+    use chrono::{TimeZone, Utc};
+    use td_source::{DiscoveredRelease, ExternalLinks};
+
+    let db = fresh_db().await;
+    let base = DiscoveredRelease {
+        source_kind: "nyaa".into(),
+        source_name: "trusted".into(),
+        external_id: "1".into(),
+        title: "Series One v01".into(),
+        link: "https://nyaa.si/view/1".into(),
+        magnet: Some("magnet:?xt=urn:btih:aa".into()),
+        torrent_url: None,
+        ddl_url: None,
+        info_hash: Some("aa".into()),
+        size_bytes: Some(123),
+        files: vec!["Series One v01.cbz".into()],
+        description_html: Some("body".into()),
+        external_links: ExternalLinks {
+            anilist: Some("https://anilist.co/manga/9".into()),
+            ..Default::default()
+        },
+        information_url: Some("https://example.com/info".into()),
+        posted_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+    };
+    let unresolved_id = releases_repo::persist_discovered(&db, &base, 100)
+        .await
+        .unwrap();
+
+    // A second release on the same source, marked resolved.
+    let mut resolved = base.clone();
+    resolved.external_id = "2".into();
+    resolved.link = "https://nyaa.si/view/2".into();
+    let resolved_id = releases_repo::persist_discovered(&db, &resolved, 200)
+        .await
+        .unwrap();
+    releases_repo::set_resolution(
+        &db,
+        &resolved_id,
+        None,
+        Some("manual".into()),
+        None,
+        "resolved",
+        250,
+    )
+    .await
+    .unwrap();
+
+    // A release on a DIFFERENT source — must never be selected.
+    let mut other = base.clone();
+    other.source_name = "other-feed".into();
+    other.external_id = "3".into();
+    other.link = "https://nyaa.si/view/3".into();
+    releases_repo::persist_discovered(&db, &other, 300)
+        .await
+        .unwrap();
+
+    // Status targeting: only the unresolved row on "trusted" matches.
+    let rows =
+        releases_repo::select_for_reenrich(&db, "nyaa", "trusted", &["unresolved".into()], 100)
+            .await
+            .unwrap();
+    let ids: Vec<&str> = rows.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec![unresolved_id.as_str()]);
+
+    // Multi-status selects both rows on "trusted"; the other-source row is excluded.
+    let rows = releases_repo::select_for_reenrich(
+        &db,
+        "nyaa",
+        "trusted",
+        &["unresolved".into(), "resolved".into()],
+        100,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+
+    // Empty status set matches nothing.
+    let none = releases_repo::select_for_reenrich(&db, "nyaa", "trusted", &[], 100)
+        .await
+        .unwrap();
+    assert!(none.is_empty());
+
+    // Round-trip: the reconstructed DiscoveredRelease carries the
+    // source-derived fields (including information_url) verbatim.
+    let model = rows.iter().find(|m| m.id == unresolved_id).unwrap();
+    let discovered = releases_repo::model_to_discovered(model);
+    assert_eq!(discovered.external_id, "1");
+    assert_eq!(discovered.title, "Series One v01");
+    assert_eq!(
+        discovered.information_url.as_deref(),
+        Some("https://example.com/info")
+    );
+    assert_eq!(discovered.files, vec!["Series One v01.cbz".to_string()]);
+    assert_eq!(
+        discovered.external_links.anilist.as_deref(),
+        Some("https://anilist.co/manga/9")
+    );
+    assert_eq!(discovered.posted_at.timestamp(), 1_700_000_000);
+}
+
+#[tokio::test]
 async fn fts5_returns_series_matched_by_title_and_alternate_titles() {
     let db = fresh_db().await;
 

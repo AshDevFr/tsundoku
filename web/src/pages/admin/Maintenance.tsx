@@ -5,17 +5,39 @@ import {
   Group,
   List,
   Modal,
+  MultiSelect,
+  Select,
   Stack,
   Text,
   Title,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
+import { useState } from "react";
 import {
   useInvalidateCoverCache,
   useInvalidateMetadataHashes,
+  useReenrichSource,
   useRefreshAllSeries,
 } from "@/api/mutations";
+import { useSources } from "@/api/queries";
+
+/// Resolution statuses a release can carry, mirrored from the backend's
+/// `VALID_STATUSES`. Used to populate the re-enrich status picker.
+const REENRICH_STATUS_OPTIONS = [
+  "unresolved",
+  "ambiguous",
+  "review_pending",
+  "resolved",
+  "standalone",
+  "rejected",
+];
+
+/// The "needs attention" set, pre-selected in the re-enrich picker. Targets
+/// the rows whose details an operator most often wants refreshed, and keeps
+/// the default off the large `resolved` / `standalone` buckets so a careless
+/// click doesn't kick off thousands of detail-page fetches.
+const REENRICH_DEFAULT_STATUSES = ["unresolved", "ambiguous", "review_pending"];
 
 /// Admin maintenance page. Hosts cross-provider operational actions that
 /// don't fit on a per-provider or per-source surface. The page is designed
@@ -34,8 +56,110 @@ export function AdminMaintenancePage() {
       </Stack>
       <InvalidateMetadataHashesCard />
       <RefreshAllSeriesCard />
+      <ReenrichReleasesCard />
       <InvalidateCoverCacheCard />
     </Stack>
+  );
+}
+
+/// Re-fetch the detail page for already-persisted releases and refresh their
+/// source-derived columns (files, description, extracted links, information
+/// link) without touching resolution state. The status picker scopes the
+/// walk; pair it with the source picker (a single source today). Use after a
+/// parser change adds or fixes a detail-page field on existing rows.
+function ReenrichReleasesCard() {
+  const sources = useSources();
+  const reenrich = useReenrichSource();
+  const sourceNames = sources.data?.items.map((s) => s.name) ?? [];
+  const [source, setSource] = useState<string | null>(null);
+  const [statuses, setStatuses] = useState<string[]>(REENRICH_DEFAULT_STATUSES);
+  // Default the picker to the first source once the list loads, without
+  // clobbering an explicit choice.
+  const effectiveSource = source ?? sourceNames[0] ?? null;
+
+  const handleClick = () => {
+    if (!effectiveSource || statuses.length === 0) {
+      return;
+    }
+    reenrich.mutate(
+      { name: effectiveSource, statuses },
+      {
+        onSuccess: (data) => {
+          if (data?.triggered) {
+            notifications.show({
+              color: "blue",
+              title: "Re-enrich triggered",
+              message: `${data.source}: ${data.statuses.join(", ")}`,
+            });
+          } else {
+            notifications.show({
+              color: "gray",
+              title: "Source busy",
+              message: `${data?.source ?? effectiveSource}: a poll, backfill, or re-enrich is already in flight`,
+            });
+          }
+        },
+        onError: (e) =>
+          notifications.show({
+            color: "red",
+            title: "Re-enrich failed",
+            message: (e as Error).message,
+          }),
+      },
+    );
+  };
+
+  return (
+    <Card withBorder radius="md" p="md" data-testid="maintenance-reenrich-card">
+      <Stack gap="sm">
+        <Stack gap={2}>
+          <Title order={4}>Re-enrich release details</Title>
+          <Text size="sm" c="dimmed">
+            Re-fetch the post detail page for existing releases and refresh
+            their files, description, extracted links, and information link.
+            Resolution and series links are left untouched. Scope it by status
+            below; the default targets the review queue. Re-enriching{" "}
+            <Text span fw={600}>
+              resolved
+            </Text>{" "}
+            or{" "}
+            <Text span fw={600}>
+              standalone
+            </Text>{" "}
+            can mean many detail-page fetches.
+          </Text>
+        </Stack>
+        <Select
+          label="Source"
+          data={sourceNames}
+          value={effectiveSource}
+          onChange={setSource}
+          disabled={sources.isLoading || sourceNames.length === 0}
+          allowDeselect={false}
+          data-testid="reenrich-source-select"
+        />
+        <MultiSelect
+          label="Statuses"
+          data={REENRICH_STATUS_OPTIONS}
+          value={statuses}
+          onChange={setStatuses}
+          clearable
+          data-testid="reenrich-status-select"
+        />
+        <Group justify="flex-end">
+          <Button
+            size="xs"
+            variant="light"
+            onClick={handleClick}
+            loading={reenrich.isPending}
+            disabled={!effectiveSource || statuses.length === 0}
+            data-testid="maintenance-reenrich-button"
+          >
+            Re-enrich releases
+          </Button>
+        </Group>
+      </Stack>
+    </Card>
   );
 }
 

@@ -1186,6 +1186,103 @@ async fn poll_all_reports_locked_source_as_skipped() {
 }
 
 #[tokio::test]
+async fn reenrich_triggers_and_echoes_validated_statuses() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![StubSource {
+            name: "a".into(),
+            kind: "stub".into(),
+            outcome: PollOutcome::default(),
+        }]),
+        open_auth(),
+    );
+
+    // Duplicate values collapse; order is preserved.
+    let body = serde_json::json!({ "statuses": ["unresolved", "unresolved", "ambiguous"] });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/sources/a/re-enrich")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["source"], "a");
+    assert_eq!(body["triggered"], true);
+    assert_eq!(body["skipped"], false);
+    assert_eq!(
+        body["statuses"],
+        serde_json::json!(["unresolved", "ambiguous"])
+    );
+}
+
+#[tokio::test]
+async fn reenrich_rejects_empty_and_unknown_statuses() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![StubSource {
+            name: "a".into(),
+            kind: "stub".into(),
+            outcome: PollOutcome::default(),
+        }]),
+        open_auth(),
+    );
+
+    // Empty set.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/sources/a/re-enrich")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({ "statuses": [] })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Unknown status.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/sources/a/re-enrich")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({ "statuses": ["bogus"] })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn refresh_all_returns_per_provider_results() {
     let db = fresh_db().await;
     let app = build_app(

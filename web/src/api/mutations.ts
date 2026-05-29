@@ -217,6 +217,30 @@ export function useBackfillSource() {
   });
 }
 
+export function useReenrichSource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { name: string; statuses: string[] }) => {
+      const { data, error } = await api.POST(
+        "/api/v1/sources/{name}/re-enrich",
+        {
+          params: { path: { name: args.name } },
+          body: { statuses: args.statuses },
+        },
+      );
+      if (error)
+        throw new Error(describeError(error, "failed to re-enrich source"));
+      return data;
+    },
+    // Re-enrich refreshes release detail columns in place; bust the release
+    // views (and stats) so the freshly-pulled fields show on next read.
+    onSuccess: () => {
+      invalidateSourceQueries(qc);
+      invalidateReleaseQueries(qc);
+    },
+  });
+}
+
 export function useRefreshProvider() {
   const qc = useQueryClient();
   return useMutation({

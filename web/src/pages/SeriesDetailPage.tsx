@@ -38,6 +38,12 @@ import {
   providerUrl,
 } from "@/api/utils";
 import {
+  ExtractedLinks,
+  InformationLink,
+  ReleaseDescription,
+  ReleaseFiles,
+} from "@/components/ReleaseDetails";
+import {
   LinkExistingPanel,
   ProviderSearchPanel,
 } from "@/components/ReleaseLinking";
@@ -473,6 +479,13 @@ function ReleaseRow({ release }: { release: ReleaseDto }) {
           )}
         </Group>
       </Group>
+
+      <Stack gap={6} mt={6}>
+        <ExtractedLinks links={release.extractedLinks} />
+        <InformationLink url={release.informationUrl} />
+        <ReleaseDescription body={release.descriptionHtml} />
+        <ReleaseFiles files={release.files} />
+      </Stack>
 
       {moveOpen && <MoveReleaseModal release={release} onClose={closeMove} />}
     </Card>

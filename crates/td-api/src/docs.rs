@@ -31,8 +31,8 @@ use crate::handlers::series::{
     SeriesDetail, SeriesListItem, SeriesListPage,
 };
 use crate::handlers::sources::{
-    ManualBackfillResponse, ManualPollResponse, PollAllResponse, SourceConfigDto, SourceDto,
-    SourceList,
+    ManualBackfillResponse, ManualPollResponse, ManualReenrichResponse, PollAllResponse,
+    ReenrichRequest, SourceConfigDto, SourceDto, SourceList,
 };
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
@@ -70,6 +70,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         sources::list,
         sources::poll,
         sources::backfill,
+        sources::reenrich,
         sources::poll_all,
         providers::list,
         providers::refresh_cache,
@@ -117,6 +118,8 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         SourceList,
         ManualPollResponse,
         ManualBackfillResponse,
+        ManualReenrichResponse,
+        ReenrichRequest,
         PollAllResponse,
         ProviderDto,
         ProviderConfigDto,

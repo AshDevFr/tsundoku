@@ -1,6 +1,7 @@
 //! Release read/write helpers.
 
 use anyhow::Result;
+use chrono::DateTime;
 use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
@@ -52,6 +53,65 @@ pub async fn persist_discovered<C: ConnectionTrait>(
         add_format(db, &id, fmt.as_str()).await?;
     }
     Ok(id)
+}
+
+/// Reconstruct a [`DiscoveredRelease`] from a persisted row. The inverse of
+/// [`to_active_model`] for the source-derived fields: resolution state lives
+/// on the row but not on `DiscoveredRelease`, so it is intentionally dropped.
+/// Used by the re-enrich job to feed an already-stored release back through
+/// `DiscoverySource::enrich` + [`persist_discovered`] (the upsert preserves
+/// resolution columns, so re-enriching a resolved row keeps its link).
+pub fn model_to_discovered(m: &Model) -> DiscoveredRelease {
+    let files = m
+        .files_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .unwrap_or_default();
+    let external_links = m
+        .extracted_links_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+    DiscoveredRelease {
+        source_kind: m.source_kind.clone(),
+        source_name: m.source_name.clone(),
+        external_id: m.external_id.clone(),
+        title: m.title.clone(),
+        link: m.link.clone(),
+        magnet: m.magnet.clone(),
+        torrent_url: m.torrent_url.clone(),
+        ddl_url: m.ddl_url.clone(),
+        info_hash: m.info_hash.clone(),
+        size_bytes: m.size_bytes.map(|n| n as u64),
+        files,
+        description_html: m.description_html.clone(),
+        external_links,
+        information_url: m.information_url.clone(),
+        posted_at: DateTime::from_timestamp(m.posted_at, 0).unwrap_or_default(),
+    }
+}
+
+/// Rows for a given source whose `resolution_status` is in `statuses`, most
+/// recently observed first, capped at `limit`. Drives the re-enrich job's
+/// status-targeted walk. An empty `statuses` slice matches nothing.
+pub async fn select_for_reenrich(
+    db: &DatabaseConnection,
+    source_kind: &str,
+    source_name: &str,
+    statuses: &[String],
+    limit: u64,
+) -> Result<Vec<Model>> {
+    if statuses.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(releases::Entity::find()
+        .filter(releases::Column::SourceKind.eq(source_kind))
+        .filter(releases::Column::SourceName.eq(source_name))
+        .filter(releases::Column::ResolutionStatus.is_in(statuses.iter().cloned()))
+        .order_by_desc(releases::Column::ObservedAt)
+        .limit(limit)
+        .all(db)
+        .await?)
 }
 
 /// Map a [`DiscoveredRelease`] into the sea-orm ActiveModel used for upsert.
