@@ -2,6 +2,17 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.5.2] - 2026-05-29
+
+### Bug Fixes
+
+- *(web)* Preserve feed filters when navigating to a series and back
+- *(source)* Stop reading spaced "vNN - subtitle" as a volume/chapter range
+
+### Documentation
+
+- Refresh UI screenshots
+
 ## [1.5.1] - 2026-05-29
 
 ### Features
