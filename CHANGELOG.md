@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.3.0] - 2026-05-29
+
+### Features
+
+- *(source,api,web)* Capture and display the Nyaa Information-field link
+
 ## [1.2.0] - 2026-05-29
 
 ### Features
