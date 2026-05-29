@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.4.0] - 2026-05-29
+
+### Features
+
+- *(scheduler,api,web)* Re-enrich existing releases by status; surface release details on series page
+
 ## [1.3.0] - 2026-05-29
 
 ### Features
