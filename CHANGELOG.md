@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.5.3] - 2026-05-29
+
+### Bug Fixes
+
+- *(web)* Render Back-to-feed link via renderRoot to fix type error
+
 ## [1.5.2] - 2026-05-29
 
 ### Bug Fixes
