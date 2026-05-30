@@ -253,3 +253,33 @@ enabled = true
 Multiple `[[sources]]` blocks polling the same `kind` are supported —
 useful for distinct uploader feeds, language subcategories, or
 parallel polling at different cadences.
+
+## `[codex]`
+
+Optional integration with a [Codex](https://github.com/AshDevFr/codex)
+library, powering the admin-only ownership overlay on the feed. Disabled
+by default; the whole block may be omitted. See the dedicated
+[Codex integration](./codex.md) page for the full picture.
+
+```toml
+[codex]
+enabled         = true
+base_url        = "https://codex.example.com"
+api_key         = "codex-reader-api-key"
+sync_cron       = "0 */6 * * *"   # every 6 hours; omit to disable the cron
+timeout_seconds = 30
+```
+
+| Field             | Purpose                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| `enabled`         | Master switch. When false, no cron, no API surface, no outbound calls.                    |
+| `base_url`        | Codex base URL. **Required when enabled.** Doubles as the deep-link host.                 |
+| `api_key`         | **Codex's** `X-API-Key` (Reader scope). **Required when enabled.** Not tsundoku's token.  |
+| `sync_cron`       | Schedule for the presence sweep. Omit to disable the cron (manual refresh still works).   |
+| `timeout_seconds` | HTTP timeout per outbound Codex request. Default 30.                                       |
+
+`api_key` is unrelated to `[auth]` above — it authenticates tsundoku *to
+Codex*, not callers to tsundoku. It can be supplied via the
+`TSUNDOKU_CODEX__API_KEY` environment variable instead of the file. When
+`enabled = true`, tsundoku refuses to start if `base_url` or `api_key` is
+missing.

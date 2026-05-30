@@ -31,6 +31,7 @@ const sidebars: SidebarsConfig = {
         "review-queue",
         "kept-releases",
         "admin-maintenance",
+        "codex",
       ],
     },
     {
