@@ -60,6 +60,37 @@ pub async fn set_preflight(
     Ok(())
 }
 
+/// Record a failed preflight: Codex was unreachable (or `/info` returned a
+/// non-200). Marks `reachable = false`, stamps `last_preflight_at`, and writes
+/// `last_error`. Leaves `auth_state` and the last-success fields untouched —
+/// an outage isn't an auth verdict, and stale links stay valid.
+pub async fn set_preflight_unreachable(
+    db: &DatabaseConnection,
+    last_error: &str,
+    at: i64,
+) -> Result<()> {
+    let model = ActiveModel {
+        id: Set(ROW_ID),
+        reachable: Set(false),
+        last_preflight_at: Set(Some(at)),
+        last_error: Set(Some(last_error.to_string())),
+        ..Default::default()
+    };
+    Entity::insert(model)
+        .on_conflict(
+            OnConflict::column(Column::Id)
+                .update_columns([
+                    Column::Reachable,
+                    Column::LastPreflightAt,
+                    Column::LastError,
+                ])
+                .to_owned(),
+        )
+        .exec(db)
+        .await?;
+    Ok(())
+}
+
 /// Record the auth outcome of the first `external-index` page: `ok`,
 /// `unauthorized` (401), or `forbidden` (403). `last_error` is a
 /// human-readable message on failure, or `None` to clear it on success.
@@ -78,6 +109,26 @@ pub async fn set_auth_state(
         .on_conflict(
             OnConflict::column(Column::Id)
                 .update_columns([Column::AuthState, Column::LastError])
+                .to_owned(),
+        )
+        .exec(db)
+        .await?;
+    Ok(())
+}
+
+/// Record a non-auth sweep failure (transport error, 5xx, decode failure):
+/// writes `last_error` only, leaving `auth_state`, reachability, and the
+/// last-success fields untouched. 401/403 use [`set_auth_state`] instead.
+pub async fn set_error(db: &DatabaseConnection, last_error: &str) -> Result<()> {
+    let model = ActiveModel {
+        id: Set(ROW_ID),
+        last_error: Set(Some(last_error.to_string())),
+        ..Default::default()
+    };
+    Entity::insert(model)
+        .on_conflict(
+            OnConflict::column(Column::Id)
+                .update_columns([Column::LastError])
                 .to_owned(),
         )
         .exec(db)
@@ -168,5 +219,28 @@ mod tests {
 
         // Still exactly one row.
         assert_eq!(Entity::find().all(&db).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn preflight_unreachable_marks_down_without_touching_auth_or_success() {
+        let db = fresh_db().await;
+        // Seed a prior good state.
+        set_preflight(&db, true, Some("codex"), Some("1.0.0"), 100)
+            .await
+            .unwrap();
+        set_success(&db, 5, 150).await.unwrap();
+
+        // Codex goes down: reachable flips, error recorded, but the last
+        // successful sweep + auth verdict survive so stale links stay valid.
+        set_preflight_unreachable(&db, "connection refused", 200)
+            .await
+            .unwrap();
+        let row = get(&db).await.unwrap().unwrap();
+        assert!(!row.reachable);
+        assert_eq!(row.last_error.as_deref(), Some("connection refused"));
+        assert_eq!(row.last_preflight_at, Some(200));
+        assert_eq!(row.auth_state, AUTH_OK, "auth verdict preserved");
+        assert_eq!(row.last_success_at, Some(150), "last success preserved");
+        assert_eq!(row.linked_count, Some(5));
     }
 }

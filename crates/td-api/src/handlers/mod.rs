@@ -4,6 +4,7 @@
 //! artifact: adding a route means adding a handler + registering it in
 //! [`crate::docs::ApiDoc`].
 
+pub mod codex;
 pub mod covers;
 pub mod events;
 pub mod health;

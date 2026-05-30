@@ -8,6 +8,7 @@ description = "Per-source and per-provider cron scheduler for tsundoku"
 repository.workspace = true
 
 [dependencies]
+td-codex = { path = "../td-codex" }
 td-config = { path = "../td-config" }
 td-db = { path = "../td-db" }
 td-metadata = { path = "../td-metadata" }

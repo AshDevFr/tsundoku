@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
-use td_config::{AuthConfig, IngestionConfig, MetadataConfig, ProvidersConfig, SourceConfig};
+use td_config::{
+    AuthConfig, CodexConfig, IngestionConfig, MetadataConfig, ProvidersConfig, SourceConfig,
+};
 use td_metadata::MetadataRegistry;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_resolution::query_builder::QueryBuilder;
@@ -103,6 +105,14 @@ pub struct AppState {
     /// command populates this from `cfg.storage.paths().cover_cache_dir`;
     /// test scaffolds default to `None`.
     pub cover_cache_dir: Option<PathBuf>,
+    /// Snapshot of the `[codex]` config. Drives the status endpoint's
+    /// `enabled` flag and (in a later phase) the series deep-link base URL.
+    pub codex: Arc<CodexConfig>,
+    /// Codex client for the manual `POST /codex/refresh` trigger. `None` when
+    /// the integration is disabled; the endpoint then responds 503. Shared
+    /// with the scheduler so the manual trigger and the cron drive the same
+    /// client under the same lock.
+    pub codex_client: Option<Arc<td_codex::CodexClient>>,
 }
 
 impl AppState {

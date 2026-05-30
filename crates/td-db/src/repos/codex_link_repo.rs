@@ -138,6 +138,39 @@ pub async fn get(db: &DatabaseConnection, series_id: i32) -> Result<Option<Model
     Ok(Entity::find_by_id(series_id).one(db).await?)
 }
 
+/// All `manual` links. The sweep refreshes their counts by matching
+/// `codex_series_uuid` against the swept items (a manual link is created
+/// without counts, since it has no external-id match to carry them).
+pub async fn list_manual(db: &DatabaseConnection) -> Result<Vec<Model>> {
+    Ok(Entity::find()
+        .filter(Column::LinkKind.eq(KIND_MANUAL))
+        .all(db)
+        .await?)
+}
+
+/// Refresh just the Codex-sourced count columns for an existing link,
+/// regardless of kind. Used to push fresh `local_max_*` / `volumes_owned`
+/// onto a `manual` link whose `codex_series_uuid` matched a swept item. A
+/// no-op if the series has no link row.
+pub async fn update_counts(
+    db: &DatabaseConnection,
+    series_id: i32,
+    local_max_volume: Option<f64>,
+    local_max_chapter: Option<f64>,
+    volumes_owned: Option<i64>,
+    synced_at: i64,
+) -> Result<()> {
+    Entity::update_many()
+        .col_expr(Column::LocalMaxVolume, Expr::value(local_max_volume))
+        .col_expr(Column::LocalMaxChapter, Expr::value(local_max_chapter))
+        .col_expr(Column::VolumesOwned, Expr::value(volumes_owned))
+        .col_expr(Column::SyncedAt, Expr::value(synced_at))
+        .filter(Column::SeriesId.eq(series_id))
+        .exec(db)
+        .await?;
+    Ok(())
+}
+
 /// Links for a batch of series, for the list/detail join. Series with no link
 /// are simply absent from the result.
 pub async fn get_for_series_ids(db: &DatabaseConnection, series_ids: &[i32]) -> Result<Vec<Model>> {
@@ -291,6 +324,40 @@ mod tests {
         let rows = get_for_series_ids(&db, &[s1, s2, s3]).await.unwrap();
         assert_eq!(rows.len(), 2, "s2 has no link, so it is absent");
         assert!(get_for_series_ids(&db, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_counts_refreshes_manual_link_in_place() {
+        let db = fresh_db().await;
+        let s = insert_series(&db, "A").await;
+        upsert_manual(&db, s, "manual-uuid", 10).await.unwrap();
+
+        // A manual link starts with no counts; the sweep pushes them by uuid.
+        update_counts(&db, s, Some(8.0), Some(95.5), Some(8), 200)
+            .await
+            .unwrap();
+        let row = get(&db, s).await.unwrap().unwrap();
+        assert_eq!(row.link_kind, KIND_MANUAL, "kind unchanged");
+        assert_eq!(row.codex_series_uuid, "manual-uuid", "uuid unchanged");
+        assert_eq!(row.local_max_volume, Some(8.0));
+        assert_eq!(row.local_max_chapter, Some(95.5));
+        assert_eq!(row.volumes_owned, Some(8));
+        assert_eq!(row.synced_at, 200);
+    }
+
+    #[tokio::test]
+    async fn list_manual_returns_only_manual_links() {
+        let db = fresh_db().await;
+        let s1 = insert_series(&db, "A").await;
+        let s2 = insert_series(&db, "B").await;
+        upsert_auto(&db, &auto(s1, "u1", Some(1.0), 1))
+            .await
+            .unwrap();
+        upsert_manual(&db, s2, "u2", 1).await.unwrap();
+
+        let manual = list_manual(&db).await.unwrap();
+        assert_eq!(manual.len(), 1);
+        assert_eq!(manual[0].series_id, s2);
     }
 
     #[tokio::test]

@@ -55,6 +55,10 @@ pub struct JobLocks {
     /// for the lifetime of one batch so a second click is reported as
     /// skipped rather than spawning a parallel walk over the same rows.
     retry_all_releases: Arc<Mutex<()>>,
+    /// Single global lock for the Codex presence sync. One sweep at a time;
+    /// the cron tick and the manual `POST /codex/refresh` both `try_lock` it,
+    /// so a manual kick during a scheduled sweep is reported as skipped.
+    codex_sync: Arc<Mutex<()>>,
 }
 
 impl JobLocks {
@@ -82,6 +86,10 @@ impl JobLocks {
     pub fn retry_all_releases_lock(&self) -> Arc<Mutex<()>> {
         self.retry_all_releases.clone()
     }
+
+    pub fn codex_sync_lock(&self) -> Arc<Mutex<()>> {
+        self.codex_sync.clone()
+    }
 }
 
 /// Shared state every job needs. Cloned (cheap `Arc` bumps) into each job
@@ -106,6 +114,11 @@ pub struct SchedulerContext {
     /// `td-api::AppState::job_events` so cron-driven progress frames and
     /// manual-trigger lifecycle frames fan out through one stream.
     pub job_events: broadcast::Sender<JobEvent>,
+    /// Codex client for the presence sync. `None` when `[codex] enabled =
+    /// false`; the sync cron is then not registered. Shared with
+    /// `td-api::AppState` so the manual `POST /codex/refresh` trigger drives
+    /// the same client under the same lock.
+    pub codex_client: Option<Arc<td_codex::CodexClient>>,
 }
 
 /// Owns the running scheduler. Drop or call [`Self::shutdown`] to stop.
@@ -196,6 +209,29 @@ impl Scheduler {
                 &mut registered,
             )
             .await?;
+        }
+
+        // Codex presence sync. Registered only when the integration is
+        // enabled, the client was built, and a sync_cron is set. The manual
+        // `POST /codex/refresh` trigger works regardless of the cron.
+        if cfg.codex.enabled
+            && let Some(client) = ctx.codex_client.clone()
+            && let Some(cron) = cfg.codex.sync_cron.as_deref().filter(|s| !s.is_empty())
+        {
+            let normalized = normalize_cron(cron).context("normalising codex sync_cron")?;
+            let job = jobs::sync_codex::build(
+                &normalized,
+                client,
+                ctx.db.clone(),
+                ctx.locks.clone(),
+                ctx.job_events.clone(),
+            )?;
+            inner
+                .add(job)
+                .await
+                .map_err(|e| anyhow!("registering codex sync job: {e}"))?;
+            tracing::info!(cron = %normalized, "registered codex presence sync job");
+            registered += 1;
         }
 
         // Hourly review-queue snapshot. Fires at minute 5 to stagger off

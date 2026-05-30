@@ -3484,3 +3484,251 @@ fn urlencoding_form(s: &str) -> String {
     }
     out
 }
+
+// ----- Codex presence integration (admin-only) ---------------------------
+
+#[tokio::test]
+async fn codex_status_reports_disabled_when_integration_off() {
+    let db = fresh_db().await;
+    // Default config: codex disabled, no client.
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/codex/status")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["enabled"], false);
+}
+
+#[tokio::test]
+async fn codex_status_requires_admin() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    // No bearer: the status endpoint must not be reachable by the public read
+    // tier, since it exposes what is in the operator's Codex.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/codex/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn codex_status_reflects_recorded_row_when_enabled() {
+    use td_db::repos::codex_status_repo;
+    let db = fresh_db().await;
+    codex_status_repo::set_preflight(&db, true, Some("codex"), Some("1.2.3"), 100)
+        .await
+        .unwrap();
+    codex_status_repo::set_success(&db, 7, 200).await.unwrap();
+
+    let codex = td_config::CodexConfig {
+        enabled: true,
+        base_url: Some("https://codex.example.com".into()),
+        api_key: Some("k".into()),
+        ..Default::default()
+    };
+    let app = build_app_with_codex(
+        db,
+        open_auth(),
+        codex,
+        Some(unreachable_codex_client()),
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/codex/status")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["reachable"], true);
+    assert_eq!(body["codexVersion"], "1.2.3");
+    assert_eq!(body["authState"], "ok");
+    assert_eq!(body["linkedCount"], 7);
+}
+
+#[tokio::test]
+async fn codex_refresh_503s_when_disabled() {
+    let db = fresh_db().await;
+    // Default build: codex_client is None -> disabled.
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/codex/refresh")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn codex_refresh_reports_skipped_when_a_sweep_is_in_flight() {
+    let db = fresh_db().await;
+    let locks = std::sync::Arc::new(td_scheduler::JobLocks::default());
+    // Simulate an in-flight sweep by holding the codex lock for the request.
+    let _guard = locks.codex_sync_lock().try_lock_owned().unwrap();
+
+    let codex = td_config::CodexConfig {
+        enabled: true,
+        base_url: Some("https://codex.example.com".into()),
+        api_key: Some("k".into()),
+        ..Default::default()
+    };
+    let app = build_app_with_codex(
+        db,
+        open_auth(),
+        codex,
+        Some(unreachable_codex_client()),
+        locks.clone(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/codex/refresh")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["triggered"], false);
+    assert_eq!(body["skipped"], true);
+}
+
+#[tokio::test]
+async fn codex_manual_link_then_unlink_roundtrips() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "Hand Linked", "manga").await;
+    let app = build_app_with_codex(
+        db.clone(),
+        open_auth(),
+        td_config::CodexConfig::default(),
+        None,
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+
+    // Link.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/series/{sid}/codex-link"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"codexSeriesUuid":"codex-uuid-xyz"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["seriesId"], sid);
+    assert_eq!(body["codexSeriesUuid"], "codex-uuid-xyz");
+    assert_eq!(body["linkKind"], "manual");
+
+    let link = td_db::repos::codex_link_repo::get(&db, sid)
+        .await
+        .unwrap()
+        .expect("link persisted");
+    assert_eq!(link.codex_series_uuid, "codex-uuid-xyz");
+
+    // Unlink.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/series/{sid}/codex-link"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert!(
+        td_db::repos::codex_link_repo::get(&db, sid)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn codex_manual_link_404s_for_unknown_series() {
+    let db = fresh_db().await;
+    let app = build_app_with_codex(
+        db,
+        open_auth(),
+        td_config::CodexConfig::default(),
+        None,
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/99999/codex-link")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"codexSeriesUuid":"x"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

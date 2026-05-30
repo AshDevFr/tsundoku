@@ -46,11 +46,19 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
     // serialization and min-gap are enforced uniformly.
     let limiter = crate::http_limiter::build(&cfg.ingestion.http);
 
-    // If the Codex integration is enabled, probe its public /info endpoint
-    // once at startup so the operator sees the connected Codex name/version
-    // (or a warning) in the logs immediately. Non-fatal: a Codex that is down
-    // at boot must not block tsundoku from serving; the sync cron retries.
-    spawn_codex_startup_probe(&cfg.codex, limiter.clone());
+    // Build the Codex client once (when the integration is enabled) and share
+    // it between the startup probe, the sync cron, and the manual refresh
+    // endpoint so they all hit Codex through the same limited client.
+    let codex_client = build_codex_client(&cfg.codex, limiter.clone());
+
+    // Probe Codex's public /info endpoint once at startup so the operator sees
+    // the connected name/version (or a warning) immediately. Non-fatal: a
+    // Codex that is down at boot must not block tsundoku from serving; the sync
+    // cron retries.
+    spawn_codex_startup_probe(
+        codex_client.clone(),
+        cfg.codex.normalized_base_url().unwrap_or_default(),
+    );
 
     let sources = Arc::new(crate::source_registry::build_registry(
         &cfg,
@@ -94,6 +102,7 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
         query_builder: query_builder.clone(),
         mangaupdates_redirector: mu_redirector.clone(),
         job_events: job_events.clone(),
+        codex_client: codex_client.clone(),
     };
     let scheduler = Scheduler::build(&cfg, ctx).await?;
     scheduler.start().await?;
@@ -124,6 +133,8 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
         mangaupdates_redirector: mu_redirector,
         job_events,
         cover_cache_dir: Some(cfg.storage.paths().cover_cache_dir),
+        codex: Arc::new(cfg.codex.clone()),
+        codex_client,
     };
     let app = td_api::router(state, &cfg);
 
@@ -139,31 +150,40 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
     Ok(())
 }
 
-/// One-shot, off-the-runtime probe of Codex's public `GET /api/v1/info` when
-/// the integration is enabled. Logs the connected Codex name/version on
-/// success or a warning on failure. A success here proves reachability and
-/// version only — not that the api_key is valid; the first authenticated
-/// `external-index` sweep is what validates credentials.
-fn spawn_codex_startup_probe(codex: &td_config::CodexConfig, limiter: Arc<td_http::HttpLimiter>) {
+/// Build the shared Codex client when the integration is enabled. Returns
+/// `None` when disabled, when the required fields are missing (config
+/// validation normally prevents this), or when the reqwest client fails to
+/// build (logged). The same client is shared by the startup probe, the sync
+/// cron, and the manual refresh endpoint.
+fn build_codex_client(
+    codex: &td_config::CodexConfig,
+    limiter: Arc<td_http::HttpLimiter>,
+) -> Option<Arc<td_codex::CodexClient>> {
     if !codex.enabled {
-        return;
+        return None;
     }
-    // Validation in `td_config::load` guarantees these are present when
-    // enabled; treat a missing value defensively rather than panicking.
     let (Some(base_url), Some(api_key)) = (codex.normalized_base_url(), codex.api_key.clone())
     else {
-        tracing::warn!("codex.enabled is true but base_url/api_key is missing; skipping probe");
-        return;
+        tracing::warn!("codex.enabled is true but base_url/api_key is missing; codex disabled");
+        return None;
     };
     let timeout = std::time::Duration::from_secs(codex.timeout_seconds as u64);
+    match td_codex::CodexClient::new(base_url, api_key, timeout, limiter) {
+        Ok(c) => Some(Arc::new(c)),
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to build codex client; codex disabled");
+            None
+        }
+    }
+}
+
+/// One-shot, off-the-runtime probe of Codex's public `GET /api/v1/info`. Logs
+/// the connected Codex name/version on success or a warning on failure. A
+/// success here proves reachability and version only — not that the api_key is
+/// valid; the first authenticated `external-index` sweep validates credentials.
+fn spawn_codex_startup_probe(client: Option<Arc<td_codex::CodexClient>>, base_url: String) {
+    let Some(client) = client else { return };
     tokio::spawn(async move {
-        let client = match td_codex::CodexClient::new(&base_url, api_key, timeout, limiter) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to build codex client for startup probe");
-                return;
-            }
-        };
         match client.info().await {
             Ok(info) => tracing::info!(
                 codex.name = %info.name,

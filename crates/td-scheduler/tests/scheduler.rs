@@ -986,6 +986,7 @@ async fn scheduler_fires_source_and_provider_jobs_on_schedule() {
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
         job_events: detached_events(),
+        codex_client: None,
     };
 
     let mut scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
@@ -1061,6 +1062,7 @@ async fn scheduler_skips_sources_without_cron_or_unknown_registry_entry() {
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
         job_events: detached_events(),
+        codex_client: None,
     };
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
     // Only the unconditional review-queue snapshot job lands; source +
@@ -1112,6 +1114,7 @@ async fn scheduler_registers_series_refresh_job_when_cron_set() {
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
         job_events: detached_events(),
+        codex_client: None,
     };
 
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
@@ -1159,6 +1162,7 @@ async fn scheduler_skips_series_refresh_when_active_provider_unregistered() {
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
         mangaupdates_redirector: None,
         job_events: detached_events(),
+        codex_client: None,
     };
 
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();

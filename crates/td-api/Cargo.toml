@@ -14,6 +14,7 @@ default = []
 embed-frontend = ["dep:rust-embed", "dep:mime_guess"]
 
 [dependencies]
+td-codex = { path = "../td-codex" }
 td-config = { path = "../td-config" }
 td-db = { path = "../td-db" }
 td-metadata = { path = "../td-metadata" }
@@ -47,6 +48,7 @@ mime_guess = { workspace = true, optional = true }
 
 [dev-dependencies]
 migration = { path = "../../migration" }
+td-http = { path = "../td-http" }
 tower = { workspace = true, features = ["util"] }
 http-body-util.workspace = true
 bytes.workspace = true

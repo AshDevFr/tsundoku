@@ -4,6 +4,43 @@
  */
 
 export interface paths {
+    "/api/v1/codex/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger a Codex presence sweep. Shares the single codex lock with the cron,
+         *     so a manual kick during a scheduled sweep is reported `skipped`.
+         */
+        post: operations["refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/codex/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Codex connection-health status for the admin UI. */
+        get: operations["status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/covers/by-url": {
         parameters: {
             query?: never;
@@ -660,6 +697,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/series/{id}/codex-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hand-link a tsundoku series to a Codex series UUID. For series with no
+         *     matchable external id; the next sweep refreshes the link's counts by uuid.
+         */
+        post: operations["link"];
+        /**
+         * Remove a series' Codex link (manual or auto). Idempotent: unlinking a
+         *     series with no link is a no-op success.
+         */
+        delete: operations["unlink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series/{id}/refresh-metadata": {
         parameters: {
             query?: never;
@@ -868,6 +929,41 @@ export interface components {
             /** @default null */
             status: string | null;
         };
+        CodexLinkRequest: {
+            /** @description Codex series UUID to hand-link this tsundoku series to. */
+            codexSeriesUuid: string;
+        };
+        CodexLinkResponse: {
+            codexSeriesUuid: string;
+            /** @description Always `manual` for a hand-link. */
+            linkKind: string;
+            /** Format: int32 */
+            seriesId: number;
+        };
+        CodexRefreshResponse: {
+            /** @description `false` when a previous sweep is still in flight; the request is a no-op. */
+            skipped: boolean;
+            triggered: boolean;
+        };
+        /**
+         * @description Connection-health snapshot for the admin UI. When the integration is
+         *     disabled, only `enabled: false` is meaningful; the rest are `None`.
+         */
+        CodexStatusDto: {
+            /** @description `unknown` | `ok` | `unauthorized` (401) | `forbidden` (403). */
+            authState: string;
+            codexName?: string | null;
+            codexVersion?: string | null;
+            enabled: boolean;
+            lastError?: string | null;
+            /** Format: int64 */
+            lastPreflightAt?: number | null;
+            /** Format: int64 */
+            lastSuccessAt?: number | null;
+            /** Format: int64 */
+            linkedCount?: number | null;
+            reachable: boolean;
+        };
         /**
          * @description Body for creating a manual series. Only `canonicalTitle` is required;
          *     the rest are optional descriptive fields. No provider mapping is created
@@ -1019,7 +1115,7 @@ export interface components {
          *     the enum.
          * @enum {string}
          */
-        JobKind: "source" | "provider" | "seriesRefresh";
+        JobKind: "source" | "provider" | "seriesRefresh" | "codex";
         /**
          * @description Lifecycle phase. `Started` fires after the per-key mutex was
          *     acquired (so a `skipped` job emits only `Finished`). `Progress`
@@ -1784,6 +1880,51 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    refresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexRefreshResponse"];
+                };
+            };
+            /** @description Codex integration is disabled */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexStatusDto"];
+                };
+            };
+        };
+    };
     get_cover_by_url: {
         parameters: {
             query: {
@@ -2699,6 +2840,60 @@ export interface operations {
             };
             /** @description No series with that id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description tsundoku series id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodexLinkRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexLinkResponse"];
+                };
+            };
+            /** @description No series with that id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    unlink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description tsundoku series id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Link removed (or none existed) */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };

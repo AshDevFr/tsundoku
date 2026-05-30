@@ -14,6 +14,61 @@
     "version": "1.5.3"
   },
   "paths": {
+    "/api/v1/codex/refresh": {
+      "post": {
+        "tags": [
+          "codex"
+        ],
+        "summary": "Trigger a Codex presence sweep. Shares the single codex lock with the cron,\nso a manual kick during a scheduled sweep is reported `skipped`.",
+        "operationId": "refresh",
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodexRefreshResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Codex integration is disabled"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/codex/status": {
+      "get": {
+        "tags": [
+          "codex"
+        ],
+        "summary": "Codex connection-health status for the admin UI.",
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodexStatusDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/covers/by-url": {
       "get": {
         "tags": [
@@ -1367,6 +1422,86 @@
         }
       }
     },
+    "/api/v1/series/{id}/codex-link": {
+      "post": {
+        "tags": [
+          "codex"
+        ],
+        "summary": "Hand-link a tsundoku series to a Codex series UUID. For series with no\nmatchable external id; the next sweep refreshes the link's counts by uuid.",
+        "operationId": "link",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "tsundoku series id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodexLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodexLinkResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No series with that id"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "codex"
+        ],
+        "summary": "Remove a series' Codex link (manual or auto). Idempotent: unlinking a\nseries with no link is a no-op success.",
+        "operationId": "unlink",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "tsundoku series id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Link removed (or none existed)"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/series/{id}/refresh-metadata": {
       "post": {
         "tags": [
@@ -1759,6 +1894,115 @@
           }
         }
       },
+      "CodexLinkRequest": {
+        "type": "object",
+        "required": [
+          "codexSeriesUuid"
+        ],
+        "properties": {
+          "codexSeriesUuid": {
+            "type": "string",
+            "description": "Codex series UUID to hand-link this tsundoku series to."
+          }
+        }
+      },
+      "CodexLinkResponse": {
+        "type": "object",
+        "required": [
+          "seriesId",
+          "codexSeriesUuid",
+          "linkKind"
+        ],
+        "properties": {
+          "codexSeriesUuid": {
+            "type": "string"
+          },
+          "linkKind": {
+            "type": "string",
+            "description": "Always `manual` for a hand-link."
+          },
+          "seriesId": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "CodexRefreshResponse": {
+        "type": "object",
+        "required": [
+          "triggered",
+          "skipped"
+        ],
+        "properties": {
+          "skipped": {
+            "type": "boolean",
+            "description": "`false` when a previous sweep is still in flight; the request is a no-op."
+          },
+          "triggered": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CodexStatusDto": {
+        "type": "object",
+        "description": "Connection-health snapshot for the admin UI. When the integration is\ndisabled, only `enabled: false` is meaningful; the rest are `None`.",
+        "required": [
+          "enabled",
+          "reachable",
+          "authState"
+        ],
+        "properties": {
+          "authState": {
+            "type": "string",
+            "description": "`unknown` | `ok` | `unauthorized` (401) | `forbidden` (403)."
+          },
+          "codexName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "codexVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastPreflightAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "lastSuccessAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "linkedCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "reachable": {
+            "type": "boolean"
+          }
+        }
+      },
       "CreateSeriesRequest": {
         "type": "object",
         "description": "Body for creating a manual series. Only `canonicalTitle` is required;\nthe rest are optional descriptive fields. No provider mapping is created\n(that's the whole point), so the series is provider-agnostic and\n`metadataSource` is pinned to `manual`.",
@@ -2070,7 +2314,8 @@
         "enum": [
           "source",
           "provider",
-          "seriesRefresh"
+          "seriesRefresh",
+          "codex"
         ]
       },
       "JobPhase": {
@@ -4098,6 +4343,10 @@
     {
       "name": "covers",
       "description": "Cover-image proxy and on-disk cache control"
+    },
+    {
+      "name": "codex",
+      "description": "Codex presence integration (admin-only)"
     }
   ]
 }

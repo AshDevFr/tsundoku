@@ -178,6 +178,8 @@ pub fn build_app_with_events(
         mangaupdates_redirector: None,
         job_events,
         cover_cache_dir: None,
+        codex: Arc::new(td_config::CodexConfig::default()),
+        codex_client: None,
     };
     (td_api::router(state, &cfg), events_handle)
 }
@@ -215,8 +217,67 @@ pub fn build_app_with_cover_cache(
         mangaupdates_redirector: None,
         job_events,
         cover_cache_dir: Some(cover_cache_dir),
+        codex: Arc::new(td_config::CodexConfig::default()),
+        codex_client: None,
     };
     td_api::router(state, &cfg)
+}
+
+/// Router for the codex-handler tests. `codex` sets the `[codex]` config
+/// snapshot (the `enabled` flag the status endpoint reads); `codex_client` is
+/// the optional client the refresh trigger needs; `locks` lets a test pre-hold
+/// the codex lock to assert the skipped path.
+pub fn build_app_with_codex(
+    db: DatabaseConnection,
+    auth: AuthConfig,
+    codex: td_config::CodexConfig,
+    codex_client: Option<Arc<td_codex::CodexClient>>,
+    locks: Arc<JobLocks>,
+) -> Router {
+    let cfg = AppConfig {
+        auth: auth.clone(),
+        api: td_config::ApiConfig { docs: false },
+        ..AppConfig::default()
+    };
+    let (job_events, _) = tokio::sync::broadcast::channel(td_api::JOB_EVENT_BUFFER);
+    let metadata = metadata_registry_with(StubProvider {
+        id: "stub",
+        ..Default::default()
+    });
+    let sources = source_registry_with(vec![]);
+    let state = td_api::AppState {
+        db,
+        sources: Arc::new(sources),
+        metadata: Arc::new(metadata),
+        ingestion: IngestionConfig::default(),
+        auth: Arc::new(auth),
+        locks,
+        sources_config: Arc::new(Vec::new()),
+        providers_config: Arc::new(ProvidersConfig::default()),
+        metadata_config: Arc::new(td_config::MetadataConfig::default()),
+        query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
+        mangaupdates_redirector: None,
+        job_events,
+        cover_cache_dir: None,
+        codex: Arc::new(codex),
+        codex_client,
+    };
+    td_api::router(state, &cfg)
+}
+
+/// A `CodexClient` pointed at an unreachable address. Enough to give the
+/// refresh trigger a `Some(client)` so it dispatches; the background sweep
+/// fails harmlessly after the HTTP response is already sent.
+pub fn unreachable_codex_client() -> Arc<td_codex::CodexClient> {
+    Arc::new(
+        td_codex::CodexClient::new(
+            "http://127.0.0.1:9",
+            "test-key",
+            std::time::Duration::from_millis(50),
+            td_http::HttpLimiter::no_limit(),
+        )
+        .unwrap(),
+    )
 }
 
 pub fn sample_release(id: &str, source_name: &str, title: &str) -> DiscoveredRelease {

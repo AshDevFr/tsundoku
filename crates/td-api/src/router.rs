@@ -6,7 +6,7 @@
 
 use axum::Router;
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use td_config::AppConfig;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -17,7 +17,8 @@ use crate::auth;
 use crate::docs::ApiDoc;
 use crate::embed::serve_static;
 use crate::handlers::{
-    covers, events, health, info, metrics, providers, releases, series, sources, stats, tagging,
+    codex, covers, events, health, info, metrics, providers, releases, series, sources, stats,
+    tagging,
 };
 use crate::state::AppState;
 
@@ -53,6 +54,13 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         )
         .route("/providers/refresh-all", post(providers::refresh_all))
         .route("/covers/invalidate-cache", post(covers::invalidate_cache))
+        // Codex presence: admin-only. `GET /codex/status` lives here (not in
+        // the reads group) because it exposes what is in the operator's Codex
+        // library, which must never reach the public read tier.
+        .route("/codex/refresh", post(codex::refresh))
+        .route("/codex/status", get(codex::status))
+        .route("/series/{id}/codex-link", post(codex::link))
+        .route("/series/{id}/codex-link", delete(codex::unlink))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             auth::require_admin,

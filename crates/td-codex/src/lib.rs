@@ -92,6 +92,33 @@ pub struct ExternalIdRef {
     pub external_url: Option<String>,
 }
 
+/// Map a Codex external-id `source` string to the tsundoku provider name used
+/// in `series_external_ids`, or `None` when there is no tsundoku equivalent.
+///
+/// Codex namespaces its sources (`plugin:mangabaka`, `api:anilist`, …) and also
+/// records non-provider origins (`comicinfo`, `epub`, `manual`). tsundoku stores
+/// bare provider names: `mangabaka`, `mangaupdates`, `anilist`, `mal`. So we
+/// strip a leading `plugin:` / `api:`, lowercase, and alias `myanimelist` /
+/// `my_anime_list` to `mal`. Sources outside that set return `None` and simply
+/// don't participate in matching.
+pub fn normalize_source(codex_source: &str) -> Option<String> {
+    let s = codex_source.trim().to_ascii_lowercase();
+    let bare = s
+        .strip_prefix("plugin:")
+        .or_else(|| s.strip_prefix("api:"))
+        .unwrap_or(&s)
+        .trim();
+    let provider = match bare {
+        "mangabaka" => "mangabaka",
+        "mangaupdates" | "manga_updates" => "mangaupdates",
+        "anilist" => "anilist",
+        "mal" | "myanimelist" | "my_anime_list" => "mal",
+        // comicinfo / epub / manual / unknown: no tsundoku provider mapping.
+        _ => return None,
+    };
+    Some(provider.to_string())
+}
+
 /// Page size used when sweeping the whole external index. Codex caps page size
 /// server-side; this stays under common caps while keeping the sweep to few
 /// round trips at personal scale.
@@ -243,6 +270,47 @@ mod tests {
         assert!(second.external_ids.is_empty());
         assert!(second.local_max_volume.is_none());
         assert!(second.local_max_chapter.is_none());
+    }
+
+    #[test]
+    fn normalize_source_strips_prefixes_and_aliases() {
+        // plugin: / api: prefixes are stripped.
+        assert_eq!(
+            normalize_source("plugin:mangabaka").as_deref(),
+            Some("mangabaka")
+        );
+        assert_eq!(
+            normalize_source("api:mangabaka").as_deref(),
+            Some("mangabaka")
+        );
+        assert_eq!(normalize_source("mangabaka").as_deref(), Some("mangabaka"));
+        // myanimelist variants alias to tsundoku's `mal`.
+        assert_eq!(normalize_source("api:myanimelist").as_deref(), Some("mal"));
+        assert_eq!(
+            normalize_source("plugin:my_anime_list").as_deref(),
+            Some("mal")
+        );
+        assert_eq!(normalize_source("mal").as_deref(), Some("mal"));
+        // anilist + mangaupdates pass through.
+        assert_eq!(normalize_source("api:anilist").as_deref(), Some("anilist"));
+        assert_eq!(
+            normalize_source("plugin:mangaupdates").as_deref(),
+            Some("mangaupdates")
+        );
+        // Case-insensitive.
+        assert_eq!(
+            normalize_source("Plugin:MangaBaka").as_deref(),
+            Some("mangabaka")
+        );
+    }
+
+    #[test]
+    fn normalize_source_rejects_non_provider_origins() {
+        assert!(normalize_source("comicinfo").is_none());
+        assert!(normalize_source("epub").is_none());
+        assert!(normalize_source("manual").is_none());
+        assert!(normalize_source("plugin:somethingelse").is_none());
+        assert!(normalize_source("").is_none());
     }
 
     #[test]

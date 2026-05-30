@@ -38,6 +38,8 @@ pub enum JobKind {
     Provider,
     /// Bulk series-metadata refresh against the active provider.
     SeriesRefresh,
+    /// Codex presence sync (sweep of Codex's series external-index).
+    Codex,
 }
 
 /// Lifecycle phase. `Started` fires after the per-key mutex was

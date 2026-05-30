@@ -9,6 +9,9 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 
 use crate::errors::ApiErrorBody;
+use crate::handlers::codex::{
+    CodexLinkRequest, CodexLinkResponse, CodexRefreshResponse, CodexStatusDto,
+};
 use crate::handlers::covers::InvalidateCoverCacheResponse;
 use crate::handlers::metrics::{
     ErrorKindBucket, ExternalIdMapCount, FetchLatencyDto, IdMapMetrics, MangaupdatesRedirectStats,
@@ -37,7 +40,8 @@ use crate::handlers::sources::{
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
 use crate::handlers::{
-    covers, events, health, info, metrics, providers, releases, series, sources, stats, tagging,
+    codex, covers, events, health, info, metrics, providers, releases, series, sources, stats,
+    tagging,
 };
 use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult};
 
@@ -89,6 +93,10 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         covers::get_by_series_id,
         covers::get_by_url,
         covers::invalidate_cache,
+        codex::refresh,
+        codex::status,
+        codex::link,
+        codex::unlink,
     ),
     components(schemas(
         ApiErrorBody,
@@ -157,6 +165,10 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         JobProgress,
         InFlight,
         InvalidateCoverCacheResponse,
+        CodexRefreshResponse,
+        CodexStatusDto,
+        CodexLinkRequest,
+        CodexLinkResponse,
     )),
     tags(
         (name = "system", description = "Health and aggregate counters"),
@@ -167,6 +179,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         (name = "tagging", description = "Canonical genre and tag lists for filter UI"),
         (name = "metrics", description = "Per-source / per-provider historical run metrics"),
         (name = "covers", description = "Cover-image proxy and on-disk cache control"),
+        (name = "codex", description = "Codex presence integration (admin-only)"),
     ),
     modifiers(&BearerSecurity)
 )]
