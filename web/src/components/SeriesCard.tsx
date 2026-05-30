@@ -11,7 +11,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import type { SeriesListItem } from "@/api/queries";
 import { coverProxyForSeries, formatRelative } from "@/api/utils";
-import { CodexBadge } from "@/components/CodexBadge";
+import { CodexBadge, codexBorderColor } from "@/components/CodexBadge";
 
 const COVER_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
@@ -51,6 +51,12 @@ export function SeriesCard({
     series.highestChapter,
     series.totalChapters,
   );
+  // Accent the whole tile with the Codex status color so owned series pop
+  // beyond the small badge. Only when synced + linked, matching the badge.
+  const codexBorder =
+    codexSynced && series.codex
+      ? codexBorderColor(series.codex.status)
+      : undefined;
   return (
     <Link
       to="/series/$id"
@@ -61,7 +67,16 @@ export function SeriesCard({
       style={{ textDecoration: "none", color: "inherit", height: "100%" }}
       data-testid={`series-card-${series.id}`}
     >
-      <Card shadow="sm" padding="sm" radius="md" withBorder h="100%">
+      <Card
+        shadow="sm"
+        padding="sm"
+        radius="md"
+        withBorder
+        h="100%"
+        style={
+          codexBorder ? { borderColor: codexBorder, borderWidth: 2 } : undefined
+        }
+      >
         <Card.Section>
           <AspectRatio ratio={3 / 4}>
             <Image

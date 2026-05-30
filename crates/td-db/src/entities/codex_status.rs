@@ -18,6 +18,9 @@ pub struct Model {
     pub last_success_at: Option<i64>,
     pub last_error: Option<String>,
     pub linked_count: Option<i64>,
+    /// Series pulled from Codex by the last successful sweep (superset of
+    /// `linked_count`, which is the subset that matched a tsundoku series).
+    pub fetched_count: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

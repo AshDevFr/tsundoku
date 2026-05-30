@@ -15,7 +15,9 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useJobEventFor } from "@/api/jobEventsContext";
 import {
   useCodexRefresh,
   useInvalidateCoverCache,
@@ -69,6 +71,38 @@ export function AdminMaintenancePage() {
   );
 }
 
+/// First Codex release that ships the `series/external-index` endpoint the
+/// presence sync depends on. Older servers can't be swept.
+const MIN_CODEX_VERSION = "1.32.0";
+
+/// True when `version` is a parseable semver strictly below [`MIN_CODEX_VERSION`].
+/// Returns false when the version is missing or unparseable — we only warn when
+/// we're sure it's too old, never on a hunch.
+export function codexVersionOutdated(
+  version: string | null | undefined,
+): boolean {
+  const parse = (v: string): number[] | null => {
+    const parts = v
+      .trim()
+      .replace(/^v/i, "")
+      .split(".")
+      .map((p) => Number.parseInt(p, 10));
+    return parts.length > 0 && parts.every((n) => Number.isFinite(n))
+      ? parts
+      : null;
+  };
+  const a = version ? parse(version) : null;
+  const b = parse(MIN_CODEX_VERSION);
+  if (!a || !b) return false;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    if (x < y) return true;
+    if (x > y) return false;
+  }
+  return false;
+}
+
 /// Mantine color + human label for each Codex `auth_state`. Names the exact
 /// operator fix for the two failure modes (wrong key vs under-scoped key).
 const AUTH_STATE_META: Record<string, { color: string; label: string }> = {
@@ -85,6 +119,19 @@ const AUTH_STATE_META: Record<string, { color: string; label: string }> = {
 function CodexConnectionCard() {
   const status = useCodexStatus();
   const refresh = useCodexRefresh();
+  const qc = useQueryClient();
+  // The sweep runs async after the trigger returns, so invalidating in the
+  // mutation's onSuccess refetches the *pre-sweep* row. Instead, refetch when
+  // the SSE stream reports the codex job finished, so the panel reflects the
+  // true outcome (error cleared on success, or the new error on failure).
+  const codexEvent = useJobEventFor("codex", "codex");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run when a new finished frame lands (keyed by `at`).
+  useEffect(() => {
+    if (codexEvent?.phase === "finished") {
+      qc.invalidateQueries({ queryKey: ["codex-status"] });
+      qc.invalidateQueries({ queryKey: ["series-list"] });
+    }
+  }, [codexEvent?.phase, codexEvent?.at, qc]);
 
   const handleRefresh = () => {
     refresh.mutate(undefined, {
@@ -180,12 +227,27 @@ function CodexStatusBody({ status }: { status: CodexStatusDto }) {
           </Text>
         )}
       </Group>
+      {codexVersionOutdated(status.codexVersion) && (
+        <Alert
+          color="yellow"
+          variant="light"
+          data-testid="codex-version-warning"
+        >
+          Codex v{status.codexVersion} is older than v{MIN_CODEX_VERSION}, which
+          adds the series index the presence sync needs. Upgrade Codex if syncs
+          keep failing.
+        </Alert>
+      )}
       <Group gap="lg" wrap="wrap">
         <Text size="sm">
           <Text span fw={600}>
-            Linked series:
+            Series:
           </Text>{" "}
           {typeof status.linkedCount === "number" ? status.linkedCount : "—"}
+          {" linked"}
+          {typeof status.fetchedCount === "number"
+            ? ` of ${status.fetchedCount} on Codex`
+            : ""}
         </Text>
         <Text size="sm">
           <Text span fw={600}>

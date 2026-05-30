@@ -52,11 +52,14 @@ pub struct CodexInfo {
     pub name: String,
 }
 
-/// One page of `GET /api/v1/series/external-index` (Codex's `PaginatedResponse`).
+/// One page of `GET /api/v1/series/external-index`. Codex's generic
+/// `PaginatedResponse<T>` puts the rows under `data` (not `items`) and also
+/// carries `totalPages` + HATEOAS `links`, which we don't need and serde
+/// ignores.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalIndexPage {
-    pub items: Vec<ExternalIndexItem>,
+    pub data: Vec<ExternalIndexItem>,
     pub page: u64,
     pub page_size: u64,
     pub total: u64,
@@ -203,9 +206,9 @@ impl CodexClient {
         let mut page = 1u64;
         loop {
             let p = self.fetch_external_index_page(page, page_size).await?;
-            let got = p.items.len();
+            let got = p.data.len();
             let total = p.total;
-            out.extend(p.items);
+            out.extend(p.data);
             if got == 0 || !needs_more_pages(out.len() as u64, total) {
                 break;
             }
@@ -249,10 +252,10 @@ mod tests {
         assert_eq!(page.page, 1);
         assert_eq!(page.page_size, 100);
         assert_eq!(page.total, 2);
-        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.data.len(), 2);
 
         // First item: linked + counts present (integer volume decodes to f64).
-        let first = &page.items[0];
+        let first = &page.data[0];
         assert_eq!(first.id, "550e8400-e29b-41d4-a716-446655440002");
         assert_eq!(first.external_ids.len(), 1);
         assert_eq!(first.external_ids[0].source, "plugin:mangabaka");
@@ -266,7 +269,7 @@ mod tests {
         assert_eq!(first.volumes_owned, Some(12));
 
         // Second item: no external ids, no parsed maxima — the manual-link case.
-        let second = &page.items[1];
+        let second = &page.data[1];
         assert!(second.external_ids.is_empty());
         assert!(second.local_max_volume.is_none());
         assert!(second.local_max_chapter.is_none());

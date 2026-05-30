@@ -24,6 +24,13 @@ const STATUS_META: Record<
   },
 };
 
+/// CSS color for a status, for accenting a series tile's border so owned
+/// series pop alongside the badge. Returns a Mantine CSS variable matching the
+/// badge color (shade 6).
+export function codexBorderColor(status: CodexInfo["status"]): string {
+  return `var(--mantine-color-${STATUS_META[status].color}-6)`;
+}
+
 interface CodexBadgeProps {
   codex: CodexInfo;
   /// `true` renders a real anchor (detail page, where the badge isn't already

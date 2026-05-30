@@ -996,12 +996,21 @@ export interface components {
             codexName?: string | null;
             codexVersion?: string | null;
             enabled: boolean;
+            /**
+             * Format: int64
+             * @description Series pulled from Codex by the last successful sweep (superset of
+             *     `linked_count`).
+             */
+            fetchedCount?: number | null;
             lastError?: string | null;
             /** Format: int64 */
             lastPreflightAt?: number | null;
             /** Format: int64 */
             lastSuccessAt?: number | null;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Series matched to a tsundoku series by the last successful sweep.
+             */
             linkedCount?: number | null;
             reachable: boolean;
         };

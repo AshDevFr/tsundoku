@@ -57,6 +57,7 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
     // cron retries.
     spawn_codex_startup_probe(
         codex_client.clone(),
+        db.clone(),
         cfg.codex.normalized_base_url().unwrap_or_default(),
     );
 
@@ -177,25 +178,50 @@ fn build_codex_client(
     }
 }
 
-/// One-shot, off-the-runtime probe of Codex's public `GET /api/v1/info`. Logs
-/// the connected Codex name/version on success or a warning on failure. A
-/// success here proves reachability and version only — not that the api_key is
-/// valid; the first authenticated `external-index` sweep validates credentials.
-fn spawn_codex_startup_probe(client: Option<Arc<td_codex::CodexClient>>, base_url: String) {
+/// One-shot, off-the-runtime probe of Codex's public `GET /api/v1/info`.
+/// Records the result into `codex_status` (and logs it) so the admin panel
+/// reflects reachability immediately at boot instead of showing the default
+/// "unreachable" until the first cron tick. A success proves reachability and
+/// version only — not that the api_key is valid; the first authenticated sweep
+/// validates credentials.
+fn spawn_codex_startup_probe(
+    client: Option<Arc<td_codex::CodexClient>>,
+    db: DatabaseConnection,
+    base_url: String,
+) {
     let Some(client) = client else { return };
     tokio::spawn(async move {
+        let now = chrono::Utc::now().timestamp();
         match client.info().await {
-            Ok(info) => tracing::info!(
-                codex.name = %info.name,
-                codex.version = %info.version,
-                base_url = %base_url,
-                "codex reachable (api_key not yet validated; first sync will confirm)"
-            ),
-            Err(e) => tracing::warn!(
-                error = %e,
-                base_url = %base_url,
-                "codex unreachable at startup; the sync job will retry"
-            ),
+            Ok(info) => {
+                let _ = td_db::repos::codex_status_repo::set_preflight(
+                    &db,
+                    true,
+                    Some(&info.name),
+                    Some(&info.version),
+                    now,
+                )
+                .await;
+                tracing::info!(
+                    codex.name = %info.name,
+                    codex.version = %info.version,
+                    base_url = %base_url,
+                    "codex reachable (api_key not yet validated; first sync will confirm)"
+                );
+            }
+            Err(e) => {
+                let _ = td_db::repos::codex_status_repo::set_preflight_unreachable(
+                    &db,
+                    &e.to_string(),
+                    now,
+                )
+                .await;
+                tracing::warn!(
+                    error = %e,
+                    base_url = %base_url,
+                    "codex unreachable at startup; the sync job will retry"
+                );
+            }
         }
     });
 }

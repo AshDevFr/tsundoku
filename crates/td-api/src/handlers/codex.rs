@@ -40,8 +40,13 @@ pub struct CodexStatusDto {
     pub last_success_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// Series matched to a tsundoku series by the last successful sweep.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub linked_count: Option<i64>,
+    /// Series pulled from Codex by the last successful sweep (superset of
+    /// `linked_count`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fetched_count: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -124,6 +129,7 @@ pub async fn status(State(state): State<AppState>) -> ApiResult<Json<CodexStatus
             last_success_at: None,
             last_error: None,
             linked_count: None,
+            fetched_count: None,
         }));
     }
 
@@ -141,6 +147,7 @@ pub async fn status(State(state): State<AppState>) -> ApiResult<Json<CodexStatus
             last_success_at: r.last_success_at,
             last_error: r.last_error,
             linked_count: r.linked_count,
+            fetched_count: r.fetched_count,
         },
         // Enabled but no sweep has run yet (e.g. fresh boot before the first
         // cron tick): report enabled + unknown rather than a misleading row.
@@ -154,6 +161,7 @@ pub async fn status(State(state): State<AppState>) -> ApiResult<Json<CodexStatus
             last_success_at: None,
             last_error: None,
             linked_count: None,
+            fetched_count: None,
         },
     };
     Ok(Json(dto))

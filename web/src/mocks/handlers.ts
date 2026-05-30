@@ -1255,11 +1255,12 @@ export const handlers = [
       enabled: true,
       reachable: true,
       codexName: "codex",
-      codexVersion: "1.4.2",
+      codexVersion: "1.32.0",
       authState: "ok",
       lastPreflightAt: NOW,
       lastSuccessAt: NOW,
       linkedCount: 2,
+      fetchedCount: 18,
     });
   }),
   http.post("/api/v1/codex/refresh", ({ request }) => {

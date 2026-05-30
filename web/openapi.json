@@ -2052,6 +2052,14 @@
           "enabled": {
             "type": "boolean"
           },
+          "fetchedCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Series pulled from Codex by the last successful sweep (superset of\n`linked_count`)."
+          },
           "lastError": {
             "type": [
               "string",
@@ -2077,7 +2085,8 @@
               "integer",
               "null"
             ],
-            "format": "int64"
+            "format": "int64",
+            "description": "Series matched to a tsundoku series by the last successful sweep."
           },
           "reachable": {
             "type": "boolean"

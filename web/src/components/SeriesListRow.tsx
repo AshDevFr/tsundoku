@@ -12,7 +12,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import type { SeriesListItem } from "@/api/queries";
 import { coverProxyForSeries, formatRelative } from "@/api/utils";
-import { CodexBadge } from "@/components/CodexBadge";
+import { CodexBadge, codexBorderColor } from "@/components/CodexBadge";
 import { spanBadgeLabel } from "@/components/SeriesCard";
 
 const COVER_PLACEHOLDER =
@@ -49,6 +49,10 @@ export function SeriesListRow({
     series.highestChapter,
     series.totalChapters,
   );
+  const codexBorder =
+    codexSynced && series.codex
+      ? codexBorderColor(series.codex.status)
+      : undefined;
   return (
     <Link
       to="/series/$id"
@@ -59,7 +63,14 @@ export function SeriesListRow({
       style={{ textDecoration: "none", color: "inherit" }}
       data-testid={`series-row-${series.id}`}
     >
-      <Paper withBorder radius="md" p="md">
+      <Paper
+        withBorder
+        radius="md"
+        p="md"
+        style={
+          codexBorder ? { borderColor: codexBorder, borderWidth: 2 } : undefined
+        }
+      >
         <Group gap="md" wrap="nowrap" align="flex-start">
           <Box w={120} style={{ flexShrink: 0 }}>
             <AspectRatio ratio={3 / 4}>

@@ -1,5 +1,5 @@
 {
-  "items": [
+  "data": [
     {
       "id": "550e8400-e29b-41d4-a716-446655440002",
       "externalIds": [
@@ -23,5 +23,11 @@
   ],
   "page": 1,
   "pageSize": 100,
-  "total": 2
+  "total": 2,
+  "totalPages": 1,
+  "links": {
+    "self": "/api/v1/series/external-index?page=1&pageSize=100",
+    "first": "/api/v1/series/external-index?page=1&pageSize=100",
+    "last": "/api/v1/series/external-index?page=1&pageSize=100"
+  }
 }

@@ -9,7 +9,7 @@ export type JobPhase = components["schemas"]["JobPhase"];
 /// (kind, id) pair we want to track. The hook stores the most-recent
 /// event per key so callers can render "running" / "done" status
 /// without retaining the full event history.
-export type JobKey = `source:${string}` | `provider:${string}`;
+export type JobKey = `${JobKind}:${string}`;
 
 export function jobKey(kind: JobKind, id: string): JobKey {
   return `${kind}:${id}` as JobKey;

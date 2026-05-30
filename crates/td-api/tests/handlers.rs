@@ -3550,7 +3550,9 @@ async fn codex_status_reflects_recorded_row_when_enabled() {
     codex_status_repo::set_preflight(&db, true, Some("codex"), Some("1.2.3"), 100)
         .await
         .unwrap();
-    codex_status_repo::set_success(&db, 7, 200).await.unwrap();
+    codex_status_repo::set_success(&db, 50, 7, 200)
+        .await
+        .unwrap();
 
     let codex = td_config::CodexConfig {
         enabled: true,
@@ -3583,6 +3585,7 @@ async fn codex_status_reflects_recorded_row_when_enabled() {
     assert_eq!(body["codexVersion"], "1.2.3");
     assert_eq!(body["authState"], "ok");
     assert_eq!(body["linkedCount"], 7);
+    assert_eq!(body["fetchedCount"], 50);
 }
 
 #[tokio::test]
@@ -4005,7 +4008,9 @@ async fn codex_status_filter_applies_for_admin() {
 async fn codex_synced_at_present_for_admin_when_enabled() {
     use td_db::repos::codex_status_repo;
     let db = fresh_db().await;
-    codex_status_repo::set_success(&db, 3, 1700).await.unwrap();
+    codex_status_repo::set_success(&db, 10, 3, 1700)
+        .await
+        .unwrap();
 
     let codex = td_config::CodexConfig {
         enabled: true,

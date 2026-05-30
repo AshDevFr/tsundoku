@@ -2,6 +2,7 @@ import { createContext, type ReactNode, useContext } from "react";
 import {
   type JobEvent,
   type JobKey,
+  type JobKind,
   jobKey,
   useLatestJobEvents,
 } from "@/api/events";
@@ -29,7 +30,7 @@ export function JobEventsProvider({
 /// Returns the most recent event for the given (kind, id) pair, or
 /// `undefined` if nothing has been received yet this session.
 export function useJobEventFor(
-  kind: "source" | "provider",
+  kind: JobKind,
   id: string,
 ): JobEvent | undefined {
   const events = useContext(JobEventsContext);

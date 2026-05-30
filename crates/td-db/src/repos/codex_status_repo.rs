@@ -137,13 +137,19 @@ pub async fn set_error(db: &DatabaseConnection, last_error: &str) -> Result<()> 
 }
 
 /// Record a fully-successful sweep: stamps `last_success_at` (which drives the
-/// UI's `codexSyncedAt` badge guard), the linked-series count, clears
+/// UI's `codexSyncedAt` badge guard), the fetched + linked counts, clears
 /// `last_error`, and marks auth `ok`.
-pub async fn set_success(db: &DatabaseConnection, linked_count: i64, at: i64) -> Result<()> {
+pub async fn set_success(
+    db: &DatabaseConnection,
+    fetched_count: i64,
+    linked_count: i64,
+    at: i64,
+) -> Result<()> {
     let model = ActiveModel {
         id: Set(ROW_ID),
         auth_state: Set(AUTH_OK.to_string()),
         last_success_at: Set(Some(at)),
+        fetched_count: Set(Some(fetched_count)),
         linked_count: Set(Some(linked_count)),
         last_error: Set(None),
         ..Default::default()
@@ -154,6 +160,7 @@ pub async fn set_success(db: &DatabaseConnection, linked_count: i64, at: i64) ->
                 .update_columns([
                     Column::AuthState,
                     Column::LastSuccessAt,
+                    Column::FetchedCount,
                     Column::LinkedCount,
                     Column::LastError,
                 ])
@@ -209,11 +216,12 @@ mod tests {
 
         // A later success flips auth back to ok, clears the error, stamps the
         // sweep, and does not disturb the name/version.
-        set_success(&db, 42, 200).await.unwrap();
+        set_success(&db, 412, 42, 200).await.unwrap();
         let row = get(&db).await.unwrap().unwrap();
         assert_eq!(row.auth_state, AUTH_OK);
         assert!(row.last_error.is_none());
         assert_eq!(row.last_success_at, Some(200));
+        assert_eq!(row.fetched_count, Some(412));
         assert_eq!(row.linked_count, Some(42));
         assert_eq!(row.codex_name.as_deref(), Some("codex"));
 
@@ -228,7 +236,7 @@ mod tests {
         set_preflight(&db, true, Some("codex"), Some("1.0.0"), 100)
             .await
             .unwrap();
-        set_success(&db, 5, 150).await.unwrap();
+        set_success(&db, 20, 5, 150).await.unwrap();
 
         // Codex goes down: reachable flips, error recorded, but the last
         // successful sweep + auth verdict survive so stale links stay valid.

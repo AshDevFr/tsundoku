@@ -127,7 +127,9 @@ pub async fn run_tick(client: Arc<CodexClient>, db: DatabaseConnection) {
     let swept = items.len();
     match apply_sweep(&db, &items, now).await {
         Ok(linked) => {
-            if let Err(e) = codex_status_repo::set_success(&db, linked as i64, now).await {
+            if let Err(e) =
+                codex_status_repo::set_success(&db, swept as i64, linked as i64, now).await
+            {
                 tracing::warn!(error = ?e, "failed to record codex sync success");
             }
             tracing::info!(swept, linked, "codex sync complete");
