@@ -23,6 +23,15 @@ interface SourceListItem {
   config: { enabled: boolean };
 }
 
+export interface CodexStatusResponse {
+  enabled: boolean;
+  reachable: boolean;
+  lastSuccessAt?: number;
+  fetchedCount?: number;
+  linkedCount?: number;
+  lastError?: string;
+}
+
 export async function getStats(
   request: APIRequestContext,
 ): Promise<StatsResponse | null> {
@@ -63,6 +72,52 @@ export async function triggerPolls(
     const body = await res.json().catch(() => ({}));
     console.log(`    → ${name}: ${JSON.stringify(body)}`);
   }
+}
+
+export async function getCodexStatus(
+  request: APIRequestContext,
+): Promise<CodexStatusResponse | null> {
+  // `/codex/status` is admin-only, so the bearer is required.
+  const res = await request.get("/api/v1/codex/status", {
+    headers: bearer(),
+  });
+  if (!res.ok()) {
+    return null;
+  }
+  return (await res.json()) as CodexStatusResponse;
+}
+
+/// Poll `/codex/status` until the sweep records a `lastSuccessAt` newer
+/// than the baseline captured before the trigger (or until the timeout).
+/// Returns the final status so the caller can log the fetched count.
+export async function waitForCodexSync(
+  request: APIRequestContext,
+  baselineSuccessAt: number | undefined,
+  timeoutSeconds: number = 90,
+): Promise<CodexStatusResponse | null> {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  let last: CodexStatusResponse | null = null;
+
+  while (Date.now() < deadline) {
+    last = await getCodexStatus(request);
+    if (last) {
+      // A sweep completed if a fresh success timestamp landed, or (when
+      // there was no prior success) any success timestamp at all.
+      const advanced =
+        last.lastSuccessAt != null &&
+        last.lastSuccessAt !== baselineSuccessAt;
+      if (advanced) {
+        return last;
+      }
+      if (last.lastError) {
+        console.log(`    ⚠️  Codex sweep reported error: ${last.lastError}`);
+      }
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+
+  console.log("    ⚠️  Codex sync wait timed out; continuing");
+  return last;
 }
 
 /// Block until the soak window elapses. Always waits at least

@@ -7,7 +7,7 @@ sidebar_position: 9
 
 tsundoku is discovery-centric: it surfaces series you might want, with no
 inherent idea of what you already own. The optional **Codex integration**
-closes that gap. It periodically reads your [Codex](https://github.com/AshDevFr/codex)
+closes that gap. It periodically reads your [Codex](https://codex.4sh.dev)
 library and overlays, on each series, whether you already own it and whether
 newer volumes or chapters have surfaced since.
 

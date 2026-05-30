@@ -2,12 +2,15 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { config } from "../playwright.config.js";
 import { seedAdminToken } from "./utils/auth.js";
 import {
+  getCodexStatus,
   getStats,
   listSources,
   triggerPolls,
+  waitForCodexSync,
   waitForPollSoak,
 } from "./utils/api.js";
 import { printScreenshotSummary } from "./utils/screenshot.js";
+import { waitForElement, waitForPageReady } from "./utils/wait.js";
 
 interface ScenarioModule {
   run: (page: Page, context: BrowserContext) => Promise<void>;
@@ -73,6 +76,11 @@ async function main(): Promise<void> {
       );
     }
 
+    // Now that releases have landed, drive a Codex presence sweep from the
+    // maintenance page so the ownership badges on the feed are populated
+    // before the scenarios screenshot them.
+    await triggerCodexSync(page, context);
+
     const scenarios = await loadScenarios();
 
     if (scenarios.length === 0) {
@@ -103,6 +111,46 @@ async function main(): Promise<void> {
     if (browser) {
       await browser.close();
     }
+  }
+}
+
+/// Navigate to the maintenance page and click the Codex "Refresh now"
+/// button, then wait for the sweep to finish. No-ops (with a log line) when
+/// the Codex integration is disabled, since the button isn't rendered then.
+async function triggerCodexSync(
+  page: Page,
+  context: BrowserContext,
+): Promise<void> {
+  console.log("\n🔗 Triggering Codex sync from the maintenance page");
+  console.log("-".repeat(40));
+
+  const before = await getCodexStatus(context.request);
+  if (!before || !before.enabled) {
+    console.log("  ⚠️  Codex integration disabled; skipping sync.");
+    return;
+  }
+
+  await page.goto("/admin/maintenance");
+  await waitForPageReady(page);
+
+  const refreshButton = '[data-testid="maintenance-codex-refresh-button"]';
+  try {
+    await waitForElement(page, refreshButton);
+    await page.click(refreshButton);
+  } catch (err) {
+    console.log(
+      `  ⚠️  Could not trigger Codex refresh from the UI: ${(err as Error).message}`,
+    );
+    return;
+  }
+
+  console.log("  ⏳ Waiting for the Codex sweep to finish...");
+  const after = await waitForCodexSync(context.request, before.lastSuccessAt);
+  if (after?.lastSuccessAt && after.lastSuccessAt !== before.lastSuccessAt) {
+    console.log(
+      `  ✓ Codex sync complete (fetched=${after.fetchedCount ?? "?"}, ` +
+        `linked=${after.linkedCount ?? "?"})`,
+    );
   }
 }
 

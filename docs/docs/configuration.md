@@ -256,7 +256,7 @@ parallel polling at different cadences.
 
 ## `[codex]`
 
-Optional integration with a [Codex](https://github.com/AshDevFr/codex)
+Optional integration with a [Codex](https://codex.4sh.dev)
 library, powering the admin-only ownership overlay on the feed. Disabled
 by default; the whole block may be omitted. See the dedicated
 [Codex integration](./codex.md) page for the full picture.

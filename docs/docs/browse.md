@@ -114,11 +114,31 @@ Both views show:
 
 - Cover (placeholder when the provider has none).
 - Canonical title, year, kind, status badges.
-- Linked release count (e.g. `5 REL`) and an `OWNED` badge for
-  series Codex has imported (see [the ownership note](./architecture.md#why-standalone-instead-of-a-codex-plugin)
-  for why this is reserved infrastructure today).
+- Linked release count (e.g. `5 REL`).
+- A **Codex ownership badge**, when the [Codex integration](./codex.md)
+  is enabled and you're signed in as admin (see below).
 
 Click any card to drill into the [series detail page](#series-detail).
+
+### Codex ownership badges (admin-only)
+
+With the [Codex integration](./codex.md) enabled, the feed overlays each
+series with whether it's already in your [Codex](https://codex.4sh.dev)
+library, and an accent on the tile/row matching the badge color:
+
+| Badge | Color | Meaning |
+| --- | --- | --- |
+| **owned** | 🟢 green | In Codex and caught up: Codex owns at least as much as has surfaced. |
+| **behind** | 🔵 blue | In Codex, but newer volumes/chapters have surfaced than Codex owns: worth grabbing. |
+| **owned?** | ⚪ gray | In Codex, but the count didn't parse on Codex's side, so we can't tell if you're caught up. |
+| *(no badge)* | — | Not in Codex, or you're not signed in as admin. |
+
+The overlay is **admin-only** and enforced server-side: a public (read-tier)
+visitor never sees it, in the payload or the UI, so what's in your library
+stays private. Badges click through to the series in Codex. The feed's
+admin-only **Codex** filter narrows the list by ownership status. See the
+[Codex integration page](./codex.md) for the full picture, including how the
+status is computed and how to enable it.
 
 ## Pagination
 
