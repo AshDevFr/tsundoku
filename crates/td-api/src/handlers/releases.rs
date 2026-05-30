@@ -188,6 +188,31 @@ pub struct BulkRejectResponse {
     pub rejected: u64,
 }
 
+/// Body for [`bulk_link`]: link every release in `ids` to a single series.
+/// The target series is named exactly as in [`LinkRequest`] — either an
+/// existing `seriesId`, or a `provider` + `externalId` pair the active
+/// provider can resolve (materializing the series row on first link). The
+/// `ids` are intersected with the queue statuses server-side so a decided
+/// release can't be relinked, and an empty `ids` list is rejected: linking a
+/// whole filtered set to one series is never what the operator means.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BulkLinkRequest {
+    pub ids: Vec<String>,
+    pub series_id: Option<i32>,
+    pub provider: Option<String>,
+    pub external_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkLinkResponse {
+    /// Number of releases linked to the target series.
+    pub linked: u64,
+    /// The series the releases were linked to.
+    pub series_id: i32,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkRetryResponse {
@@ -259,6 +284,10 @@ pub struct ReviewQueueQuery {
     /// Narrow to one queue status. Ignored unless it's one of
     /// `unresolved` / `ambiguous` / `review_pending`.
     pub status: Option<String>,
+    /// Result ordering. One of `observed_desc` (default), `observed_asc`,
+    /// `posted_desc`, `posted_asc`, `title_asc`, `title_desc`. Title sorts
+    /// are case-insensitive. An unknown value falls back to `observed_desc`.
+    pub sort: Option<String>,
 }
 
 impl Default for ReviewQueueQuery {
@@ -270,6 +299,7 @@ impl Default for ReviewQueueQuery {
             source_name: None,
             format: None,
             status: None,
+            sort: None,
         }
     }
 }
@@ -329,6 +359,33 @@ fn review_queue_select(
         select = select.filter(releases::Column::Id.in_subquery(sub));
     }
     select
+}
+
+/// Apply the review-queue ordering selected by the `sort` query param.
+/// Title sorts compare case-insensitively (`lower(title)`) and break ties on
+/// `id` so pagination is stable across pages. Every other value (and the
+/// default / unknown case) orders by `observed_at` descending — newest first,
+/// matching the rest of the release views.
+fn apply_review_sort(
+    select: Select<releases::Entity>,
+    sort: Option<&str>,
+) -> Select<releases::Entity> {
+    use sea_orm::Order;
+    use sea_orm::sea_query::{Expr, Func};
+
+    let lower_title = || Expr::expr(Func::lower(Expr::col(releases::Column::Title)));
+    match sort.map(str::trim) {
+        Some("observed_asc") => select.order_by_asc(releases::Column::ObservedAt),
+        Some("posted_desc") => select.order_by_desc(releases::Column::PostedAt),
+        Some("posted_asc") => select.order_by_asc(releases::Column::PostedAt),
+        Some("title_asc") => select
+            .order_by(lower_title(), Order::Asc)
+            .order_by_asc(releases::Column::Id),
+        Some("title_desc") => select
+            .order_by(lower_title(), Order::Desc)
+            .order_by_asc(releases::Column::Id),
+        _ => select.order_by_desc(releases::Column::ObservedAt),
+    }
 }
 
 /// Resolve a [`BulkReviewRequest`] into the concrete release ids it targets,
@@ -442,8 +499,7 @@ pub async fn list_unresolved(
         query.status.as_deref(),
     );
     let total = select.clone().count(&state.db).await.map_err(anyhow_err)?;
-    let rows = select
-        .order_by_desc(releases::Column::ObservedAt)
+    let rows = apply_review_sort(select, query.sort.as_deref())
         .offset(p.offset())
         .limit(p.limit())
         .all(&state.db)
@@ -572,7 +628,7 @@ pub async fn link(
 
     let now = Utc::now();
     let attempted_at = now.timestamp();
-    let series_id = resolve_link_target(&state, &release, req, now).await?;
+    let series_id = resolve_link_target(&state, release.posted_at, req, now).await?;
 
     // Clear any stale review candidates for this release: the operator
     // just made a decision.
@@ -918,9 +974,90 @@ pub async fn bulk_retry(
     }))
 }
 
+/// Resolve a link request into the concrete `series.id` it targets, shared by
+/// the single-release [`link`] handler and the [`bulk_link`] action. The
+/// `posted_at` anchor is only consulted on the provider path, where it seeds
+/// the freshly-upserted series' first-seen timestamp; callers pass the
+/// release's own `posted_at` (single link) or the anchor release's (bulk).
+/// Bulk-link a set of review-queue releases to one series. The body's `ids`
+/// (intersected with the queue statuses) select the releases; the series is
+/// named exactly as in the single-release [`link`] handler. Each release is
+/// linked individually (clearing its candidates and bumping the series'
+/// highest volume/chapter marks) so the result matches what N single links
+/// would produce. The operator is responsible for the selection being one
+/// series' releases; the endpoint links them blindly to the chosen target.
+#[utoipa::path(
+    post,
+    path = "/api/v1/releases/bulk/link",
+    tag = "releases",
+    request_body = BulkLinkRequest,
+    responses(
+        (status = 200, body = BulkLinkResponse),
+        (status = 400, description = "Empty ids, malformed target, or unknown provider/external_id"),
+        (status = 404, description = "Target series not found")
+    ),
+    security(("admin" = []))
+)]
+pub async fn bulk_link(
+    State(state): State<AppState>,
+    Json(req): Json<BulkLinkRequest>,
+) -> ApiResult<Json<BulkLinkResponse>> {
+    if req.ids.is_empty() {
+        return Err(ApiError::BadRequest("`ids` must not be empty".into()));
+    }
+    // Intersect with the queue statuses so a since-decided release can't be
+    // relinked out from under another decision.
+    let target_req = BulkReviewRequest {
+        ids: req.ids.clone(),
+        ..Default::default()
+    };
+    let ids = review_queue_target_ids(&state.db, &target_req, None).await?;
+
+    let now = Utc::now();
+    let attempted_at = now.timestamp();
+    // The anchor only matters for the provider path (it seeds a freshly
+    // upserted series' first-seen time). Use the first targeted release's
+    // `posted_at`; fall back to now when nothing matched.
+    let anchor_posted_at = match ids.first() {
+        Some(first) => releases_repo::find_by_id(&state.db, first)
+            .await
+            .map_err(anyhow_err)?
+            .map(|r| r.posted_at)
+            .unwrap_or(attempted_at),
+        None => attempted_at,
+    };
+    let link_req = LinkRequest {
+        series_id: req.series_id,
+        provider: req.provider,
+        external_id: req.external_id,
+    };
+    let series_id = resolve_link_target(&state, anchor_posted_at, link_req, now).await?;
+
+    let mut linked = 0u64;
+    for id in &ids {
+        review_repo::replace_for_release(&state.db, id, Vec::new())
+            .await
+            .map_err(anyhow_err)?;
+        persist::link_release(
+            &state.db,
+            id,
+            Some(series_id),
+            Some("manual"),
+            Some(1.0),
+            "resolved",
+            attempted_at,
+        )
+        .await
+        .map_err(ApiError::Internal)?;
+        linked += 1;
+    }
+
+    Ok(Json(BulkLinkResponse { linked, series_id }))
+}
+
 async fn resolve_link_target(
     state: &AppState,
-    release: &releases::Model,
+    posted_at: i64,
     req: LinkRequest,
     now: chrono::DateTime<Utc>,
 ) -> ApiResult<i32> {
@@ -960,12 +1097,7 @@ async fn resolve_link_target(
             // if the foreign-id chain happens to land on a pre-existing
             // manual row, don't clobber it.
             Ok(persist::upsert_series_from_metadata(
-                &state.db,
-                &provider,
-                &metadata,
-                release.posted_at,
-                now,
-                false,
+                &state.db, &provider, &metadata, posted_at, now, false,
             )
             .await
             .map_err(ApiError::Internal)?

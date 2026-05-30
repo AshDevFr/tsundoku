@@ -39,6 +39,9 @@ class MockResizeObserver {
 window.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
 
 window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;
+// Mantine's Combobox (Select dropdown) scrolls the active option into view on
+// open; jsdom has no layout, so stub it out to keep option selection working.
+Element.prototype.scrollIntoView = vi.fn();
 
 // Minimal EventSource stand-in for jsdom. Tracks instances so tests can
 // dispatch synthetic frames; auto-reconnect / readyState transitions

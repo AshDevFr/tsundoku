@@ -743,6 +743,48 @@
         }
       }
     },
+    "/api/v1/releases/bulk/link": {
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Resolve a link request into the concrete `series.id` it targets, shared by\nthe single-release [`link`] handler and the [`bulk_link`] action. The\n`posted_at` anchor is only consulted on the provider path, where it seeds\nthe freshly-upserted series' first-seen timestamp; callers pass the\nrelease's own `posted_at` (single link) or the anchor release's (bulk).\nBulk-link a set of review-queue releases to one series. The body's `ids`\n(intersected with the queue statuses) select the releases; the series is\nnamed exactly as in the single-release [`link`] handler. Each release is\nlinked individually (clearing its candidates and bumping the series'\nhighest volume/chapter marks) so the result matches what N single links\nwould produce. The operator is responsible for the selection being one\nseries' releases; the endpoint links them blindly to the chosen target.",
+        "operationId": "bulk_link",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkLinkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty ids, malformed target, or unknown provider/external_id"
+          },
+          "404": {
+            "description": "Target series not found"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/releases/bulk/reject": {
       "post": {
         "tags": [
@@ -914,6 +956,15 @@
             "name": "status",
             "in": "query",
             "description": "Narrow to one queue status. Ignored unless it's one of\n`unresolved` / `ambiguous` / `review_pending`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Result ordering. One of `observed_desc` (default), `observed_asc`,\n`posted_desc`, `posted_asc`, `title_asc`, `title_desc`. Title sorts\nare case-insensitive. An unknown value falls back to `observed_desc`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -1821,6 +1872,61 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "BulkLinkRequest": {
+        "type": "object",
+        "description": "Body for [`bulk_link`]: link every release in `ids` to a single series.\nThe target series is named exactly as in [`LinkRequest`] — either an\nexisting `seriesId`, or a `provider` + `externalId` pair the active\nprovider can resolve (materializing the series row on first link). The\n`ids` are intersected with the queue statuses server-side so a decided\nrelease can't be relinked, and an empty `ids` list is rejected: linking a\nwhole filtered set to one series is never what the operator means.",
+        "properties": {
+          "externalId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "seriesId": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "default": null
+          }
+        }
+      },
+      "BulkLinkResponse": {
+        "type": "object",
+        "required": [
+          "linked",
+          "seriesId"
+        ],
+        "properties": {
+          "linked": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of releases linked to the target series.",
+            "minimum": 0
+          },
+          "seriesId": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The series the releases were linked to."
           }
         }
       },

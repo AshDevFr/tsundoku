@@ -26,9 +26,9 @@ use crate::handlers::providers::{
     ProviderSearchResponse, RefreshAllResponse, RefreshResponse,
 };
 use crate::handlers::releases::{
-    BulkRejectResponse, BulkRetryResponse, BulkReviewRequest, ExtractedLinksDto, LinkRequest,
-    ReleaseDto, ReleasePage, RetryAllResponse, ReviewCandidateDto, UnresolvedPage,
-    UnresolvedRelease,
+    BulkLinkRequest, BulkLinkResponse, BulkRejectResponse, BulkRetryResponse, BulkReviewRequest,
+    ExtractedLinksDto, LinkRequest, ReleaseDto, ReleasePage, RetryAllResponse, ReviewCandidateDto,
+    UnresolvedPage, UnresolvedRelease,
 };
 use crate::handlers::series::{
     CreateSeriesRequest, ExternalIdDto, InvalidateMetadataHashesResponse, RecomputeSpansResponse,
@@ -73,6 +73,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         releases::retry_all,
         releases::bulk_reject,
         releases::bulk_retry,
+        releases::bulk_link,
         sources::list,
         sources::poll,
         sources::backfill,
@@ -123,6 +124,8 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         BulkReviewRequest,
         BulkRejectResponse,
         BulkRetryResponse,
+        BulkLinkRequest,
+        BulkLinkResponse,
         LinkRequest,
         SourceDto,
         SourceConfigDto,

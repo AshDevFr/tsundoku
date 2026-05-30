@@ -427,6 +427,10 @@ export interface ReviewFilters {
   /// One of the queue statuses (`unresolved` / `ambiguous` /
   /// `review_pending`); anything else is clamped server-side.
   status?: string;
+  /// Result ordering. One of `observed_desc` (default) / `observed_asc` /
+  /// `posted_desc` / `posted_asc` / `title_asc` / `title_desc`; anything
+  /// else falls back to `observed_desc` server-side.
+  sort?: string;
 }
 
 export function useUnresolvedReleases(filters: ReviewFilters = {}) {
@@ -438,6 +442,7 @@ export function useUnresolvedReleases(filters: ReviewFilters = {}) {
     sourceName: filters.sourceName || undefined,
     format: filters.format || undefined,
     status: filters.status || undefined,
+    sort: filters.sort || undefined,
   };
   return useQuery({
     queryKey: ["releases-unresolved", query],

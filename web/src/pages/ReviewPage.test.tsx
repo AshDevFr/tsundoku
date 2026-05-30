@@ -429,6 +429,158 @@ describe("ReviewPage", () => {
     expect(screen.getByTestId("review-card-nyaa:9001")).toBeInTheDocument();
   });
 
+  it("collapses a single card to its header via the chevron and expands it back", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+    const card = screen.getByTestId("review-card-nyaa:9001");
+    // Expanded by default: the candidate list is in the DOM.
+    expect(within(card).getByTestId("candidate-1")).toBeInTheDocument();
+
+    fireEvent.click(within(card).getByTestId("collapse-nyaa:9001"));
+    // Collapsed: the detail body (candidates) unmounts, but the title stays.
+    await waitFor(() => {
+      expect(within(card).queryByTestId("candidate-1")).not.toBeInTheDocument();
+    });
+    expect(within(card).getByText(/Mystery Series v01/)).toBeInTheDocument();
+
+    // Toggling again brings the body back.
+    fireEvent.click(within(card).getByTestId("collapse-nyaa:9001"));
+    expect(within(card).getByTestId("candidate-1")).toBeInTheDocument();
+  });
+
+  it("collapses and expands every card via the toolbar toggle", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+    const toggle = screen.getByTestId("toggle-collapse-all");
+    expect(toggle).toHaveTextContent("Collapse all");
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(screen.queryByTestId("candidate-1")).not.toBeInTheDocument();
+    });
+    // Both cards' headers survive; the toggle flips to "Expand all".
+    expect(screen.getByTestId("review-card-nyaa:9001")).toBeInTheDocument();
+    expect(screen.getByTestId("review-card-nyaa:9002")).toBeInTheDocument();
+    expect(toggle).toHaveTextContent("Expand all");
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(screen.getByTestId("candidate-1")).toBeInTheDocument();
+    });
+  });
+
+  it("sorts the queue by title via the sort control", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+
+    // The mock orders by title when sort=title_asc; assert the cards reorder
+    // in the DOM ("Mystery…" before "Unknown…").
+    const select = screen.getByTestId("review-sort");
+    fireEvent.click(select);
+    fireEvent.click(await screen.findByText("Title A→Z"));
+
+    await waitFor(() => {
+      const cards = screen.getAllByTestId(/^review-card-/);
+      expect(cards[0]).toHaveAttribute("data-testid", "review-card-nyaa:9001");
+      expect(cards[1]).toHaveAttribute("data-testid", "review-card-nyaa:9002");
+    });
+
+    // Reverse: "Unknown…" should now come first.
+    fireEvent.click(select);
+    fireEvent.click(await screen.findByText("Title Z→A"));
+    await waitFor(() => {
+      const cards = screen.getAllByTestId(/^review-card-/);
+      expect(cards[0]).toHaveAttribute("data-testid", "review-card-nyaa:9002");
+    });
+  });
+
+  it("bulk-links the selected releases to a catalog series", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+
+    fireEvent.click(screen.getByTestId("select-all-page"));
+    expect(screen.getByTestId("bulk-action-bar")).toHaveTextContent(
+      "2 selected",
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-link"));
+    const dialog = await screen.findByRole("dialog");
+    // Catalog is the default mode; search and pick an existing series.
+    const search = await waitFor(() => {
+      const el = dialog.querySelector<HTMLInputElement>(
+        '[data-testid="link-existing-search"]',
+      );
+      if (!el) throw new Error("link-existing-search input not rendered");
+      return el;
+    });
+    fireEvent.change(search, { target: { value: "Chainsaw" } });
+    const linkBtn = await screen.findByTestId("link-existing-1", undefined, {
+      timeout: 3000,
+    });
+    fireEvent.click(linkBtn);
+
+    // Both selected releases leave the queue.
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByTestId("review-card-nyaa:9001"),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByTestId("review-card-nyaa:9002"),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it("bulk-creates a manual series and links the whole selection", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+
+    fireEvent.click(screen.getByTestId("select-all-page"));
+    fireEvent.click(screen.getByTestId("bulk-create-series"));
+
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = await waitFor(() => {
+      const el = dialog.querySelector<HTMLInputElement>(
+        '[data-testid="bulk-create-series-title"]',
+      );
+      if (!el) throw new Error("bulk-create-series-title input not rendered");
+      return el;
+    });
+    fireEvent.change(titleInput, { target: { value: "Bundled Series" } });
+    fireEvent.click(screen.getByTestId("bulk-create-series-submit"));
+
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByTestId("review-card-nyaa:9001"),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByTestId("review-card-nyaa:9002"),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it("hides the bulk link/create buttons' effect under select-all-matching", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+
+    fireEvent.click(screen.getByTestId("select-all-page"));
+    // With only 2 of 2 matching, there's no "select all matching" link, so
+    // the link/create buttons stay enabled for the explicit selection.
+    expect(screen.getByTestId("bulk-link")).not.toBeDisabled();
+    expect(screen.getByTestId("bulk-create-series")).not.toBeDisabled();
+  });
+
   it("shows every search query when the cleaner produced more than one", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderReview();

@@ -8,6 +8,7 @@ import {
   Group,
   Image,
   Loader,
+  SegmentedControl,
   Select,
   Stack,
   Text,
@@ -15,7 +16,7 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useState } from "react";
-import { useLinkRelease } from "@/api/mutations";
+import { useBulkLink, useLinkRelease } from "@/api/mutations";
 import {
   type ProviderSearchHit,
   type SeriesListItem,
@@ -77,18 +78,6 @@ export function LinkExistingPanel({
   onLinked?: () => void;
 }) {
   const link = useLinkRelease();
-  const [query, setQuery] = useState(seedQuery);
-  const [debounced, setDebounced] = useState(seedQuery);
-
-  useEffect(() => {
-    const handle = window.setTimeout(() => setDebounced(query), 300);
-    return () => window.clearTimeout(handle);
-  }, [query]);
-
-  // Blank query falls back to the most-recent series, which is a sensible
-  // default browse for "I just made this one".
-  const results = useSeriesList({ q: debounced, pageSize: 20 });
-  const items = results.data?.items ?? [];
 
   const handlePick = (series: SeriesListItem) => {
     link.mutate(
@@ -112,6 +101,40 @@ export function LinkExistingPanel({
   };
 
   return (
+    <CatalogSearchControls
+      seedQuery={seedQuery}
+      disabled={link.isPending}
+      onPick={handlePick}
+    />
+  );
+}
+
+/// Catalog search input + results, decoupled from what happens on pick. The
+/// host decides whether a pick links a single release ([`LinkExistingPanel`])
+/// or a whole selection ([`BulkLinkPanel`]).
+function CatalogSearchControls({
+  seedQuery,
+  disabled,
+  onPick,
+}: {
+  seedQuery: string;
+  disabled: boolean;
+  onPick: (series: SeriesListItem) => void;
+}) {
+  const [query, setQuery] = useState(seedQuery);
+  const [debounced, setDebounced] = useState(seedQuery);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebounced(query), 300);
+    return () => window.clearTimeout(handle);
+  }, [query]);
+
+  // Blank query falls back to the most-recent series, which is a sensible
+  // default browse for "I just made this one".
+  const results = useSeriesList({ q: debounced, pageSize: 20 });
+  const items = results.data?.items ?? [];
+
+  return (
     <Stack gap="md">
       <TextInput
         label="Search the catalog"
@@ -125,8 +148,8 @@ export function LinkExistingPanel({
       <ExistingSeriesResults
         items={items}
         loading={results.isFetching}
-        disabled={link.isPending}
-        onPick={handlePick}
+        disabled={disabled}
+        onPick={onPick}
       />
     </Stack>
   );
@@ -250,8 +273,57 @@ export function ProviderSearchPanel({
   seedQuery: string;
   onLinked?: () => void;
 }) {
-  const providers = useProviders();
   const link = useLinkRelease();
+
+  const handleLink = (
+    provider: string,
+    chosenExternalId: string,
+    displayLabel: string,
+  ) => {
+    link.mutate(
+      { releaseId, body: { provider, externalId: chosenExternalId } },
+      {
+        onSuccess: () => {
+          notifications.show({
+            color: "green",
+            message: `Linked to ${displayLabel}`,
+          });
+          onLinked?.();
+        },
+        onError: (e) => {
+          notifications.show({
+            color: "red",
+            title: "Link failed",
+            message: (e as Error).message,
+          });
+        },
+      },
+    );
+  };
+
+  return (
+    <ProviderSearchControls
+      seedQuery={seedQuery}
+      disabled={link.isPending}
+      onPick={handleLink}
+    />
+  );
+}
+
+/// Provider search inputs + results, decoupled from what happens on pick.
+/// `onPick` receives the effective provider id so the host doesn't have to
+/// track which provider produced the hit. Shared by the single-release and
+/// bulk link flows.
+function ProviderSearchControls({
+  seedQuery,
+  disabled,
+  onPick,
+}: {
+  seedQuery: string;
+  disabled: boolean;
+  onPick: (provider: string, externalId: string, label: string) => void;
+}) {
+  const providers = useProviders();
   const [provider, setProvider] = useState<string | null>(null);
   const [title, setTitle] = useState(seedQuery);
   const [externalId, setExternalId] = useState("");
@@ -281,32 +353,6 @@ export function ProviderSearchPanel({
     q: debouncedTitle,
     externalId,
   });
-
-  const handleLink = (chosenExternalId: string, displayLabel: string) => {
-    if (!effectiveProvider) return;
-    link.mutate(
-      {
-        releaseId,
-        body: { provider: effectiveProvider, externalId: chosenExternalId },
-      },
-      {
-        onSuccess: () => {
-          notifications.show({
-            color: "green",
-            message: `Linked to ${displayLabel}`,
-          });
-          onLinked?.();
-        },
-        onError: (e) => {
-          notifications.show({
-            color: "red",
-            title: "Link failed",
-            message: (e as Error).message,
-          });
-        },
-      },
-    );
-  };
 
   return (
     <Stack gap="md">
@@ -342,9 +388,106 @@ export function ProviderSearchPanel({
         enabled={Boolean(
           effectiveProvider && (debouncedTitle.trim() || externalId.trim()),
         )}
-        disabled={link.isPending}
-        onPick={handleLink}
+        disabled={disabled}
+        onPick={(extId, label) =>
+          effectiveProvider && onPick(effectiveProvider, extId, label)
+        }
       />
+    </Stack>
+  );
+}
+
+/// Bulk "assign to series" panel: search the catalog or a provider, pick one
+/// series, and link every release in `releaseIds` to it in a single request.
+/// The same two search surfaces as the single-release flow, behind a
+/// segmented Catalog / Provider switch. Used after selecting several releases
+/// of the same series in the review queue.
+export function BulkLinkPanel({
+  releaseIds,
+  seedQuery = "",
+  onLinked,
+}: {
+  releaseIds: string[];
+  seedQuery?: string;
+  onLinked?: () => void;
+}) {
+  const bulkLink = useBulkLink();
+  const [mode, setMode] = useState<"catalog" | "provider">("catalog");
+  const count = releaseIds.length;
+
+  const announce = (linked: number | undefined, label: string) => {
+    const n = linked ?? count;
+    notifications.show({
+      color: "green",
+      message: `Linked ${n} release${n === 1 ? "" : "s"} to ${label}`,
+    });
+    onLinked?.();
+  };
+  const fail = (e: unknown) =>
+    notifications.show({
+      color: "red",
+      title: "Bulk link failed",
+      message: (e as Error).message,
+    });
+
+  const handleCatalogPick = (series: SeriesListItem) => {
+    bulkLink.mutate(
+      {
+        ids: releaseIds,
+        seriesId: series.id,
+        provider: null,
+        externalId: null,
+      },
+      {
+        onSuccess: (data) =>
+          announce(data?.linked, `“${series.canonicalTitle}”`),
+        onError: fail,
+      },
+    );
+  };
+
+  const handleProviderPick = (
+    provider: string,
+    externalId: string,
+    label: string,
+  ) => {
+    bulkLink.mutate(
+      { ids: releaseIds, seriesId: null, provider, externalId },
+      {
+        onSuccess: (data) => announce(data?.linked, label),
+        onError: fail,
+      },
+    );
+  };
+
+  return (
+    <Stack gap="md">
+      <Text size="sm" c="dimmed">
+        Pick one series; all {count} selected release{count === 1 ? "" : "s"}{" "}
+        link to it.
+      </Text>
+      <SegmentedControl
+        value={mode}
+        onChange={(v) => setMode(v as "catalog" | "provider")}
+        data={[
+          { label: "Catalog", value: "catalog" },
+          { label: "Provider", value: "provider" },
+        ]}
+        data-testid="bulk-link-mode"
+      />
+      {mode === "catalog" ? (
+        <CatalogSearchControls
+          seedQuery={seedQuery}
+          disabled={bulkLink.isPending}
+          onPick={handleCatalogPick}
+        />
+      ) : (
+        <ProviderSearchControls
+          seedQuery={seedQuery}
+          disabled={bulkLink.isPending}
+          onPick={handleProviderPick}
+        />
+      )}
     </Stack>
   );
 }

@@ -12,6 +12,7 @@ type UnresolvedPage = components["schemas"]["UnresolvedPage"];
 type LinkRequest = components["schemas"]["LinkRequest"];
 type CreateSeriesRequest = components["schemas"]["CreateSeriesRequest"];
 type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
+type BulkLinkRequest = components["schemas"]["BulkLinkRequest"];
 type TagList = components["schemas"]["TagList"];
 
 const NOW = Math.floor(Date.now() / 1000);
@@ -1256,6 +1257,7 @@ export const handlers = [
     const sourceName = url.searchParams.get("sourceName");
     const format = url.searchParams.get("format");
     const status = url.searchParams.get("status");
+    const sort = url.searchParams.get("sort");
     const QUEUE_STATUSES = ["unresolved", "ambiguous", "review_pending"];
     const filtered = queue.filter((r) => {
       if (q && !r.title.toLowerCase().includes(q)) return false;
@@ -1267,6 +1269,32 @@ export const handlers = [
       }
       return true;
     });
+    // Mirror the server ordering (case-insensitive title; recency otherwise).
+    // The default / unknown case leaves the seed order intact.
+    switch (sort) {
+      case "title_asc":
+        filtered.sort((a, b) =>
+          a.title.toLowerCase().localeCompare(b.title.toLowerCase()),
+        );
+        break;
+      case "title_desc":
+        filtered.sort((a, b) =>
+          b.title.toLowerCase().localeCompare(a.title.toLowerCase()),
+        );
+        break;
+      case "observed_asc":
+        filtered.sort((a, b) => a.observedAt - b.observedAt);
+        break;
+      case "observed_desc":
+        filtered.sort((a, b) => b.observedAt - a.observedAt);
+        break;
+      case "posted_asc":
+        filtered.sort((a, b) => a.postedAt - b.postedAt);
+        break;
+      case "posted_desc":
+        filtered.sort((a, b) => b.postedAt - a.postedAt);
+        break;
+    }
     const start = (page - 1) * pageSize;
     const items = filtered.slice(start, start + pageSize);
     const body: UnresolvedPage = {
@@ -1304,6 +1332,27 @@ export const handlers = [
       skipped: false,
       matched,
     });
+  }),
+
+  // Link a selection of releases to one series; the server intersects with
+  // the queue statuses, so the targets are exactly the matching `ids`. The
+  // linked rows leave the queue.
+  http.post("/api/v1/releases/bulk/link", async ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const body = (await request.json()) as BulkLinkRequest;
+    const ids = new Set(body.ids ?? []);
+    if (ids.size === 0) {
+      return HttpResponse.json(
+        { error: "bad_request", message: "`ids` must not be empty" },
+        { status: 400 },
+      );
+    }
+    const targets = queue.filter((r) => ids.has(r.id));
+    queue = queue.filter((r) => !ids.has(r.id));
+    // The mock doesn't materialize a provider series; echo back a stable id.
+    const seriesId = body.seriesId ?? 1;
+    return HttpResponse.json({ linked: targets.length, seriesId });
   }),
 
   http.post("/api/v1/releases/:id/link", async ({ request, params }) => {

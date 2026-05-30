@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -23,8 +24,9 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  useBulkLink,
   useBulkReject,
   useBulkRetry,
   useCreateSeries,
@@ -54,6 +56,7 @@ import {
   ReleaseFiles,
 } from "@/components/ReleaseDetails";
 import {
+  BulkLinkPanel,
   CANDIDATE_PLACEHOLDER,
   LinkExistingPanel,
   MetadataCounts,
@@ -87,6 +90,18 @@ const REVIEW_STATUSES = [
   { value: "review_pending", label: "Review pending" },
 ];
 
+/// Ordering options for the queue. Title sorts (case-insensitive on the
+/// server) group a series' releases together so they can be selected and
+/// linked in bulk; the recency sorts mirror the rest of the release views.
+const REVIEW_SORTS = [
+  { value: "observed_desc", label: "Newest first" },
+  { value: "observed_asc", label: "Oldest first" },
+  { value: "title_asc", label: "Title A→Z" },
+  { value: "title_desc", label: "Title Z→A" },
+  { value: "posted_desc", label: "Posted (newest)" },
+  { value: "posted_asc", label: "Posted (oldest)" },
+];
+
 export function ReviewPage() {
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState("");
@@ -94,15 +109,25 @@ export function ReviewPage() {
   const [sourceName, setSourceName] = useState<string | null>(null);
   const [format, setFormat] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [sort, setSort] = useState<string | null>(null);
   // Explicit per-card selection. `selectAllMatching` overrides it: the bulk
   // action then targets every release matching the current filters (resolved
   // server-side), not just the checked ids on this page.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectAllMatching, setSelectAllMatching] = useState(false);
+  // Cards collapse to a one-line header so a sorted run of the same series is
+  // easy to scan and bulk-select. Default expanded (an id present here is
+  // collapsed); membership is per-id so the expand/collapse-all toggle and
+  // the per-card chevron stay in sync.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [
     confirmRejectOpen,
     { open: openConfirmReject, close: closeConfirmReject },
   ] = useDisclosure(false);
+  const [bulkLinkOpen, { open: openBulkLink, close: closeBulkLink }] =
+    useDisclosure(false);
+  const [bulkCreateOpen, { open: openBulkCreate, close: closeBulkCreate }] =
+    useDisclosure(false);
 
   const resetSelection = () => {
     setSelected(new Set());
@@ -113,7 +138,17 @@ export function ReviewPage() {
   // settled query also restarts pagination: a narrower result set could
   // otherwise leave the operator stranded on a now-empty page. The matching
   // set changes too, so any in-flight selection is dropped.
+  //
+  // Skip the very first run: on mount `searchInput` is already in sync with
+  // `debouncedQ`, so the only thing the initial timer would do is fire a
+  // selection reset ~300ms in — wiping a selection the operator made in that
+  // window. Reset only on an actual edit.
+  const searchDebounceArmed = useRef(false);
   useEffect(() => {
+    if (!searchDebounceArmed.current) {
+      searchDebounceArmed.current = true;
+      return;
+    }
     const handle = window.setTimeout(() => {
       setDebouncedQ(searchInput);
       setPage(1);
@@ -131,6 +166,7 @@ export function ReviewPage() {
     sourceName: sourceName ?? undefined,
     format: format ?? undefined,
     status: status ?? undefined,
+    sort: sort ?? undefined,
   });
   const retryAll = useRetryAllReleases();
   const bulkRetry = useBulkRetry();
@@ -153,6 +189,13 @@ export function ReviewPage() {
   };
   const changeStatus = (v: string | null) => {
     setStatus(v);
+    setPage(1);
+    resetSelection();
+  };
+  // Re-ordering changes which rows land on the current page, so reset
+  // pagination and drop any selection that referred to the old ordering.
+  const changeSort = (v: string | null) => {
+    setSort(v);
     setPage(1);
     resetSelection();
   };
@@ -201,6 +244,31 @@ export function ReviewPage() {
       return new Set(pageIds);
     });
   };
+
+  const allCollapsed =
+    pageIds.length > 0 && pageIds.every((id) => collapsed.has(id));
+  const toggleCollapseAll = () => {
+    setCollapsed(allCollapsed ? new Set() : new Set(pageIds));
+  };
+  const toggleCollapseOne = (id: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Explicit ids for the bulk-link / bulk-create flows. These need a concrete
+  // selection (linking a whole "all matching" set to one series is never the
+  // intent), so they're gated to the non-`selectAllMatching` case below.
+  const selectedIds = useMemo(() => [...selected], [selected]);
+  // Seed the bulk search with the first selected release's cleaned query (or
+  // title) so the operator usually doesn't have to retype it.
+  const bulkSeed = useMemo(() => {
+    const first = items.find((i) => selected.has(i.id));
+    return first?.searchQueries[0] ?? first?.title ?? "";
+  }, [items, selected]);
 
   const bulkBody = (): BulkReviewRequest =>
     selectAllMatching
@@ -318,6 +386,8 @@ export function ReviewPage() {
         onFormat={changeFormat}
         status={status}
         onStatus={changeStatus}
+        sort={sort}
+        onSort={changeSort}
         hasFilters={hasFilters}
         onClear={clearFilters}
       />
@@ -369,6 +439,15 @@ export function ReviewPage() {
                 label="Select page"
                 data-testid="select-all-page"
               />
+              <Button
+                variant="subtle"
+                color="gray"
+                size="xs"
+                onClick={toggleCollapseAll}
+                data-testid="toggle-collapse-all"
+              >
+                {allCollapsed ? "Expand all" : "Collapse all"}
+              </Button>
               {/* When more matching releases exist than this page shows,
                   offer to act on the whole filtered set. */}
               {allPageSelected &&
@@ -411,6 +490,46 @@ export function ReviewPage() {
                 >
                   Retry
                 </Button>
+                {/* Linking targets one concrete series, so it needs an
+                    explicit selection: linking a whole "all matching" set to a
+                    single series is never the intent. Disabled (with a hint)
+                    while "select all matching" is active. */}
+                <Tooltip
+                  label={
+                    selectAllMatching
+                      ? "Linking needs an explicit selection, not “all matching”."
+                      : "Link every selected release to one series (search the catalog or a provider)."
+                  }
+                >
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="cyan"
+                    onClick={openBulkLink}
+                    disabled={selectAllMatching}
+                    data-testid="bulk-link"
+                  >
+                    Link to series
+                  </Button>
+                </Tooltip>
+                <Tooltip
+                  label={
+                    selectAllMatching
+                      ? "Linking needs an explicit selection, not “all matching”."
+                      : "Create a manual series and link every selected release to it."
+                  }
+                >
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="grape"
+                    onClick={openBulkCreate}
+                    disabled={selectAllMatching}
+                    data-testid="bulk-create-series"
+                  >
+                    Create series
+                  </Button>
+                </Tooltip>
                 <Button
                   size="xs"
                   variant="light"
@@ -441,6 +560,8 @@ export function ReviewPage() {
                 item={item}
                 selected={selected.has(item.id) || selectAllMatching}
                 onToggleSelect={() => toggleOne(item.id)}
+                collapsed={collapsed.has(item.id)}
+                onToggleCollapse={() => toggleCollapseOne(item.id)}
               />
             ))}
           </Stack>
@@ -475,6 +596,31 @@ export function ReviewPage() {
         </Stack>
       </Modal>
 
+      {/* Mounted only while open so the search panels don't run in the
+          background. Both reset the selection and close on success. */}
+      {bulkLinkOpen && (
+        <BulkLinkModal
+          releaseIds={selectedIds}
+          seedQuery={bulkSeed}
+          onClose={closeBulkLink}
+          onLinked={() => {
+            resetSelection();
+            closeBulkLink();
+          }}
+        />
+      )}
+      {bulkCreateOpen && (
+        <BulkCreateSeriesModal
+          releaseIds={selectedIds}
+          seedTitle={bulkSeed}
+          onClose={closeBulkCreate}
+          onLinked={() => {
+            resetSelection();
+            closeBulkCreate();
+          }}
+        />
+      )}
+
       {totalPages > 1 && (
         <Center>
           <Pagination
@@ -486,6 +632,156 @@ export function ReviewPage() {
         </Center>
       )}
     </Stack>
+  );
+}
+
+/// Bulk "assign to series" modal: a thin wrapper over [`BulkLinkPanel`].
+/// Mounted only while open so the catalog/provider searches don't run in the
+/// background; the selection count is reflected in the title.
+function BulkLinkModal({
+  releaseIds,
+  seedQuery,
+  onClose,
+  onLinked,
+}: {
+  releaseIds: string[];
+  seedQuery: string;
+  onClose: () => void;
+  onLinked: () => void;
+}) {
+  return (
+    <Modal
+      opened
+      onClose={onClose}
+      title={`Link ${releaseIds.length} release${releaseIds.length === 1 ? "" : "s"} to a series`}
+      size="lg"
+      centered
+    >
+      <Stack gap="md">
+        <BulkLinkPanel
+          releaseIds={releaseIds}
+          seedQuery={seedQuery}
+          onLinked={onLinked}
+        />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>
+            Close
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+/// Create one manual series and link every selected release to it. The
+/// series-creation form mirrors the single-release [`CreateSeriesModal`];
+/// on submit it creates the series, then bulk-links the whole selection.
+function BulkCreateSeriesModal({
+  releaseIds,
+  seedTitle,
+  onClose,
+  onLinked,
+}: {
+  releaseIds: string[];
+  seedTitle: string;
+  onClose: () => void;
+  onLinked: () => void;
+}) {
+  const createSeries = useCreateSeries();
+  const bulkLink = useBulkLink();
+  const [title, setTitle] = useState(seedTitle);
+  const [kind, setKind] = useState<string | null>(null);
+  const [year, setYear] = useState<number | "">("");
+
+  const busy = createSeries.isPending || bulkLink.isPending;
+  const canSubmit = title.trim().length > 0 && !busy;
+
+  const handleCreate = async () => {
+    try {
+      const created = await createSeries.mutateAsync({
+        canonicalTitle: title.trim(),
+        kind: kind ?? undefined,
+        year: typeof year === "number" ? year : undefined,
+      });
+      if (!created) throw new Error("series create returned no body");
+      const result = await bulkLink.mutateAsync({
+        ids: releaseIds,
+        seriesId: created.id,
+        provider: null,
+        externalId: null,
+      });
+      const n = result?.linked ?? releaseIds.length;
+      notifications.show({
+        color: "green",
+        message: `Created “${created.canonicalTitle}” and linked ${n} release${n === 1 ? "" : "s"}`,
+      });
+      onLinked();
+    } catch (e) {
+      notifications.show({
+        color: "red",
+        title: "Create & link failed",
+        message: (e as Error).message,
+      });
+    }
+  };
+
+  return (
+    <Modal
+      opened
+      onClose={onClose}
+      title="Create series for selection"
+      centered
+    >
+      <Stack gap="md">
+        <Text size="xs" c="dimmed">
+          Creates one manual series MangaBaka lacks and links all{" "}
+          {releaseIds.length} selected release
+          {releaseIds.length === 1 ? "" : "s"} to it. It won’t auto-resolve
+          future releases.
+        </Text>
+        <TextInput
+          label="Title"
+          required
+          value={title}
+          onChange={(e) => setTitle(e.currentTarget.value)}
+          data-testid="bulk-create-series-title"
+        />
+        <Select
+          label="Kind"
+          placeholder="(optional)"
+          data={["manga", "manhwa", "manhua", "novel", "other"]}
+          value={kind}
+          onChange={setKind}
+          clearable
+          data-testid="bulk-create-series-kind"
+        />
+        <NumberInput
+          label="Year"
+          placeholder="(optional)"
+          value={year}
+          onChange={(v) =>
+            setYear(typeof v === "number" ? v : v === "" ? "" : Number(v) || "")
+          }
+          min={1900}
+          max={2999}
+          allowDecimal={false}
+          data-testid="bulk-create-series-year"
+        />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleCreate}
+            loading={busy}
+            disabled={!canSubmit}
+            data-testid="bulk-create-series-submit"
+          >
+            Create &amp; link {releaseIds.length}
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
   );
 }
 
@@ -502,6 +798,8 @@ function ReviewFilterBar({
   onFormat,
   status,
   onStatus,
+  sort,
+  onSort,
   hasFilters,
   onClear,
 }: {
@@ -513,6 +811,8 @@ function ReviewFilterBar({
   onFormat: (v: string | null) => void;
   status: string | null;
   onStatus: (v: string | null) => void;
+  sort: string | null;
+  onSort: (v: string | null) => void;
   hasFilters: boolean;
   onClear: () => void;
 }) {
@@ -566,6 +866,16 @@ function ReviewFilterBar({
         style={{ width: 170 }}
         data-testid="review-status-filter"
       />
+      <Select
+        label="Sort"
+        placeholder="Newest first"
+        data={REVIEW_SORTS}
+        value={sort}
+        onChange={onSort}
+        clearable
+        style={{ width: 170 }}
+        data-testid="review-sort"
+      />
       {hasFilters && (
         <Button
           variant="subtle"
@@ -585,10 +895,14 @@ function ReviewCard({
   item,
   selected,
   onToggleSelect,
+  collapsed,
+  onToggleCollapse,
 }: {
   item: UnresolvedRelease;
   selected: boolean;
   onToggleSelect: () => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }) {
   const link = useLinkRelease();
   const reject = useRejectRelease();
@@ -680,88 +994,125 @@ function ReviewCard({
           <Box style={{ flex: 1, minWidth: 0 }}>
             <ReleaseHeader release={item} />
           </Box>
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            onClick={onToggleCollapse}
+            aria-label={collapsed ? "Expand release" : "Collapse release"}
+            data-testid={`collapse-${item.id}`}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              style={{
+                transform: collapsed ? "rotate(-90deg)" : "none",
+                transition: "transform 150ms ease",
+              }}
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </ActionIcon>
         </Group>
-        <ExtractedLinks links={item.extractedLinks} />
-        <InformationLink url={item.informationUrl} />
-        <ReleaseDescription body={item.descriptionHtml} />
-        <CleanupTrail
-          queries={item.searchQueries}
-          rules={item.cleanupRulesApplied}
-        />
-        <ReleaseFiles files={item.files} />
-        <CandidateList
-          candidates={item.candidates}
-          disabled={busy}
-          onPick={handleLinkCandidate}
-        />
-        <Group justify="space-between" wrap="wrap" gap="xs">
-          <Group gap="xs">
-            <Button
-              variant="light"
-              size="xs"
-              onClick={openManual}
+        {/* Conditionally rendered (not Mantine <Collapse>) so a collapsed
+            card mounts none of its detail panels — the candidate/provider
+            searches never run for rows the operator isn't looking at. */}
+        {!collapsed && (
+          <Stack gap="sm">
+            <ExtractedLinks links={item.extractedLinks} />
+            <InformationLink url={item.informationUrl} />
+            <ReleaseDescription body={item.descriptionHtml} />
+            <CleanupTrail
+              queries={item.searchQueries}
+              rules={item.cleanupRulesApplied}
+            />
+            <ReleaseFiles files={item.files} />
+            <CandidateList
+              candidates={item.candidates}
               disabled={busy}
-            >
-              Search provider
-            </Button>
-            <Tooltip label="Link this release to a series already in the catalog (including manual ones).">
-              <Button
-                variant="light"
-                color="cyan"
-                size="xs"
-                onClick={openLinkExisting}
-                disabled={busy}
-              >
-                Link existing
-              </Button>
-            </Tooltip>
-            <Tooltip label="Create a manual series for something MangaBaka lacks, then link this release to it.">
-              <Button
-                variant="light"
-                color="grape"
-                size="xs"
-                onClick={openCreate}
-                disabled={busy}
-              >
-                Create series
-              </Button>
-            </Tooltip>
-          </Group>
-          <Group gap="xs">
-            <Button
-              variant="subtle"
-              color="gray"
-              size="xs"
-              onClick={handleRetry}
-              loading={retry.isPending}
-              disabled={link.isPending || reject.isPending || keep.isPending}
-            >
-              Retry
-            </Button>
-            <Tooltip label="Keep as a standalone item (a guidebook, artbook, one-shot) — not a tracked series. Stays in the Kept list.">
-              <Button
-                variant="subtle"
-                color="teal"
-                size="xs"
-                onClick={handleKeep}
-                loading={keep.isPending}
-                disabled={link.isPending || reject.isPending || retry.isPending}
-              >
-                Keep
-              </Button>
-            </Tooltip>
-            <Button
-              variant="subtle"
-              color="red"
-              size="xs"
-              onClick={handleReject}
-              loading={reject.isPending}
-              disabled={link.isPending || retry.isPending || keep.isPending}
-            >
-              Reject
-            </Button>
-          </Group>
-        </Group>
+              onPick={handleLinkCandidate}
+            />
+            <Group justify="space-between" wrap="wrap" gap="xs">
+              <Group gap="xs">
+                <Button
+                  variant="light"
+                  size="xs"
+                  onClick={openManual}
+                  disabled={busy}
+                >
+                  Search provider
+                </Button>
+                <Tooltip label="Link this release to a series already in the catalog (including manual ones).">
+                  <Button
+                    variant="light"
+                    color="cyan"
+                    size="xs"
+                    onClick={openLinkExisting}
+                    disabled={busy}
+                  >
+                    Link existing
+                  </Button>
+                </Tooltip>
+                <Tooltip label="Create a manual series for something MangaBaka lacks, then link this release to it.">
+                  <Button
+                    variant="light"
+                    color="grape"
+                    size="xs"
+                    onClick={openCreate}
+                    disabled={busy}
+                  >
+                    Create series
+                  </Button>
+                </Tooltip>
+              </Group>
+              <Group gap="xs">
+                <Button
+                  variant="subtle"
+                  color="gray"
+                  size="xs"
+                  onClick={handleRetry}
+                  loading={retry.isPending}
+                  disabled={
+                    link.isPending || reject.isPending || keep.isPending
+                  }
+                >
+                  Retry
+                </Button>
+                <Tooltip label="Keep as a standalone item (a guidebook, artbook, one-shot) — not a tracked series. Stays in the Kept list.">
+                  <Button
+                    variant="subtle"
+                    color="teal"
+                    size="xs"
+                    onClick={handleKeep}
+                    loading={keep.isPending}
+                    disabled={
+                      link.isPending || reject.isPending || retry.isPending
+                    }
+                  >
+                    Keep
+                  </Button>
+                </Tooltip>
+                <Button
+                  variant="subtle"
+                  color="red"
+                  size="xs"
+                  onClick={handleReject}
+                  loading={reject.isPending}
+                  disabled={link.isPending || retry.isPending || keep.isPending}
+                >
+                  Reject
+                </Button>
+              </Group>
+            </Group>
+          </Stack>
+        )}
       </Stack>
 
       <ProviderSearchModal

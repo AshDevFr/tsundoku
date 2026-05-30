@@ -44,6 +44,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/releases/retry-all", post(releases::retry_all))
         .route("/releases/bulk/reject", post(releases::bulk_reject))
         .route("/releases/bulk/retry", post(releases::bulk_retry))
+        .route("/releases/bulk/link", post(releases::bulk_link))
         .route("/sources/{name}/poll", post(sources::poll))
         .route("/sources/{name}/backfill", post(sources::backfill))
         .route("/sources/{name}/re-enrich", post(sources::reenrich))

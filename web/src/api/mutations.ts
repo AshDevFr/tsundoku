@@ -5,6 +5,7 @@ import type { components } from "@/types/api.generated";
 type LinkRequest = components["schemas"]["LinkRequest"];
 type CreateSeriesRequest = components["schemas"]["CreateSeriesRequest"];
 type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
+type BulkLinkRequest = components["schemas"]["BulkLinkRequest"];
 
 // Extract a useful error message from an openapi-fetch error payload, falling
 // back to a sentence the user can act on. The backend serializes errors as
@@ -174,6 +175,26 @@ export function useBulkRetry() {
       });
       if (error)
         throw new Error(describeError(error, "failed to retry releases"));
+      return data;
+    },
+    onSuccess: () => invalidateReleaseQueries(qc),
+  });
+}
+
+/// Link a set of review-queue releases to a single series in one request.
+/// The body carries an explicit `ids` list plus the series target (either a
+/// `seriesId` or a `provider` + `externalId` pair), mirroring the
+/// single-release link. Used by the bulk "assign to series" / "create &
+/// link all" flows after selecting several releases of the same series.
+export function useBulkLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: BulkLinkRequest) => {
+      const { data, error } = await api.POST("/api/v1/releases/bulk/link", {
+        body,
+      });
+      if (error)
+        throw new Error(describeError(error, "failed to link releases"));
       return data;
     },
     onSuccess: () => invalidateReleaseQueries(qc),

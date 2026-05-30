@@ -386,6 +386,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/releases/bulk/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve a link request into the concrete `series.id` it targets, shared by
+         *     the single-release [`link`] handler and the [`bulk_link`] action. The
+         *     `posted_at` anchor is only consulted on the provider path, where it seeds
+         *     the freshly-upserted series' first-seen timestamp; callers pass the
+         *     release's own `posted_at` (single link) or the anchor release's (bulk).
+         *     Bulk-link a set of review-queue releases to one series. The body's `ids`
+         *     (intersected with the queue statuses) select the releases; the series is
+         *     named exactly as in the single-release [`link`] handler. Each release is
+         *     linked individually (clearing its candidates and bumping the series'
+         *     highest volume/chapter marks) so the result matches what N single links
+         *     would produce. The operator is responsible for the selection being one
+         *     series' releases; the endpoint links them blindly to the chosen target.
+         */
+        post: operations["bulk_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/releases/bulk/reject": {
         parameters: {
             query?: never;
@@ -889,6 +919,40 @@ export interface components {
         AppInfo: {
             name: string;
             version: string;
+        };
+        /**
+         * @description Body for [`bulk_link`]: link every release in `ids` to a single series.
+         *     The target series is named exactly as in [`LinkRequest`] — either an
+         *     existing `seriesId`, or a `provider` + `externalId` pair the active
+         *     provider can resolve (materializing the series row on first link). The
+         *     `ids` are intersected with the queue statuses server-side so a decided
+         *     release can't be relinked, and an empty `ids` list is rejected: linking a
+         *     whole filtered set to one series is never what the operator means.
+         */
+        BulkLinkRequest: {
+            /** @default null */
+            externalId: string | null;
+            /** @default [] */
+            ids: string[];
+            /** @default null */
+            provider: string | null;
+            /**
+             * Format: int32
+             * @default null
+             */
+            seriesId: number | null;
+        };
+        BulkLinkResponse: {
+            /**
+             * Format: int64
+             * @description Number of releases linked to the target series.
+             */
+            linked: number;
+            /**
+             * Format: int32
+             * @description The series the releases were linked to.
+             */
+            seriesId: number;
         };
         BulkRejectResponse: {
             /**
@@ -2483,6 +2547,43 @@ export interface operations {
             };
         };
     };
+    bulk_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkLinkRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkLinkResponse"];
+                };
+            };
+            /** @description Empty ids, malformed target, or unknown provider/external_id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Target series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     bulk_reject: {
         parameters: {
             query?: never;
@@ -2579,6 +2680,12 @@ export interface operations {
                  *     `unresolved` / `ambiguous` / `review_pending`.
                  */
                 status?: string;
+                /**
+                 * @description Result ordering. One of `observed_desc` (default), `observed_asc`,
+                 *     `posted_desc`, `posted_asc`, `title_asc`, `title_desc`. Title sorts
+                 *     are case-insensitive. An unknown value falls back to `observed_desc`.
+                 */
+                sort?: string;
             };
             header?: never;
             path?: never;

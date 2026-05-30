@@ -1620,6 +1620,95 @@ async fn bulk_reject_by_filter_rejects_whole_matching_set() {
     assert_eq!(queue_total(&app, "format=epub").await, 1);
 }
 
+async fn queue_titles(app: &axum::Router, query: &str) -> Vec<String> {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/releases/unresolved?{query}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["title"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn unresolved_endpoint_sorts_by_title_case_insensitively() {
+    let db = fresh_db().await;
+    // Seeded out of order, mixed case: a case-sensitive sort would put the
+    // capitalized titles ahead of the lowercase one.
+    seed_queue_release(&db, "1", "feed", "banana", "a.cbz", "unresolved").await;
+    seed_queue_release(&db, "2", "feed", "Apple", "b.cbz", "unresolved").await;
+    seed_queue_release(&db, "3", "feed", "cherry", "c.cbz", "unresolved").await;
+    let app = queue_app(db);
+
+    assert_eq!(
+        queue_titles(&app, "sort=title_asc").await,
+        vec!["Apple", "banana", "cherry"]
+    );
+    assert_eq!(
+        queue_titles(&app, "sort=title_desc").await,
+        vec!["cherry", "banana", "Apple"]
+    );
+    // An unknown sort falls back to observed_desc (newest first); all three
+    // share roughly the same observed time, so just assert it stays valid.
+    assert_eq!(queue_titles(&app, "sort=bogus").await.len(), 3);
+}
+
+#[tokio::test]
+async fn bulk_link_assigns_selected_releases_to_one_series() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "One Piece", "manga").await;
+    let a = seed_queue_release(&db, "1", "feed", "One Piece 001", "a.cbz", "unresolved").await;
+    let b = seed_queue_release(&db, "2", "feed", "One Piece 002", "b.cbz", "review_pending").await;
+    seed_queue_release(&db, "3", "feed", "Bleach 001", "c.cbz", "unresolved").await;
+    let app = queue_app(db);
+
+    let body = post_json(
+        &app,
+        "/api/v1/releases/bulk/link",
+        serde_json::json!({ "ids": [a, b], "seriesId": sid }),
+    )
+    .await;
+    assert_eq!(body["linked"], 2);
+    assert_eq!(body["seriesId"], sid);
+    // The two linked releases leave the queue; the Bleach row remains.
+    let remaining = queue_titles(&app, "").await;
+    assert_eq!(remaining, vec!["Bleach 001"]);
+}
+
+#[tokio::test]
+async fn bulk_link_rejects_empty_ids() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "Naruto", "manga").await;
+    let app = queue_app(db);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/releases/bulk/link")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "ids": [], "seriesId": sid }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
 #[tokio::test]
 async fn bulk_retry_reports_matched_and_triggers() {
     let db = fresh_db().await;
