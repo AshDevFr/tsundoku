@@ -183,19 +183,14 @@ describe("FeedPage", () => {
     expect(screen.queryByText("Chainsaw Man")).not.toBeInTheDocument();
   });
 
-  it("toggles between card and list views via the URL view= param", async () => {
-    const { router } = renderWithProviders("/");
+  it("toggles between card and list views (persisted display preference)", async () => {
+    renderWithProviders("/");
     await screen.findByText("Chainsaw Man");
     expect(screen.queryByTestId("feed-list-view")).not.toBeInTheDocument();
     const toggle = screen.getByTestId("feed-view-toggle");
     // SegmentedControl renders one input[type=radio] per option; click the
     // "List" label to flip it.
     fireEvent.click(within(toggle).getByText("List"));
-    await waitFor(() => {
-      expect(
-        (router.state.location.search as Record<string, unknown>).view,
-      ).toBe("list");
-    });
     expect(
       await screen.findByTestId("feed-list-view", undefined, { timeout: 3000 }),
     ).toBeInTheDocument();

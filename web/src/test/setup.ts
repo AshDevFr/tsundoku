@@ -1,6 +1,17 @@
 import "@testing-library/jest-dom/vitest";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
 import { server } from "@/mocks/server";
+import { useUiPrefs } from "@/stores/uiPrefs";
+
+// Persisted Zustand stores are module-level singletons, so a preference set in
+// one test (e.g. flipping to list view) would otherwise bleed into the next.
+// Snapshot the defaults once and restore them — plus clear localStorage — after
+// each test.
+const uiPrefsDefaults = useUiPrefs.getState();
+afterEach(() => {
+  useUiPrefs.setState(uiPrefsDefaults, true);
+  localStorage.clear();
+});
 
 // jsdom doesn't implement these browser APIs, but Mantine (and many UI libs)
 // call them on mount. Provide minimal stubs so component tests can render.

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAdminAuth } from "@/stores/auth";
-import { DEFAULT_PAGE_SIZE } from "@/stores/filters";
+import { DEFAULT_PAGE_SIZE } from "@/stores/uiPrefs";
 import type { components } from "@/types/api.generated";
 
 export type AppInfo = components["schemas"]["AppInfo"];

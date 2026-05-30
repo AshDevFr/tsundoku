@@ -1,15 +1,15 @@
 import {
   Alert,
   Box,
+  Button,
   Center,
   Container,
-  Grid,
+  Flex,
   Group,
   Loader,
   Pagination,
   SegmentedControl,
   Select,
-  SimpleGrid,
   Stack,
   Text,
   Title,
@@ -20,11 +20,12 @@ import { FilterPanel } from "@/components/FilterPanel";
 import { SeriesCard } from "@/components/SeriesCard";
 import { SeriesListRow } from "@/components/SeriesListRow";
 import { feedRoute } from "@/router";
+import type { FilterSearch } from "@/stores/filters";
 import {
   DEFAULT_PAGE_SIZE,
-  type FilterSearch,
   PAGE_SIZE_OPTIONS,
-} from "@/stores/filters";
+  useUiPrefs,
+} from "@/stores/uiPrefs";
 
 export function FeedPage() {
   const search = feedRoute.useSearch();
@@ -33,25 +34,39 @@ export function FeedPage() {
   const setSearch = (next: FilterSearch) =>
     navigate({ search: () => next, replace: false });
 
-  const list = useSeriesList(search);
+  // Display preferences (page size, wide layout) are persisted per-device,
+  // not encoded in the shareable URL.
+  const pageSize = useUiPrefs((s) => s.pageSize);
+  const setPageSize = useUiPrefs((s) => s.setPageSize);
+  const wideMode = useUiPrefs((s) => s.wideMode);
+  const toggleWideMode = useUiPrefs((s) => s.toggleWideMode);
+  const view = useUiPrefs((s) => s.view);
+  const setView = useUiPrefs((s) => s.setView);
+
+  const list = useSeriesList({ ...search, pageSize });
   const total = list.data?.total ?? 0;
-  const pageSize = list.data?.pageSize ?? DEFAULT_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const view: "card" | "list" = search.view === "list" ? "list" : "card";
   // Only show Codex badges once a sweep has succeeded (admin-only signal);
   // absent for non-admins, so badges never leak to the public read tier.
   const codexSynced = Boolean(list.data?.codexSyncedAt);
 
   return (
-    <Container size="xl" py="lg">
-      <Grid gap="lg">
-        <Grid.Col span={{ base: 12, sm: 4, md: 3 }}>
-          <Box pos={{ base: "static", sm: "sticky" }} top={72}>
-            <FilterPanel search={search} onChange={setSearch} />
-          </Box>
-        </Grid.Col>
+    <Container size={wideMode ? "100%" : "xl"} py="lg">
+      <Flex
+        gap="lg"
+        align="flex-start"
+        direction={{ base: "column", sm: "row" }}
+      >
+        <Box
+          w={{ base: "100%", sm: 280 }}
+          style={{ flexShrink: 0 }}
+          pos={{ base: "static", sm: "sticky" }}
+          top={72}
+        >
+          <FilterPanel search={search} onChange={setSearch} />
+        </Box>
 
-        <Grid.Col span={{ base: 12, sm: 8, md: 9 }}>
+        <Box style={{ flex: 1, minWidth: 0 }}>
           <Stack gap="md">
             <Group justify="space-between" align="center" wrap="wrap">
               <Group gap="sm" align="baseline" wrap="wrap">
@@ -71,28 +86,30 @@ export function FeedPage() {
                     value: String(n),
                     label: `${n} / page`,
                   }))}
-                  value={String(search.pageSize ?? DEFAULT_PAGE_SIZE)}
+                  value={String(pageSize)}
                   onChange={(v) => {
-                    const next = Number(v);
-                    setSearch({
-                      ...search,
-                      // Keep the URL clean: only persist a non-default size.
-                      pageSize: next === DEFAULT_PAGE_SIZE ? undefined : next,
-                      page: 1,
-                    });
+                    setPageSize(Number(v) || DEFAULT_PAGE_SIZE);
+                    // Reset to page 1: the current page may not exist at the
+                    // new size. Page number stays in the URL (it's navigation).
+                    setSearch({ ...search, page: 1 });
                   }}
                   allowDeselect={false}
                   data-testid="feed-page-size"
                 />
+                <Button
+                  size="xs"
+                  variant={wideMode ? "filled" : "default"}
+                  onClick={toggleWideMode}
+                  visibleFrom="lg"
+                  aria-pressed={wideMode}
+                  data-testid="feed-wide-toggle"
+                >
+                  Wide
+                </Button>
                 <SegmentedControl
                   size="xs"
                   value={view}
-                  onChange={(v) =>
-                    setSearch({
-                      ...search,
-                      view: v === "list" ? "list" : "card",
-                    })
-                  }
+                  onChange={(v) => setView(v === "list" ? "list" : "card")}
                   data={[
                     { label: "Cards", value: "card" },
                     { label: "List", value: "list" },
@@ -121,15 +138,22 @@ export function FeedPage() {
             )}
 
             {list.data && list.data.items.length > 0 && view === "card" && (
-              <SimpleGrid
-                cols={{ base: 2, xs: 3, sm: 3, md: 4, lg: 5 }}
-                spacing="md"
-                verticalSpacing="md"
+              // Fluid grid: a fixed min track width means freeing horizontal
+              // space (wide mode, a bigger monitor) turns into more columns
+              // rather than larger cards. ~175px keeps ~5 columns in the
+              // centered layout and packs more when the container is wide.
+              <Box
+                data-testid="feed-card-grid"
+                style={{
+                  display: "grid",
+                  gap: "var(--mantine-spacing-md)",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(175px, 1fr))",
+                }}
               >
                 {list.data.items.map((s) => (
                   <SeriesCard key={s.id} series={s} codexSynced={codexSynced} />
                 ))}
-              </SimpleGrid>
+              </Box>
             )}
 
             {list.data && list.data.items.length > 0 && view === "list" && (
@@ -155,8 +179,8 @@ export function FeedPage() {
               </Center>
             )}
           </Stack>
-        </Grid.Col>
-      </Grid>
+        </Box>
+      </Flex>
     </Container>
   );
 }

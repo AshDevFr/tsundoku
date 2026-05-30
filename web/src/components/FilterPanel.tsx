@@ -137,9 +137,6 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     onChange({
       sort: search.sort,
       order: search.order,
-      // Page size is a display preference, not a content filter — clearing
-      // filters shouldn't reset how many results per page the user picked.
-      pageSize: search.pageSize,
       page: 1,
     });
 
