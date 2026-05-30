@@ -1,34 +1,55 @@
 import { Badge, Tooltip } from "@mantine/core";
 import type { CodexInfo } from "@/api/queries";
 
-/// Visual mapping for each Codex presence status. `color` is a Mantine
-/// palette key; `label` is the short badge text; `blurb` seeds the tooltip.
+/// Visual mapping for each Codex presence status. The guiding rule: a
+/// discovery feed should highlight what needs *action*, not just what's
+/// owned. `behind` is the only state worth acting on (you own it but newer
+/// volumes/chapters have surfaced), so it alone gets the loud filled accent
+/// + tile border (orange is reserved for it). The two no-action states stay
+/// calm but legible (you still want to see what you own at a glance), and use
+/// distinct hues for the two flavors of "owned": green for owned-and-confirmed
+/// -current, blue for owned-but-currency-unconfirmed. Both read as "owned";
+/// the hue carries the certainty.
+/// `color` is a Mantine palette key, `variant` the badge fill, `label` the
+/// short badge text, `blurb` seeds the tooltip.
 const STATUS_META: Record<
   CodexInfo["status"],
-  { color: string; label: string; blurb: string }
+  {
+    color: string;
+    variant: "filled" | "light" | "outline";
+    label: string;
+    blurb: string;
+  }
 > = {
   complete: {
     color: "green",
+    variant: "outline",
     label: "owned",
     blurb: "Owned on Codex and up to date with what's surfaced",
   },
   behind: {
-    color: "blue",
+    color: "orange",
+    variant: "filled",
     label: "behind",
     blurb: "Owned on Codex, but newer volumes/chapters have surfaced",
   },
   present: {
-    color: "gray",
-    label: "owned?",
-    blurb: "Owned on Codex; can't tell if it's up to date",
+    color: "blue",
+    variant: "outline",
+    label: "owned",
+    blurb:
+      "Owned on Codex; no numbered releases to compare, so currency is unconfirmed",
   },
 };
 
-/// CSS color for a status, for accenting a series tile's border so owned
-/// series pop alongside the badge. Returns a Mantine CSS variable matching the
-/// badge color (shade 6).
-export function codexBorderColor(status: CodexInfo["status"]): string {
-  return `var(--mantine-color-${STATUS_META[status].color}-6)`;
+/// CSS color for accenting a series tile's border, reserved for the one state
+/// that warrants attention. Only `behind` gets a border (matching the loud
+/// badge); `complete`/`present` return `null` so already-handled series don't
+/// pull the eye in a discovery feed.
+export function codexBorderColor(status: CodexInfo["status"]): string | null {
+  return status === "behind"
+    ? `var(--mantine-color-${STATUS_META.behind.color}-6)`
+    : null;
 }
 
 interface CodexBadgeProps {
@@ -49,9 +70,17 @@ export function CodexBadge({ codex, asLink = false }: CodexBadgeProps) {
 
   const common = {
     size: "xs" as const,
-    variant: "filled" as const,
+    variant: meta.variant,
     color: meta.color,
     style: { cursor: "pointer" },
+    // The ↗ glyph signals "opens an external link" (Codex, in a new tab).
+    // The project ships no icon library, so a unicode arrow is the
+    // dependency-free affordance; without it the badge reads as inert.
+    rightSection: (
+      <span aria-hidden="true" style={{ fontSize: 9, opacity: 0.85 }}>
+        ↗
+      </span>
+    ),
     "data-testid": `codex-badge-${codex.status}`,
   };
 

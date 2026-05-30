@@ -2,7 +2,7 @@ import { MantineProvider } from "@mantine/core";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CodexInfo } from "@/api/queries";
-import { CodexBadge } from "./CodexBadge";
+import { CodexBadge, codexBorderColor } from "./CodexBadge";
 
 function info(overrides: Partial<CodexInfo>): CodexInfo {
   return {
@@ -39,10 +39,12 @@ describe("CodexBadge", () => {
     );
   });
 
-  it("renders the present (uncertain) state", () => {
+  it("renders the present (uncertain) state as plain 'owned'", () => {
+    // `present` reads as "owned" like `complete`; the currency-unknown nuance
+    // lives in the tooltip / outline variant, not a confusing "owned?" label.
     renderBadge(info({ status: "present" }));
     expect(screen.getByTestId("codex-badge-present")).toHaveTextContent(
-      "owned?",
+      "owned",
     );
   });
 
@@ -58,6 +60,14 @@ describe("CodexBadge", () => {
       "https://codex.example.com/series/xyz",
     );
     expect(badge).toHaveAttribute("target", "_blank");
+  });
+
+  it("accents the tile border only for the actionable `behind` state", () => {
+    // `behind` is the one state worth acting on, so it (and only it) gets a
+    // border color; already-handled series stay quiet.
+    expect(codexBorderColor("behind")).toMatch(/^var\(--mantine-color-/);
+    expect(codexBorderColor("complete")).toBeNull();
+    expect(codexBorderColor("present")).toBeNull();
   });
 
   it("opens the deep link via window.open when not a link (inside a card)", () => {

@@ -2,6 +2,7 @@ import {
   AspectRatio,
   Badge,
   Card,
+  Divider,
   Group,
   Image,
   Stack,
@@ -51,8 +52,9 @@ export function SeriesCard({
     series.highestChapter,
     series.totalChapters,
   );
-  // Accent the whole tile with the Codex status color so owned series pop
-  // beyond the small badge. Only when synced + linked, matching the badge.
+  // Accent the whole tile only for the actionable Codex state (`behind`), so
+  // series with new content to grab pop beyond the small badge. Already-handled
+  // (`complete`/`present`) series return no color and stay quiet.
   const codexBorder =
     codexSynced && series.codex
       ? codexBorderColor(series.codex.status)
@@ -92,13 +94,30 @@ export function SeriesCard({
           </AspectRatio>
         </Card.Section>
         <Stack gap={4} mt="xs">
-          <Title order={5} lineClamp={2} title={series.canonicalTitle}>
+          {/* Reserve a constant two-line height so single-line titles don't
+              pull the date / divider / badge rows up: keeps those rows aligned
+              across every card in the grid. `lh` * 2 == `minHeight`. */}
+          <Title
+            order={5}
+            lineClamp={2}
+            lh={1.25}
+            title={series.canonicalTitle}
+            style={{ minHeight: "2.5em" }}
+          >
             {series.canonicalTitle}
           </Title>
-          <Text size="xs" c="dimmed">
-            {formatRelative(series.lastReleaseAt)}
-          </Text>
-          <Group gap={4} mt={4} wrap="wrap">
+          {/* Ownership rides the (otherwise near-empty) timestamp line,
+              right-aligned, so it reads as a distinct signal rather than
+              getting lost among the metadata badges below. */}
+          <Group gap={4} justify="space-between" wrap="nowrap">
+            <Text size="xs" c="dimmed">
+              {formatRelative(series.lastReleaseAt)}
+            </Text>
+            {codexSynced && series.codex && <CodexBadge codex={series.codex} />}
+          </Group>
+          {/* Separate the date/ownership lane from the metadata badge block. */}
+          <Divider my={6} />
+          <Group gap={4} wrap="wrap">
             {series.kind && (
               <Badge size="xs" variant="light" color="blue">
                 {series.kind}
@@ -114,7 +133,6 @@ export function SeriesCard({
                 {series.year}
               </Badge>
             )}
-            {codexSynced && series.codex && <CodexBadge codex={series.codex} />}
             {series.metadataSource === "manual" && (
               <Badge size="xs" variant="light" color="grape">
                 manual

@@ -102,7 +102,7 @@ describe("FeedPage", () => {
       await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 }),
     ).toBeInTheDocument();
     expect(screen.getByText("Solo Leveling")).toBeInTheDocument();
-    expect(screen.getByText("3 matches")).toBeInTheDocument();
+    expect(screen.getByText("9 matches")).toBeInTheDocument();
   });
 
   it("filters via URL search params", async () => {

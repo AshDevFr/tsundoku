@@ -25,7 +25,7 @@ const SERIES: (SeriesListItem & {
   {
     id: 1,
     canonicalTitle: "Chainsaw Man",
-    coverUrl: null,
+    coverUrl: "mock",
     firstSeenAt: NOW - 86_400 * 30,
     lastReleaseAt: NOW - 3_600,
     kind: "manga",
@@ -43,7 +43,7 @@ const SERIES: (SeriesListItem & {
   {
     id: 2,
     canonicalTitle: "Re:Zero - Starting Life in Another World",
-    coverUrl: null,
+    coverUrl: "mock",
     firstSeenAt: NOW - 86_400 * 90,
     lastReleaseAt: NOW - 86_400,
     kind: "novel",
@@ -63,7 +63,7 @@ const SERIES: (SeriesListItem & {
   {
     id: 3,
     canonicalTitle: "Solo Leveling",
-    coverUrl: null,
+    coverUrl: "mock",
     firstSeenAt: NOW - 86_400 * 120,
     lastReleaseAt: NOW - 86_400 * 2,
     kind: "manhwa",
@@ -77,6 +77,164 @@ const SERIES: (SeriesListItem & {
     alternateTitles: [],
     metadataSource: "offline_cache",
     releaseCount: 3,
+  },
+  // --- Codex ownership states, for previewing the badge/border treatment ---
+  // `owned` is derived from the presence of `codex` on the real backend, so
+  // every entry below keeps the two in sync.
+  // complete: owned on Codex and current. The state that should recede.
+  {
+    id: 4,
+    canonicalTitle: "Zero Damage Sword Saint",
+    coverUrl: "mock",
+    firstSeenAt: NOW - 86_400 * 10,
+    lastReleaseAt: NOW - 86_400 * 2,
+    kind: "manga",
+    status: "ongoing",
+    year: 2024,
+    owned: true,
+    description:
+      "A washed-up swordsman reincarnates as the weakest stat line imaginable and turns zero attack power into an unbeatable defense.",
+    genres: ["action", "fantasy"],
+    tags: ["reincarnation", "op protagonist"],
+    alternateTitles: ["攻撃力ゼロから始める剣聖譚"],
+    metadataSource: "offline_cache",
+    releaseCount: 1,
+    highestVolume: 3,
+    totalVolumes: 3,
+    codex: {
+      status: "complete",
+      deepLink: "https://codex.example/series/zero-damage-sword-saint",
+      linkKind: "auto",
+      seriesUuid: "00000000-0000-0000-0000-000000000004",
+      syncedAt: NOW - 1_800,
+      localMaxVolume: 3,
+      volumesOwned: 3,
+    },
+  },
+  // behind: owned, but newer volumes/chapters have surfaced. The only
+  // genuinely actionable state; this is the one that should pop.
+  {
+    id: 5,
+    canonicalTitle: "Jujutsu Kaisen",
+    coverUrl: "mock",
+    firstSeenAt: NOW - 86_400 * 200,
+    lastReleaseAt: NOW - 86_400 * 2,
+    kind: "manga",
+    status: "completed",
+    year: 2018,
+    owned: true,
+    description:
+      "A high-schooler swallows a cursed finger to save his friends and is dragged into a world of jujutsu sorcerers and curses.",
+    genres: ["action", "supernatural"],
+    tags: ["curses", "shonen"],
+    alternateTitles: ["呪術廻戦"],
+    metadataSource: "offline_cache",
+    releaseCount: 10,
+    highestVolume: 30,
+    totalVolumes: 30,
+    highestChapter: 271,
+    totalChapters: 272,
+    codex: {
+      status: "behind",
+      deepLink: "https://codex.example/series/jujutsu-kaisen",
+      linkKind: "auto",
+      seriesUuid: "00000000-0000-0000-0000-000000000005",
+      syncedAt: NOW - 1_800,
+      localMaxVolume: 24,
+      localMaxChapter: 210,
+      volumesOwned: 24,
+    },
+  },
+  // present: owned on Codex, but we can't tell whether it's current (no
+  // numbered releases to compare against). Stays quiet.
+  {
+    id: 6,
+    canonicalTitle: "Owl Night",
+    coverUrl: "mock",
+    firstSeenAt: NOW - 86_400 * 5,
+    lastReleaseAt: NOW - 3_600 * 2,
+    kind: "manga",
+    status: "ongoing",
+    year: 2021,
+    owned: true,
+    description:
+      "A nocturnal courier ferries secrets across a city that never sleeps.",
+    genres: ["mystery", "drama"],
+    tags: ["urban"],
+    alternateTitles: ["アウルナイト"],
+    metadataSource: "offline_cache",
+    releaseCount: 3,
+    codex: {
+      status: "present",
+      deepLink: "https://codex.example/series/owl-night",
+      linkKind: "manual",
+      seriesUuid: "00000000-0000-0000-0000-000000000006",
+      syncedAt: NOW - 1_800,
+      volumesOwned: 4,
+    },
+  },
+  // Un-owned context: the default state of a discovery feed. No codex
+  // overlay, no badge, no border accent.
+  {
+    id: 7,
+    canonicalTitle: "My Tiny Senpai",
+    coverUrl: "mock",
+    firstSeenAt: NOW - 86_400 * 6,
+    lastReleaseAt: NOW - 86_400 * 2,
+    kind: "manga",
+    status: "ongoing",
+    year: 2020,
+    owned: false,
+    description:
+      "A doting senpai and her hopeless kouhai, one office at a time.",
+    genres: ["romance", "comedy"],
+    tags: ["office", "slice of life"],
+    alternateTitles: ["うちの会社の小さい先輩の話"],
+    metadataSource: "offline_cache",
+    releaseCount: 1,
+    highestVolume: 5,
+    totalVolumes: 9,
+  },
+  {
+    id: 8,
+    canonicalTitle: "Destroy All Humans. They Can't Be Regenerated.",
+    coverUrl: "mock",
+    firstSeenAt: NOW - 86_400 * 8,
+    lastReleaseAt: NOW - 86_400 * 2,
+    kind: "manga",
+    status: "completed",
+    year: 2018,
+    owned: false,
+    description: "A deadpan office comedy with an unreasonably long title.",
+    genres: ["comedy"],
+    tags: ["office"],
+    alternateTitles: [],
+    metadataSource: "offline_cache",
+    releaseCount: 2,
+    highestVolume: 7,
+    totalVolumes: 18,
+  },
+  {
+    id: 9,
+    canonicalTitle: "Ichi the Witch",
+    coverUrl: "mock",
+    firstSeenAt: NOW - 86_400 * 4,
+    lastReleaseAt: NOW - 86_400 * 2,
+    kind: "manga",
+    status: "ongoing",
+    year: 2024,
+    owned: false,
+    description:
+      "A boy raised by witches hunts down the magic that wronged him.",
+    genres: ["action", "fantasy"],
+    tags: ["witches", "shonen"],
+    alternateTitles: ["魔男のイチ"],
+    metadataSource: "offline_cache",
+    releaseCount: 2,
+    highestVolume: 2,
+    totalVolumes: 8,
+    highestChapter: 68,
+    totalChapters: 83,
   },
 ];
 
@@ -280,6 +438,17 @@ export const ADMIN_TEST_TOKEN = ADMIN_TOKEN;
 
 export const handlers = [
   http.get("/api/v1/health", () => HttpResponse.json({ status: "ok" })),
+
+  // Cover proxy: the real backend fetches + caches the upstream cover. In
+  // mock mode we redirect to Lorem Picsum (deterministic per series id) so
+  // the feed shows real, varied art — useful for judging overlays/badges
+  // against busy images rather than a flat placeholder.
+  http.get("/api/v1/covers/:id", ({ params }) =>
+    HttpResponse.redirect(
+      `https://picsum.photos/seed/tsundoku-${params.id}/360/480`,
+      302,
+    ),
+  ),
 
   http.get("/api/v1/info", () =>
     HttpResponse.json({ name: "tsundoku", version: "1.0.1-mock" }),
@@ -880,6 +1049,9 @@ export const handlers = [
       metadataSource: found.metadataSource,
       highestVolume: null,
       highestChapter: null,
+      // Carry the Codex overlay onto the detail payload so the admin detail
+      // page renders the ownership badge (it gates on `s.codex`).
+      codex: found.codex ?? null,
     };
     return HttpResponse.json(body);
   }),
@@ -952,6 +1124,9 @@ export const handlers = [
       page,
       pageSize,
       total: filtered.length,
+      // A sweep has run, so the feed renders the Codex ownership badges /
+      // border accents for items that carry a `codex` overlay.
+      codexSyncedAt: NOW - 1_800,
     };
     return HttpResponse.json(body);
   }),
@@ -1017,6 +1192,9 @@ export const handlers = [
       metadataSource: found.metadataSource,
       highestVolume: null,
       highestChapter: null,
+      // Carry the Codex overlay onto the detail payload so the admin detail
+      // page renders the ownership badge (it gates on `s.codex`).
+      codex: found.codex ?? null,
     };
     return HttpResponse.json(body);
   }),
