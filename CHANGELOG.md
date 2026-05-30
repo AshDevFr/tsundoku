@@ -2,6 +2,20 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.6.0] - 2026-05-30
+
+### Features
+
+- *(config,db,codex)* Add Codex presence foundation
+- *(codex,scheduler,api)* Sync job, cron, and admin endpoints for presence overlay
+- *(api)* Admin-only Codex presence overlay on series list and detail
+- *(web)* Codex presence badges, filter, and connection panel
+- *(codex)* Startup status, fetched count, version warning, badge accents
+
+### Documentation
+
+- *(codex)* Document the Codex integration
+
 ## [1.5.3] - 2026-05-29
 
 ### Bug Fixes
