@@ -138,6 +138,13 @@ pub async fn get(db: &DatabaseConnection, series_id: i32) -> Result<Option<Model
     Ok(Entity::find_by_id(series_id).one(db).await?)
 }
 
+/// Every link, both kinds. Used by the admin series filter to compute the
+/// presence status of all linked series at once (personal scale, so loading
+/// the whole table is cheap and keeps the status logic in one place).
+pub async fn list_all(db: &DatabaseConnection) -> Result<Vec<Model>> {
+    Ok(Entity::find().all(db).await?)
+}
+
 /// All `manual` links. The sweep refreshes their counts by matching
 /// `codex_series_uuid` against the swept items (a manual link is created
 /// without counts, since it has no external-id match to carry them).

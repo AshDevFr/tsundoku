@@ -16,6 +16,7 @@
 //!   404 explaining how to run the Vite dev server instead.
 
 pub mod auth;
+pub mod codex_presence;
 pub mod docs;
 pub mod embed;
 pub mod errors;

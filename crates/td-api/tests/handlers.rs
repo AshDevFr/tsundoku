@@ -3732,3 +3732,319 @@ async fn codex_manual_link_404s_for_unknown_series() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+// ----- Codex presence overlay on series (admin-gated) --------------------
+
+async fn seed_series_with_highs(
+    db: &sea_orm::DatabaseConnection,
+    title: &str,
+    highest_volume: Option<f64>,
+    highest_chapter: Option<f64>,
+) -> i32 {
+    let now = Utc::now().timestamp();
+    let model = series::ActiveModel {
+        canonical_title: Set(title.into()),
+        kind: Set(Some("manga".into())),
+        metadata_source: Set("api".into()),
+        metadata_fetched_at: Set(now),
+        first_seen_at: Set(now),
+        last_release_at: Set(now),
+        highest_volume: Set(highest_volume),
+        highest_chapter: Set(highest_chapter),
+        owned: Set(0),
+        ..Default::default()
+    };
+    model.insert(db).await.unwrap().id
+}
+
+async fn link_auto(
+    db: &sea_orm::DatabaseConnection,
+    series_id: i32,
+    uuid: &str,
+    local_max_volume: Option<f64>,
+) {
+    use td_db::repos::codex_link_repo::{AutoLink, upsert_auto};
+    upsert_auto(
+        db,
+        &AutoLink {
+            series_id,
+            codex_series_uuid: uuid.into(),
+            local_max_volume,
+            local_max_chapter: None,
+            volumes_owned: local_max_volume.map(|v| v as i64),
+            matched_provider: "mangabaka".into(),
+            matched_external_id: "1".into(),
+            synced_at: 1,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn series_list_omits_codex_for_non_admin() {
+    let db = fresh_db().await;
+    let sid = seed_series_with_highs(&db, "Owned", Some(10.0), None).await;
+    link_auto(&db, sid, "uuid-1", Some(10.0)).await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    // No bearer -> public read tier -> never sees codex data.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert!(
+        body.get("codexSyncedAt").is_none(),
+        "no codexSyncedAt for anon"
+    );
+    let item = &body["items"][0];
+    assert!(item.get("codex").is_none(), "no codex field for anon");
+    assert_eq!(item["owned"], false);
+}
+
+#[tokio::test]
+async fn series_list_includes_codex_for_admin() {
+    let db = fresh_db().await;
+    // Owned + caught up.
+    let owned = seed_series_with_highs(&db, "Owned Complete", Some(10.0), None).await;
+    link_auto(&db, owned, "uuid-owned", Some(10.0)).await;
+    // Not on Codex.
+    let _unowned = seed_series_with_highs(&db, "Not Owned", Some(3.0), None).await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+
+    let owned_item = items
+        .iter()
+        .find(|i| i["id"] == owned)
+        .expect("owned series present");
+    assert_eq!(owned_item["owned"], true);
+    assert_eq!(owned_item["codex"]["status"], "complete");
+    assert_eq!(owned_item["codex"]["seriesUuid"], "uuid-owned");
+    assert_eq!(owned_item["codex"]["linkKind"], "auto");
+
+    let unowned_item = items
+        .iter()
+        .find(|i| i["canonicalTitle"] == "Not Owned")
+        .expect("unowned series present");
+    assert!(unowned_item.get("codex").is_none());
+    assert_eq!(unowned_item["owned"], false);
+}
+
+#[tokio::test]
+async fn series_detail_codex_is_admin_only() {
+    let db = fresh_db().await;
+    let sid = seed_series_with_highs(&db, "Behind Series", Some(12.0), None).await;
+    // Codex owns up to vol 5 but vol 12 has surfaced -> behind.
+    link_auto(&db, sid, "uuid-behind", Some(5.0)).await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    // Admin sees the overlay.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/series/{sid}"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["codex"]["status"], "behind");
+    assert_eq!(body["owned"], true);
+
+    // Anon does not.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/series/{sid}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert!(body.get("codex").is_none());
+    assert_eq!(body["owned"], false);
+}
+
+#[tokio::test]
+async fn codex_status_filter_is_ignored_for_non_admin() {
+    let db = fresh_db().await;
+    let linked = seed_series_with_highs(&db, "Linked", Some(1.0), None).await;
+    link_auto(&db, linked, "u", Some(1.0)).await;
+    let _unlinked = seed_series_with_highs(&db, "Unlinked", Some(1.0), None).await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    // A non-admin can't filter by codex status: the param is dropped, so the
+    // full feed comes back rather than leaking which series are on Codex.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?codexStatus=missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 2, "filter must be a no-op for anon");
+}
+
+#[tokio::test]
+async fn codex_status_filter_applies_for_admin() {
+    let db = fresh_db().await;
+    // Behind: owns vol 5, vol 12 surfaced.
+    let behind = seed_series_with_highs(&db, "Behind", Some(12.0), None).await;
+    link_auto(&db, behind, "u-behind", Some(5.0)).await;
+    // Complete: owns vol 10, nothing newer.
+    let complete = seed_series_with_highs(&db, "Complete", Some(10.0), None).await;
+    link_auto(&db, complete, "u-complete", Some(10.0)).await;
+    // Missing: not on Codex.
+    let missing = seed_series_with_highs(&db, "Missing", Some(1.0), None).await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let fetch = |uri: &str| {
+        let app = app.clone();
+        let uri = uri.to_string();
+        async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header(header::AUTHORIZATION, "Bearer write-token")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            body_json(resp).await
+        }
+    };
+
+    let body = fetch("/api/v1/series?codexStatus=behind").await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["id"], behind);
+
+    let body = fetch("/api/v1/series?codexStatus=complete").await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["id"], complete);
+
+    let body = fetch("/api/v1/series?codexStatus=any").await;
+    assert_eq!(body["total"], 2, "any = on Codex (behind + complete)");
+
+    let body = fetch("/api/v1/series?codexStatus=missing").await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["id"], missing);
+}
+
+#[tokio::test]
+async fn codex_synced_at_present_for_admin_when_enabled() {
+    use td_db::repos::codex_status_repo;
+    let db = fresh_db().await;
+    codex_status_repo::set_success(&db, 3, 1700).await.unwrap();
+
+    let codex = td_config::CodexConfig {
+        enabled: true,
+        base_url: Some("https://codex.example.com".into()),
+        api_key: Some("k".into()),
+        ..Default::default()
+    };
+    let app = build_app_with_codex(
+        db,
+        open_auth(),
+        codex,
+        None,
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    // Admin: sees the sweep timestamp.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["codexSyncedAt"], 1700);
+
+    // Anon: absent even though a sweep has succeeded.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert!(body.get("codexSyncedAt").is_none());
+}

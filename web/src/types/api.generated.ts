@@ -929,6 +929,42 @@ export interface components {
             /** @default null */
             status: string | null;
         };
+        /**
+         * @description Admin-only presence object embedded on a series. Absent (the `codex` field
+         *     is `None`) when the series is not on Codex or the caller is not an admin.
+         */
+        CodexInfo: {
+            /** @description Deep link to the series page in Codex's web UI. */
+            deepLink: string;
+            linkKind: components["schemas"]["CodexLinkKind"];
+            /**
+             * Format: double
+             * @description Highest owned chapter on Codex (comparison basis).
+             */
+            localMaxChapter?: number | null;
+            /**
+             * Format: double
+             * @description Highest owned volume on Codex (comparison basis).
+             */
+            localMaxVolume?: number | null;
+            seriesUuid: string;
+            status: components["schemas"]["CodexStatus"];
+            /**
+             * Format: int64
+             * @description When this link was last written by a sweep.
+             */
+            syncedAt: number;
+            /**
+             * Format: int64
+             * @description Approximate count of owned volumes (display-only; never compared).
+             */
+            volumesOwned?: number | null;
+        };
+        /**
+         * @description How a link was established.
+         * @enum {string}
+         */
+        CodexLinkKind: "auto" | "manual";
         CodexLinkRequest: {
             /** @description Codex series UUID to hand-link this tsundoku series to. */
             codexSeriesUuid: string;
@@ -945,6 +981,11 @@ export interface components {
             skipped: boolean;
             triggered: boolean;
         };
+        /**
+         * @description Presence status for a series the operator owns on Codex.
+         * @enum {string}
+         */
+        CodexStatus: "complete" | "behind" | "present";
         /**
          * @description Connection-health snapshot for the admin UI. When the integration is
          *     disabled, only `enabled: false` is meaningful; the rest are `None`.
@@ -1582,6 +1623,7 @@ export interface components {
         SeriesDetail: {
             alternateTitles: string[];
             canonicalTitle: string;
+            codex?: null | components["schemas"]["CodexInfo"];
             coverUrl?: string | null;
             description?: string | null;
             externalIds: components["schemas"]["ExternalIdDto"][];
@@ -1600,6 +1642,10 @@ export interface components {
             /** Format: int64 */
             metadataFetchedAt: number;
             metadataSource: string;
+            /**
+             * @description Whether the operator owns this series on Codex. Derived from the
+             *     presence of [`Self::codex`]; only ever `true` for admins.
+             */
             owned: boolean;
             /**
              * Format: double
@@ -1627,6 +1673,7 @@ export interface components {
         };
         SeriesListItem: {
             canonicalTitle: string;
+            codex?: null | components["schemas"]["CodexInfo"];
             coverUrl?: string | null;
             /**
              * @description Short synopsis. The list UI clamps this to a few lines; the detail
@@ -1661,6 +1708,10 @@ export interface components {
              *     provider-backed ones (no cover/metadata is expected).
              */
             metadataSource: string;
+            /**
+             * @description Whether the operator owns this series on Codex. Derived from the
+             *     presence of [`Self::codex`], so it is only ever `true` for admins.
+             */
             owned: boolean;
             /**
              * Format: double
@@ -1694,6 +1745,14 @@ export interface components {
             year?: number | null;
         };
         SeriesListPage: {
+            /**
+             * Format: int64
+             * @description Timestamp of the last successful Codex sweep, or `null`/absent when not
+             *     admin or no sweep has succeeded. The UI suppresses all Codex badges
+             *     while this is absent so a pre-first-sync admin doesn't see false
+             *     "not owned" states. Admin-only.
+             */
+            codexSyncedAt?: number | null;
             items: components["schemas"]["SeriesListItem"][];
             /** Format: int32 */
             page: number;
@@ -2701,6 +2760,13 @@ export interface operations {
                  *     prefix matches. Whitespace-only is treated as absent.
                  */
                 q?: string;
+                /**
+                 * @description Filter by Codex presence status: `any` (on Codex), `missing` (not on
+                 *     Codex), `complete`, `behind`, or `present`. **Admin-only and enforced
+                 *     server-side**: for a non-admin request the param is ignored entirely,
+                 *     so it can't be used to probe library contents.
+                 */
+                codexStatus?: string;
             };
             header?: never;
             path?: never;

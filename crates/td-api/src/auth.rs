@@ -15,15 +15,18 @@
 //! function would have to encode the read/write distinction in its
 //! parameters anyway.
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{FromRequestParts, State};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, Request, header};
 use axum::middleware::Next;
 use axum::response::Response;
 use td_config::AuthConfig;
 
 use crate::errors::ApiError;
+use crate::state::AppState;
 
 const API_KEY_HEADER: &str = "x-api-key";
 
@@ -67,6 +70,33 @@ pub async fn require_admin(
         Ok(next.run(request).await)
     } else {
         Err(ApiError::Unauthorized)
+    }
+}
+
+/// Never-rejecting admin check for read handlers that conditionally enrich
+/// their response for admins. Unlike [`require_admin`] (a gate), this is an
+/// extractor that always succeeds and reports *whether* the request carried a
+/// valid admin bearer. `MaybeAdmin(true)` only when `auth.admin_token` is set
+/// and the `Authorization: Bearer` header matches it.
+///
+/// Handlers use it to decide whether to populate admin-only fields (e.g. the
+/// Codex presence overlay) and whether to honor admin-only query params. A
+/// single boolean drives both, so there is one place to audit for leaks.
+#[derive(Debug, Clone, Copy)]
+pub struct MaybeAdmin(pub bool);
+
+impl FromRequestParts<AppState> for MaybeAdmin {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let is_admin = match state.auth.admin_token.as_deref() {
+            Some(expected) => extract_bearer(&parts.headers).as_deref() == Some(expected),
+            None => false,
+        };
+        Ok(MaybeAdmin(is_admin))
     }
 }
 

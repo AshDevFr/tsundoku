@@ -1234,6 +1234,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "codexStatus",
+            "in": "query",
+            "description": "Filter by Codex presence status: `any` (on Codex), `missing` (not on\nCodex), `complete`, `behind`, or `present`. **Admin-only and enforced\nserver-side**: for a non-admin request the param is ignored entirely,\nso it can't be used to probe library contents.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1894,6 +1903,69 @@
           }
         }
       },
+      "CodexInfo": {
+        "type": "object",
+        "description": "Admin-only presence object embedded on a series. Absent (the `codex` field\nis `None`) when the series is not on Codex or the caller is not an admin.",
+        "required": [
+          "status",
+          "seriesUuid",
+          "deepLink",
+          "linkKind",
+          "syncedAt"
+        ],
+        "properties": {
+          "deepLink": {
+            "type": "string",
+            "description": "Deep link to the series page in Codex's web UI."
+          },
+          "linkKind": {
+            "$ref": "#/components/schemas/CodexLinkKind"
+          },
+          "localMaxChapter": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Highest owned chapter on Codex (comparison basis)."
+          },
+          "localMaxVolume": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Highest owned volume on Codex (comparison basis)."
+          },
+          "seriesUuid": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CodexStatus"
+          },
+          "syncedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When this link was last written by a sweep."
+          },
+          "volumesOwned": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Approximate count of owned volumes (display-only; never compared)."
+          }
+        }
+      },
+      "CodexLinkKind": {
+        "type": "string",
+        "description": "How a link was established.",
+        "enum": [
+          "auto",
+          "manual"
+        ]
+      },
       "CodexLinkRequest": {
         "type": "object",
         "required": [
@@ -1942,6 +2014,15 @@
             "type": "boolean"
           }
         }
+      },
+      "CodexStatus": {
+        "type": "string",
+        "description": "Presence status for a series the operator owns on Codex.",
+        "enum": [
+          "complete",
+          "behind",
+          "present"
+        ]
       },
       "CodexStatusDto": {
         "type": "object",
@@ -3518,6 +3599,17 @@
           "canonicalTitle": {
             "type": "string"
           },
+          "codex": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CodexInfo",
+                "description": "Codex presence overlay. Admin-only; absent for non-admins and for\nseries not on Codex."
+              }
+            ]
+          },
           "coverUrl": {
             "type": [
               "string",
@@ -3582,7 +3674,8 @@
             "type": "string"
           },
           "owned": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the operator owns this series on Codex. Derived from the\npresence of [`Self::codex`]; only ever `true` for admins."
           },
           "rating": {
             "type": [
@@ -3646,6 +3739,17 @@
           "canonicalTitle": {
             "type": "string"
           },
+          "codex": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CodexInfo",
+                "description": "Codex presence overlay. Present **only** for admin-authenticated\nrequests and **only** when the series is on Codex; the key is absent\n(not null) otherwise, so the public read tier never learns library\ncontents."
+              }
+            ]
+          },
           "coverUrl": {
             "type": [
               "string",
@@ -3704,7 +3808,8 @@
             "description": "Provenance of the row's metadata (`offline_cache`, `api`, or `manual`).\nThe browse UI flags `manual` series so they read differently from\nprovider-backed ones (no cover/metadata is expected)."
           },
           "owned": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the operator owns this series on Codex. Derived from the\npresence of [`Self::codex`], so it is only ever `true` for admins."
           },
           "rating": {
             "type": [
@@ -3765,6 +3870,14 @@
           "total"
         ],
         "properties": {
+          "codexSyncedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Timestamp of the last successful Codex sweep, or `null`/absent when not\nadmin or no sweep has succeeded. The UI suppresses all Codex badges\nwhile this is absent so a pre-first-sync admin doesn't see false\n\"not owned\" states. Admin-only."
+          },
           "items": {
             "type": "array",
             "items": {

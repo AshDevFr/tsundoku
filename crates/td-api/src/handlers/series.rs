@@ -1,6 +1,6 @@
 //! Series read endpoints + manual `refresh-metadata` write.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -16,7 +16,10 @@ use td_db::entities::{
     genres, releases, series, series_external_ids, series_genres, series_tags, tags,
 };
 use td_db::repos::run_metrics_repo;
-use td_db::repos::{releases_repo, series_external_ids_repo, series_repo, tagging_repo};
+use td_db::repos::{
+    codex_link_repo, codex_status_repo, releases_repo, series_external_ids_repo, series_repo,
+    tagging_repo,
+};
 use td_metadata::SeriesMetadata;
 use td_metadata::scoring::best_dice;
 use td_resolution::persist;
@@ -24,6 +27,8 @@ use td_scheduler::dispatch;
 use td_scheduler::jobs::refresh_series_metadata;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::auth::MaybeAdmin;
+use crate::codex_presence::{CodexInfo, CodexStatus, build_codex_info, compute_status};
 use crate::errors::{ApiError, ApiResult};
 use crate::handlers::pagination::Pagination;
 use crate::state::{AppState, JobKind, JobResult};
@@ -70,7 +75,15 @@ pub struct SeriesListItem {
     /// Provider rating on a 0-10 scale; surfaced on the list view so a
     /// future sort-by-rating has a number to display.
     pub rating: Option<f64>,
+    /// Whether the operator owns this series on Codex. Derived from the
+    /// presence of [`Self::codex`], so it is only ever `true` for admins.
     pub owned: bool,
+    /// Codex presence overlay. Present **only** for admin-authenticated
+    /// requests and **only** when the series is on Codex; the key is absent
+    /// (not null) otherwise, so the public read tier never learns library
+    /// contents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex: Option<CodexInfo>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -80,6 +93,12 @@ pub struct SeriesListPage {
     pub page: u32,
     pub page_size: u32,
     pub total: u64,
+    /// Timestamp of the last successful Codex sweep, or `null`/absent when not
+    /// admin or no sweep has succeeded. The UI suppresses all Codex badges
+    /// while this is absent so a pre-first-sync admin doesn't see false
+    /// "not owned" states. Admin-only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_synced_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -119,8 +138,14 @@ pub struct SeriesDetail {
     /// Provider rating on a 0-10 scale (normalized in the provider's
     /// mapping layer). `None` when the provider has no rating.
     pub rating: Option<f64>,
+    /// Whether the operator owns this series on Codex. Derived from the
+    /// presence of [`Self::codex`]; only ever `true` for admins.
     pub owned: bool,
     pub external_ids: Vec<ExternalIdDto>,
+    /// Codex presence overlay. Admin-only; absent for non-admins and for
+    /// series not on Codex.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex: Option<CodexInfo>,
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -162,6 +187,11 @@ pub struct SeriesListQuery {
     /// score against canonical + alternate titles, with a boost for FTS5
     /// prefix matches. Whitespace-only is treated as absent.
     pub q: Option<String>,
+    /// Filter by Codex presence status: `any` (on Codex), `missing` (not on
+    /// Codex), `complete`, `behind`, or `present`. **Admin-only and enforced
+    /// server-side**: for a non-admin request the param is ignored entirely,
+    /// so it can't be used to probe library contents.
+    pub codex_status: Option<String>,
 }
 
 impl Default for SeriesListQuery {
@@ -180,6 +210,7 @@ impl Default for SeriesListQuery {
             sort: None,
             order: None,
             q: None,
+            codex_status: None,
         }
     }
 }
@@ -221,6 +252,7 @@ impl SeriesListQuery {
 pub async fn list(
     State(state): State<AppState>,
     Query(q): Query<SeriesListQuery>,
+    MaybeAdmin(is_admin): MaybeAdmin,
 ) -> ApiResult<Json<SeriesListPage>> {
     let pagination = q.pagination();
     let q_text: Option<String> =
@@ -229,10 +261,15 @@ pub async fn list(
             .filter(|s| !s.is_empty())
             .map(str::to_string);
     if let Some(q_raw) = q_text {
-        return search_list(state, q, &q_raw).await;
+        return search_list(state, q, &q_raw, is_admin).await;
     }
 
     let mut select = apply_series_filters(series::Entity::find(), &q);
+    // Codex presence filter: admin-only and enforced here, so a non-admin
+    // request with `codexStatus` set just gets the unfiltered feed.
+    if let Some(filter) = codex_status_filter(&state, &q, is_admin).await? {
+        select = apply_codex_id_filter(select, &filter);
+    }
     let sort_col = match q.sort.as_deref() {
         Some("first_seen_at") => series::Column::FirstSeenAt,
         Some("total_volumes") => series::Column::TotalVolumes,
@@ -270,12 +307,13 @@ pub async fn list(
         .await
         .map_err(anyhow_err)?;
 
-    let items = decorate_list_items(&state, rows).await?;
+    let items = decorate_list_items(&state, rows, is_admin).await?;
     Ok(Json(SeriesListPage {
         items,
         page: pagination.page(),
         page_size: pagination.page_size(),
         total,
+        codex_synced_at: codex_synced_at(&state, is_admin).await?,
     }))
 }
 
@@ -284,6 +322,7 @@ pub async fn list(
 async fn decorate_list_items(
     state: &AppState,
     rows: Vec<series::Model>,
+    is_admin: bool,
 ) -> ApiResult<Vec<SeriesListItem>> {
     let ids: Vec<i32> = rows.iter().map(|m| m.id).collect();
     let genres_map = tagging_repo::genres_by_series_ids(&state.db, &ids)
@@ -295,15 +334,139 @@ async fn decorate_list_items(
     let counts_map = releases_repo::count_by_series_ids(&state.db, &ids)
         .await
         .map_err(anyhow_err)?;
+    // Codex links for this page — only loaded for admins, so the field is
+    // structurally absent for everyone else.
+    let codex_map: HashMap<i32, codex_link_repo::Model> = if is_admin {
+        codex_link_repo::get_for_series_ids(&state.db, &ids)
+            .await
+            .map_err(anyhow_err)?
+            .into_iter()
+            .map(|l| (l.series_id, l))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    let base_url = state.codex.normalized_base_url();
     Ok(rows
         .into_iter()
         .map(|m| {
             let genres = genres_map.get(&m.id).cloned().unwrap_or_default();
             let tags = tags_map.get(&m.id).cloned().unwrap_or_default();
             let release_count = counts_map.get(&m.id).copied().unwrap_or(0);
-            model_to_list_item(m, genres, tags, release_count)
+            let codex = codex_map.get(&m.id).map(|l| {
+                build_codex_info(l, m.highest_volume, m.highest_chapter, base_url.as_deref())
+            });
+            model_to_list_item(m, genres, tags, release_count, codex)
         })
         .collect())
+}
+
+/// Resolve the admin-only `codexStatus` query param to a series-id constraint,
+/// or `None` when no constraint should apply (not admin, param absent/empty, or
+/// an unrecognized value — treated leniently as "no filter"). The status
+/// comparison reuses [`compute_status`] so the filter and the per-row badge
+/// can never disagree.
+async fn codex_status_filter(
+    state: &AppState,
+    q: &SeriesListQuery,
+    is_admin: bool,
+) -> ApiResult<Option<CodexIdFilter>> {
+    if !is_admin {
+        return Ok(None);
+    }
+    let Some(status) = q
+        .codex_status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(None);
+    };
+    let links = codex_link_repo::list_all(&state.db)
+        .await
+        .map_err(anyhow_err)?;
+    let linked_ids: Vec<i32> = links.iter().map(|l| l.series_id).collect();
+    match status {
+        "missing" => Ok(Some(CodexIdFilter::Exclude(linked_ids))),
+        "any" => Ok(Some(CodexIdFilter::Include(linked_ids))),
+        "complete" | "behind" | "present" => {
+            let want = match status {
+                "complete" => CodexStatus::Complete,
+                "behind" => CodexStatus::Behind,
+                _ => CodexStatus::Present,
+            };
+            let highs = series_highs_by_ids(state, &linked_ids).await?;
+            let matching = links
+                .iter()
+                .filter(|l| {
+                    let (hv, hc) = highs.get(&l.series_id).copied().unwrap_or((None, None));
+                    compute_status(hv, hc, l.local_max_volume, l.local_max_chapter) == want
+                })
+                .map(|l| l.series_id)
+                .collect();
+            Ok(Some(CodexIdFilter::Include(matching)))
+        }
+        // Unknown value: don't constrain (lenient, mirrors how unknown sort
+        // fields fall back rather than erroring).
+        _ => Ok(None),
+    }
+}
+
+/// A series-id constraint derived from the codex status filter.
+enum CodexIdFilter {
+    /// Keep only these ids (status match / `any`).
+    Include(Vec<i32>),
+    /// Keep everything except these ids (`missing`).
+    Exclude(Vec<i32>),
+}
+
+fn apply_codex_id_filter(
+    select: sea_orm::Select<series::Entity>,
+    filter: &CodexIdFilter,
+) -> sea_orm::Select<series::Entity> {
+    match filter {
+        CodexIdFilter::Include(ids) => select.filter(series::Column::Id.is_in(ids.iter().copied())),
+        CodexIdFilter::Exclude(ids) => {
+            select.filter(series::Column::Id.is_not_in(ids.iter().copied()))
+        }
+    }
+}
+
+/// Map of `series_id -> (highest_volume, highest_chapter)` for the given ids.
+/// Used by the codex status filter to compute each linked series' status.
+async fn series_highs_by_ids(
+    state: &AppState,
+    ids: &[i32],
+) -> ApiResult<HashMap<i32, (Option<f64>, Option<f64>)>> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = series::Entity::find()
+        .select_only()
+        .column(series::Column::Id)
+        .column(series::Column::HighestVolume)
+        .column(series::Column::HighestChapter)
+        .filter(series::Column::Id.is_in(ids.iter().copied()))
+        .into_tuple::<(i32, Option<f64>, Option<f64>)>()
+        .all(&state.db)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, hv, hc)| (id, (hv, hc)))
+        .collect())
+}
+
+/// The last successful Codex sweep timestamp, admin-only and only when the
+/// integration is enabled. Drives the UI badge-suppression guard.
+async fn codex_synced_at(state: &AppState, is_admin: bool) -> ApiResult<Option<i64>> {
+    if !is_admin || !state.codex.enabled {
+        return Ok(None);
+    }
+    Ok(codex_status_repo::get(&state.db)
+        .await
+        .map_err(anyhow_err)?
+        .and_then(|r| r.last_success_at))
 }
 
 /// Apply the column-level and join-level filters shared by both the
@@ -450,6 +613,7 @@ async fn search_list(
     state: AppState,
     q: SeriesListQuery,
     q_raw: &str,
+    is_admin: bool,
 ) -> ApiResult<Json<SeriesListPage>> {
     let pagination = q.pagination();
 
@@ -509,8 +673,12 @@ async fn search_list(
     let allowed: HashSet<i32> = if candidate_ids.is_empty() {
         HashSet::new()
     } else {
-        let select = apply_series_filters(series::Entity::find(), &q)
+        let mut select = apply_series_filters(series::Entity::find(), &q)
             .filter(series::Column::Id.is_in(candidate_ids));
+        // Same admin-only codex status filter as the no-query path.
+        if let Some(filter) = codex_status_filter(&state, &q, is_admin).await? {
+            select = apply_codex_id_filter(select, &filter);
+        }
         let id_only = select
             .select_only()
             .column(series::Column::Id)
@@ -539,12 +707,13 @@ async fn search_list(
     } else {
         final_rows[start..end].to_vec()
     };
-    let items = decorate_list_items(&state, page_rows).await?;
+    let items = decorate_list_items(&state, page_rows, is_admin).await?;
     Ok(Json(SeriesListPage {
         items,
         page: pagination.page(),
         page_size: pagination.page_size(),
         total,
+        codex_synced_at: codex_synced_at(&state, is_admin).await?,
     }))
 }
 
@@ -581,6 +750,7 @@ fn build_fts_match_expression(raw: &str) -> String {
 pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<i32>,
+    MaybeAdmin(is_admin): MaybeAdmin,
 ) -> ApiResult<Json<SeriesDetail>> {
     let row = series::Entity::find_by_id(id)
         .one(&state.db)
@@ -596,11 +766,28 @@ pub async fn get(
     let genres_for_series = tagging_repo::list_genres_for_series(&state.db, id)
         .await
         .map_err(anyhow_err)?;
+    // Admin-only Codex overlay, same gating as the list endpoint.
+    let codex = if is_admin {
+        codex_link_repo::get(&state.db, id)
+            .await
+            .map_err(anyhow_err)?
+            .map(|l| {
+                build_codex_info(
+                    &l,
+                    row.highest_volume,
+                    row.highest_chapter,
+                    state.codex.normalized_base_url().as_deref(),
+                )
+            })
+    } else {
+        None
+    };
     Ok(Json(model_to_detail(
         row,
         mappings,
         genres_for_series,
         tags_for_series,
+        codex,
     )))
 }
 
@@ -696,10 +883,16 @@ pub async fn create(
     let row = series_repo::create(&state.db, model)
         .await
         .map_err(anyhow_err)?;
-    // A fresh manual series has no external ids, genres, or tags.
+    // A fresh manual series has no external ids, genres, tags, or Codex link.
     Ok((
         StatusCode::CREATED,
-        Json(model_to_detail(row, Vec::new(), Vec::new(), Vec::new())),
+        Json(model_to_detail(
+            row,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+        )),
     ))
 }
 
@@ -776,11 +969,25 @@ pub async fn refresh_metadata(
     let genres_for_series = tagging_repo::list_genres_for_series(&state.db, id)
         .await
         .map_err(anyhow_err)?;
+    // This endpoint is admin-gated by the router, so the caller is always an
+    // admin — surface the Codex overlay like the read path does.
+    let codex = codex_link_repo::get(&state.db, id)
+        .await
+        .map_err(anyhow_err)?
+        .map(|l| {
+            build_codex_info(
+                &l,
+                row.highest_volume,
+                row.highest_chapter,
+                state.codex.normalized_base_url().as_deref(),
+            )
+        });
     Ok(Json(model_to_detail(
         row,
         mappings,
         genres_for_series,
         tags_for_series,
+        codex,
     )))
 }
 
@@ -984,6 +1191,7 @@ fn model_to_list_item(
     genres: Vec<String>,
     tags: Vec<String>,
     release_count: i64,
+    codex: Option<CodexInfo>,
 ) -> SeriesListItem {
     SeriesListItem {
         id: m.id,
@@ -1004,7 +1212,10 @@ fn model_to_list_item(
         highest_volume: m.highest_volume,
         highest_chapter: m.highest_chapter,
         rating: m.rating,
-        owned: m.owned != 0,
+        // `owned` now reflects Codex ownership, surfaced only to admins (the
+        // legacy `series.owned` column was never populated).
+        owned: codex.is_some(),
+        codex,
     }
 }
 
@@ -1013,6 +1224,7 @@ fn model_to_detail(
     mappings: Vec<series_external_ids::Model>,
     join_genres: Vec<String>,
     join_tags: Vec<String>,
+    codex: Option<CodexInfo>,
 ) -> SeriesDetail {
     let alternate_titles = m
         .alternate_titles_json
@@ -1039,7 +1251,7 @@ fn model_to_detail(
         total_volumes: m.total_volumes,
         total_chapters: m.total_chapters,
         rating: m.rating,
-        owned: m.owned != 0,
+        owned: codex.is_some(),
         external_ids: mappings
             .into_iter()
             .map(|x| ExternalIdDto {
@@ -1048,6 +1260,7 @@ fn model_to_detail(
                 fetched_at: x.fetched_at,
             })
             .collect(),
+        codex,
     }
 }
 
