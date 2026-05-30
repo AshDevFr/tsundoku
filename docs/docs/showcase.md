@@ -31,6 +31,15 @@ is sticky via the `view=list` URL param.
 
 ![Browse feed in list view](/img/screenshots/browse/feed-list.png)
 
+### Wide layout
+
+A per-device toggle for data-dense browsing on large displays. It
+drops the centered max-width container so the freed horizontal space
+turns into more columns rather than larger cards. Persisted to
+`localStorage` alongside the view and page-size preferences.
+
+![Browse feed in the wide layout](/img/screenshots/browse/feed-wide.png)
+
 ### Filter rail
 
 The left rail lives in the URL — copy the address bar to share or

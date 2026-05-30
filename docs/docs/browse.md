@@ -104,11 +104,28 @@ clearing browser storage drops them.
 
 ## View modes
 
-The **Cards / List** toggle in the page header is sticky via the
-`view` URL param. Cards are the default; list view is denser and
-better for sort-by-count comparisons.
+The **Cards / List** toggle, the results-per-page selector, and the
+**Wide** toggle in the page header are display preferences: they
+describe how results render on this device, not which results are
+shown, so they live in a persisted `localStorage` store
+(`tsundoku.ui-prefs.v1`) rather than the shareable URL. They survive
+reloads and fresh visits instead of resetting to defaults.
+
+Cards are the default; list view is denser and better for
+sort-by-count comparisons.
 
 ![Browse feed in list view](/img/screenshots/browse/feed-list.png)
+
+### Wide layout
+
+The **Wide** toggle drops the centered max-width container and
+switches the feed to a fixed-width sidebar plus a fluid auto-fill
+card grid. On a large display the freed horizontal space becomes
+more columns rather than larger cards, so you see more series per
+screen. It's off by default and persisted per-device, since you'd
+never want to force it onto a small screen.
+
+![Browse feed in the wide layout](/img/screenshots/browse/feed-wide.png)
 
 Both views show:
 
