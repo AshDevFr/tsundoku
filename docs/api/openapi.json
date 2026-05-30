@@ -20,7 +20,7 @@
           "codex"
         ],
         "summary": "Trigger a Codex presence sweep. Shares the single codex lock with the cron,\nso a manual kick during a scheduled sweep is reported `skipped`.",
-        "operationId": "refresh",
+        "operationId": "codex_refresh",
         "responses": {
           "202": {
             "description": "",
@@ -49,7 +49,7 @@
           "codex"
         ],
         "summary": "Codex connection-health status for the admin UI.",
-        "operationId": "status",
+        "operationId": "codex_status",
         "responses": {
           "200": {
             "description": "",
@@ -1437,7 +1437,7 @@
           "codex"
         ],
         "summary": "Hand-link a tsundoku series to a Codex series UUID. For series with no\nmatchable external id; the next sweep refreshes the link's counts by uuid.",
-        "operationId": "link",
+        "operationId": "codex_link",
         "parameters": [
           {
             "name": "id",
@@ -1486,7 +1486,7 @@
           "codex"
         ],
         "summary": "Remove a series' Codex link (manual or auto). Idempotent: unlinking a\nseries with no link is a no-op success.",
-        "operationId": "unlink",
+        "operationId": "codex_unlink",
         "parameters": [
           {
             "name": "id",

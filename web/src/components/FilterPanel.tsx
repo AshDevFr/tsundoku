@@ -20,6 +20,7 @@ import { useDebouncedCallback, useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useMemo, useState } from "react";
 import { useGenres, useTags } from "@/api/queries";
+import { useAdminAuth } from "@/stores/auth";
 import {
   type FilterSearch,
   type TagFilterMode,
@@ -93,7 +94,20 @@ function triParse(v: string): boolean | undefined {
   return undefined;
 }
 
+// Codex presence filter options. Values match the backend `codexStatus`
+// param; `null` (the cleared Select) means no constraint.
+const CODEX_STATUS_OPTIONS = [
+  { value: "any", label: "On Codex (any)" },
+  { value: "complete", label: "Owned — up to date" },
+  { value: "behind", label: "Owned — behind" },
+  { value: "present", label: "Owned — unverified" },
+  { value: "missing", label: "Not on Codex" },
+];
+
 export function FilterPanel({ search, onChange }: FilterPanelProps) {
+  // The Codex filter is admin-only; the backend ignores it without a valid
+  // token, so there's no point showing it to anon sessions.
+  const isAdmin = useAdminAuth((s) => Boolean(s.token));
   const presets = useFilterPresets((s) => s.presets);
   const savePreset = useFilterPresets((s) => s.savePreset);
   const deletePreset = useFilterPresets((s) => s.deletePreset);
@@ -136,7 +150,8 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     (search.tags?.length ?? 0) > 0 ||
     Boolean(search.q) ||
     typeof search.owned === "boolean" ||
-    typeof search.hasReleases === "boolean";
+    typeof search.hasReleases === "boolean" ||
+    Boolean(search.codexStatus);
 
   const activeSort = search.sort ?? "last_release_at";
   const orderLabels = ORDER_LABELS_BY_SORT[activeSort] ?? DEFAULT_ORDER_LABELS;
@@ -299,30 +314,17 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
           onModeChange={(m) => merge({ tagsMode: m === "any" ? undefined : m })}
         />
 
-        {/*
-          Ownership filter hidden until tsundoku actually talks to Codex.
-          The `owned` flag exists in the schema + API, but with no Codex
-          integration to flip it nothing ever sets `owned=true`, so the
-          control would only ever filter to an empty set or no-op.
-          Re-enable once the Codex HTTP sync lands.
-
-          <Box>
-            <Text size="sm" fw={500} mb={4}>
-              Ownership
-            </Text>
-            <SegmentedControl
-              size="xs"
-              fullWidth
-              value={triValue(search.owned)}
-              onChange={(v) => merge({ owned: triParse(v) })}
-              data={[
-                { label: "Any", value: "any" },
-                { label: "Discoverable", value: "false" },
-                { label: "Owned", value: "true" },
-              ]}
-            />
-          </Box>
-        */}
+        {isAdmin && (
+          <Select
+            label="Codex"
+            placeholder="Any"
+            data={CODEX_STATUS_OPTIONS}
+            value={search.codexStatus ?? null}
+            onChange={(v) => merge({ codexStatus: v ?? undefined })}
+            clearable
+            data-testid="filter-codex-status"
+          />
+        )}
 
         <Box>
           <Text size="sm" fw={500} mb={4}>

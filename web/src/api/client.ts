@@ -20,16 +20,16 @@ export const api = createClient<paths>({
   fetch: (...args) => fetch(...args),
 });
 
-// Attach the admin bearer to every write. Reads stay unauthenticated unless
-// the server is configured with read_requires_auth, which we do not surface
-// in the UI today.
-const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+// Attach the admin bearer when one is set, on EVERY request — not just writes.
+// Writes require it; reads use it so admin-only response enrichment (the Codex
+// presence overlay on series, and GET /codex/status) comes back. The server
+// treats a valid bearer on a read as "admin" via its MaybeAdmin extractor; an
+// absent/invalid token simply yields the public payload. (Reads remain
+// unauthenticated by default — `read_requires_auth` is not surfaced in the UI.)
 api.use({
   onRequest({ request }) {
-    if (WRITE_METHODS.has(request.method)) {
-      const token = currentAdminToken();
-      if (token) request.headers.set("Authorization", `Bearer ${token}`);
-    }
+    const token = currentAdminToken();
+    if (token) request.headers.set("Authorization", `Bearer ${token}`);
     return request;
   },
 });

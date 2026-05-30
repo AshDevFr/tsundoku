@@ -1,9 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { useAdminAuth } from "@/stores/auth";
 import { DEFAULT_PAGE_SIZE } from "@/stores/filters";
 import type { components } from "@/types/api.generated";
 
 export type AppInfo = components["schemas"]["AppInfo"];
+export type CodexStatusDto = components["schemas"]["CodexStatusDto"];
+export type CodexInfo = components["schemas"]["CodexInfo"];
 export type SeriesListItem = components["schemas"]["SeriesListItem"];
 export type SeriesListPage = components["schemas"]["SeriesListPage"];
 export type SeriesDetail = components["schemas"]["SeriesDetail"];
@@ -71,9 +74,16 @@ export interface SeriesFilters {
   /// Free-text search query. Whitespace-only is treated as absent so the
   /// server avoids the rerank pass for an effectively-empty query.
   q?: string;
+  /// Codex presence filter (`any` | `missing` | `complete` | `behind` |
+  /// `present`). Admin-only and enforced server-side; ignored for non-admins.
+  codexStatus?: string;
 }
 
 export function useSeriesList(filters: SeriesFilters) {
+  // The series payload carries the admin-only `codex` overlay when a valid
+  // admin token is present, so the cache key must distinguish admin from anon
+  // responses — otherwise logging in/out would serve a stale payload.
+  const hasAdmin = useAdminAuth((s) => Boolean(s.token));
   const trimmedQ = filters.q?.trim();
   const genresCsv = filters.genres?.length
     ? filters.genres.join(",")
@@ -99,9 +109,12 @@ export function useSeriesList(filters: SeriesFilters) {
     sort: filters.sort || undefined,
     order: filters.order || undefined,
     q: trimmedQ || undefined,
+    // Backend drops this for non-admins; send it regardless and let the
+    // server enforce. Keeps the URL/cache key honest for admins.
+    codexStatus: filters.codexStatus || undefined,
   };
   return useQuery({
-    queryKey: ["series-list", query],
+    queryKey: ["series-list", query, { admin: hasAdmin }],
     queryFn: async () => {
       const { data, error } = await api.GET("/api/v1/series", {
         params: { query },
@@ -114,8 +127,9 @@ export function useSeriesList(filters: SeriesFilters) {
 }
 
 export function useSeriesDetail(id: number | undefined) {
+  const hasAdmin = useAdminAuth((s) => Boolean(s.token));
   return useQuery({
-    queryKey: ["series-detail", id],
+    queryKey: ["series-detail", id, { admin: hasAdmin }],
     enabled: typeof id === "number" && Number.isFinite(id),
     queryFn: async () => {
       const { data, error } = await api.GET("/api/v1/series/{id}", {
@@ -124,6 +138,23 @@ export function useSeriesDetail(id: number | undefined) {
       if (error) throw new Error("failed to load series");
       return data;
     },
+  });
+}
+
+/// Codex connection-health status for the admin maintenance page. Admin-only
+/// on the server; disabled here unless a token is present so anon sessions
+/// don't fire it.
+export function useCodexStatus() {
+  const hasAdmin = useAdminAuth((s) => Boolean(s.token));
+  return useQuery({
+    queryKey: ["codex-status", { admin: hasAdmin }],
+    enabled: hasAdmin,
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/codex/status");
+      if (error) throw new Error("failed to load codex status");
+      return data;
+    },
+    staleTime: 30_000,
   });
 }
 

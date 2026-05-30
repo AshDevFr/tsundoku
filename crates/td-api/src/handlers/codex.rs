@@ -66,6 +66,7 @@ pub struct CodexLinkResponse {
     post,
     path = "/api/v1/codex/refresh",
     tag = "codex",
+    operation_id = "codex_refresh",
     responses(
         (status = 202, body = CodexRefreshResponse),
         (status = 503, description = "Codex integration is disabled")
@@ -107,6 +108,7 @@ pub async fn refresh(State(state): State<AppState>) -> ApiResult<Json<CodexRefre
     get,
     path = "/api/v1/codex/status",
     tag = "codex",
+    operation_id = "codex_status",
     responses((status = 200, body = CodexStatusDto)),
     security(("admin" = []))
 )]
@@ -163,6 +165,7 @@ pub async fn status(State(state): State<AppState>) -> ApiResult<Json<CodexStatus
     post,
     path = "/api/v1/series/{id}/codex-link",
     tag = "codex",
+    operation_id = "codex_link",
     params(("id" = i32, Path, description = "tsundoku series id")),
     request_body = CodexLinkRequest,
     responses(
@@ -209,6 +212,7 @@ pub async fn link(
     delete,
     path = "/api/v1/series/{id}/codex-link",
     tag = "codex",
+    operation_id = "codex_unlink",
     params(("id" = i32, Path, description = "tsundoku series id")),
     responses((status = 204, description = "Link removed (or none existed)")),
     security(("admin" = []))

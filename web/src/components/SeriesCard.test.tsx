@@ -33,12 +33,12 @@ function base(overrides: Partial<SeriesListItem>): SeriesListItem {
 }
 
 // SeriesCard renders a <Link>, so it needs a router context to mount.
-function renderCard(series: SeriesListItem) {
+function renderCard(series: SeriesListItem, codexSynced = false) {
   const root = createRootRoute({ component: Outlet });
   const index = createRoute({
     getParentRoute: () => root,
     path: "/",
-    component: () => <SeriesCard series={series} />,
+    component: () => <SeriesCard series={series} codexSynced={codexSynced} />,
   });
   const router = createRouter({
     routeTree: root.addChildren([index]),
@@ -88,5 +88,30 @@ describe("SeriesCard", () => {
     expect(await screen.findByText("Test Series")).toBeInTheDocument();
     expect(screen.queryByText(/^vol /)).not.toBeInTheDocument();
     expect(screen.queryByText(/^ch /)).not.toBeInTheDocument();
+  });
+
+  const codexInfo = {
+    status: "behind" as const,
+    seriesUuid: "u1",
+    deepLink: "https://codex.example.com/series/u1",
+    linkKind: "auto" as const,
+    syncedAt: 1700,
+  };
+
+  it("shows the Codex badge when synced and a link is present", async () => {
+    renderCard(base({ codex: codexInfo }), true);
+    expect(await screen.findByTestId("codex-badge-behind")).toBeInTheDocument();
+  });
+
+  it("suppresses the Codex badge before the first sync (codexSynced=false)", async () => {
+    renderCard(base({ codex: codexInfo }), false);
+    expect(await screen.findByText("Test Series")).toBeInTheDocument();
+    expect(screen.queryByTestId("codex-badge-behind")).not.toBeInTheDocument();
+  });
+
+  it("shows no Codex badge when the series has no link", async () => {
+    renderCard(base({ codex: undefined }), true);
+    expect(await screen.findByText("Test Series")).toBeInTheDocument();
+    expect(screen.queryByTestId(/^codex-badge-/)).not.toBeInTheDocument();
   });
 });

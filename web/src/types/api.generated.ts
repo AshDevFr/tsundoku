@@ -17,7 +17,7 @@ export interface paths {
          * Trigger a Codex presence sweep. Shares the single codex lock with the cron,
          *     so a manual kick during a scheduled sweep is reported `skipped`.
          */
-        post: operations["refresh"];
+        post: operations["codex_refresh"];
         delete?: never;
         options?: never;
         head?: never;
@@ -32,7 +32,7 @@ export interface paths {
             cookie?: never;
         };
         /** Codex connection-health status for the admin UI. */
-        get: operations["status"];
+        get: operations["codex_status"];
         put?: never;
         post?: never;
         delete?: never;
@@ -710,12 +710,12 @@ export interface paths {
          * Hand-link a tsundoku series to a Codex series UUID. For series with no
          *     matchable external id; the next sweep refreshes the link's counts by uuid.
          */
-        post: operations["link"];
+        post: operations["codex_link"];
         /**
          * Remove a series' Codex link (manual or auto). Idempotent: unlinking a
          *     series with no link is a no-op success.
          */
-        delete: operations["unlink"];
+        delete: operations["codex_unlink"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1939,7 +1939,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    refresh: {
+    codex_refresh: {
         parameters: {
             query?: never;
             header?: never;
@@ -1965,7 +1965,7 @@ export interface operations {
             };
         };
     };
-    status: {
+    codex_status: {
         parameters: {
             query?: never;
             header?: never;
@@ -2913,7 +2913,7 @@ export interface operations {
             };
         };
     };
-    link: {
+    codex_link: {
         parameters: {
             query?: never;
             header?: never;
@@ -2946,7 +2946,7 @@ export interface operations {
             };
         };
     };
-    unlink: {
+    codex_unlink: {
         parameters: {
             query?: never;
             header?: never;

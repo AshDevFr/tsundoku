@@ -12,6 +12,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import type { SeriesListItem } from "@/api/queries";
 import { coverProxyForSeries, formatRelative } from "@/api/utils";
+import { CodexBadge } from "@/components/CodexBadge";
 import { spanBadgeLabel } from "@/components/SeriesCard";
 
 const COVER_PLACEHOLDER =
@@ -26,7 +27,14 @@ const MAX_TAG_CHIPS = 4;
 /// then a row of genre and tag chips. The list endpoint now returns the
 /// description + the normalized genre/tag arrays so this stays a single
 /// query.
-export function SeriesListRow({ series }: { series: SeriesListItem }) {
+export function SeriesListRow({
+  series,
+  codexSynced = false,
+}: {
+  series: SeriesListItem;
+  /// See `SeriesCard` — gates the Codex badge on a successful first sweep.
+  codexSynced?: boolean;
+}) {
   const genres = series.genres ?? [];
   const tags = series.tags ?? [];
   const genreOverflow = Math.max(0, genres.length - MAX_GENRE_CHIPS);
@@ -93,10 +101,8 @@ export function SeriesListRow({ series }: { series: SeriesListItem }) {
                   {series.year}
                 </Badge>
               )}
-              {series.owned && (
-                <Badge size="xs" variant="filled" color="green">
-                  owned
-                </Badge>
+              {codexSynced && series.codex && (
+                <CodexBadge codex={series.codex} />
               )}
               {volLabel && (
                 <Badge

@@ -30,6 +30,27 @@ function invalidateReleaseQueries(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["series-detail"] });
 }
 
+/// Trigger a Codex presence sweep. Invalidates the status row and the series
+/// caches so freshly-linked ownership shows up without a manual reload.
+export function useCodexRefresh() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST("/api/v1/codex/refresh");
+      if (error)
+        throw new Error(
+          describeError(error, "failed to trigger codex refresh"),
+        );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["codex-status"] });
+      qc.invalidateQueries({ queryKey: ["series-list"] });
+      qc.invalidateQueries({ queryKey: ["series-detail"] });
+    },
+  });
+}
+
 export function useLinkRelease() {
   const qc = useQueryClient();
   return useMutation({

@@ -77,6 +77,14 @@ function validateFilterSearch(raw: Record<string, unknown>): FilterSearch {
   if ((PAGE_SIZE_OPTIONS as readonly number[]).includes(pageSize))
     search.pageSize = pageSize;
   if (typeof raw.q === "string" && raw.q.trim()) search.q = raw.q;
+  if (
+    typeof raw.codexStatus === "string" &&
+    ["any", "missing", "complete", "behind", "present"].includes(
+      raw.codexStatus,
+    )
+  ) {
+    search.codexStatus = raw.codexStatus;
+  }
   if (raw.view === "list") search.view = "list";
   else if (raw.view === "card") search.view = "card";
   return search;

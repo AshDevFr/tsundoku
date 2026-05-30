@@ -37,6 +37,7 @@ import {
   formatRelative,
   providerUrl,
 } from "@/api/utils";
+import { CodexBadge } from "@/components/CodexBadge";
 import {
   ExtractedLinks,
   InformationLink,
@@ -199,11 +200,7 @@ export function SeriesDetailPage() {
                   </Badge>
                 </Tooltip>
               )}
-              {s.owned && (
-                <Badge variant="filled" color="green">
-                  owned
-                </Badge>
-              )}
+              {isAdmin && s.codex && <CodexBadge codex={s.codex} asLink />}
               {s.metadataSource === "manual" && (
                 <Badge variant="light" color="grape">
                   manual

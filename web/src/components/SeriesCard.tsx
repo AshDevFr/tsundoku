@@ -11,6 +11,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import type { SeriesListItem } from "@/api/queries";
 import { coverProxyForSeries, formatRelative } from "@/api/utils";
+import { CodexBadge } from "@/components/CodexBadge";
 
 const COVER_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
@@ -30,7 +31,16 @@ export function spanBadgeLabel(
     : `${prefix} ${available}`;
 }
 
-export function SeriesCard({ series }: { series: SeriesListItem }) {
+export function SeriesCard({
+  series,
+  codexSynced = false,
+}: {
+  series: SeriesListItem;
+  /// Whether at least one Codex sweep has succeeded (from the list page's
+  /// `codexSyncedAt`). Gates the Codex badge so a pre-first-sync admin sees
+  /// no stale/empty state.
+  codexSynced?: boolean;
+}) {
   const volLabel = spanBadgeLabel(
     "vol",
     series.highestVolume,
@@ -89,11 +99,7 @@ export function SeriesCard({ series }: { series: SeriesListItem }) {
                 {series.year}
               </Badge>
             )}
-            {series.owned && (
-              <Badge size="xs" variant="filled" color="green">
-                owned
-              </Badge>
-            )}
+            {codexSynced && series.codex && <CodexBadge codex={series.codex} />}
             {series.metadataSource === "manual" && (
               <Badge size="xs" variant="light" color="grape">
                 manual

@@ -1246,4 +1246,25 @@ export const handlers = [
       { status: 404, headers: { "content-type": "application/json" } },
     );
   }),
+
+  // Codex presence integration (admin-only).
+  http.get("/api/v1/codex/status", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({
+      enabled: true,
+      reachable: true,
+      codexName: "codex",
+      codexVersion: "1.4.2",
+      authState: "ok",
+      lastPreflightAt: NOW,
+      lastSuccessAt: NOW,
+      linkedCount: 2,
+    });
+  }),
+  http.post("/api/v1/codex/refresh", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({ triggered: true, skipped: false });
+  }),
 ];

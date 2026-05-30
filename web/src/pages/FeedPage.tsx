@@ -38,6 +38,9 @@ export function FeedPage() {
   const pageSize = list.data?.pageSize ?? DEFAULT_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const view: "card" | "list" = search.view === "list" ? "list" : "card";
+  // Only show Codex badges once a sweep has succeeded (admin-only signal);
+  // absent for non-admins, so badges never leak to the public read tier.
+  const codexSynced = Boolean(list.data?.codexSyncedAt);
 
   return (
     <Container size="xl" py="lg">
@@ -124,7 +127,7 @@ export function FeedPage() {
                 verticalSpacing="md"
               >
                 {list.data.items.map((s) => (
-                  <SeriesCard key={s.id} series={s} />
+                  <SeriesCard key={s.id} series={s} codexSynced={codexSynced} />
                 ))}
               </SimpleGrid>
             )}
@@ -132,7 +135,11 @@ export function FeedPage() {
             {list.data && list.data.items.length > 0 && view === "list" && (
               <Stack gap="xs" data-testid="feed-list-view">
                 {list.data.items.map((s) => (
-                  <SeriesListRow key={s.id} series={s} />
+                  <SeriesListRow
+                    key={s.id}
+                    series={s}
+                    codexSynced={codexSynced}
+                  />
                 ))}
               </Stack>
             )}

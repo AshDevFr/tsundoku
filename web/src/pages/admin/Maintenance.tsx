@@ -1,9 +1,11 @@
 import {
   Alert,
+  Badge,
   Button,
   Card,
   Group,
   List,
+  Loader,
   Modal,
   MultiSelect,
   Select,
@@ -15,13 +17,15 @@ import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useState } from "react";
 import {
+  useCodexRefresh,
   useInvalidateCoverCache,
   useInvalidateMetadataHashes,
   useRecomputeSpans,
   useReenrichSource,
   useRefreshAllSeries,
 } from "@/api/mutations";
-import { useSources } from "@/api/queries";
+import { type CodexStatusDto, useCodexStatus, useSources } from "@/api/queries";
+import { formatRelative } from "@/api/utils";
 
 /// Resolution statuses a release can carry, mirrored from the backend's
 /// `VALID_STATUSES`. Used to populate the re-enrich status picker.
@@ -55,11 +59,148 @@ export function AdminMaintenancePage() {
           per-provider pages.
         </Text>
       </Stack>
+      <CodexConnectionCard />
       <InvalidateMetadataHashesCard />
       <RefreshAllSeriesCard />
       <RecomputeSpansCard />
       <ReenrichReleasesCard />
       <InvalidateCoverCacheCard />
+    </Stack>
+  );
+}
+
+/// Mantine color + human label for each Codex `auth_state`. Names the exact
+/// operator fix for the two failure modes (wrong key vs under-scoped key).
+const AUTH_STATE_META: Record<string, { color: string; label: string }> = {
+  ok: { color: "green", label: "Connected" },
+  unauthorized: { color: "red", label: "API key rejected (401)" },
+  forbidden: { color: "red", label: "API key lacks series:read (403)" },
+  unknown: { color: "gray", label: "Not checked yet" },
+};
+
+/// Codex integration health + a manual sweep trigger. Reads
+/// `GET /codex/status`; the card collapses to a short "disabled" note when the
+/// integration is off so it's harmless to always render on the maintenance
+/// page.
+function CodexConnectionCard() {
+  const status = useCodexStatus();
+  const refresh = useCodexRefresh();
+
+  const handleRefresh = () => {
+    refresh.mutate(undefined, {
+      onSuccess: (data) => {
+        notifications.show({
+          color: data?.triggered ? "blue" : "gray",
+          title: data?.triggered
+            ? "Codex sync triggered"
+            : "Sync already running",
+          message: data?.triggered
+            ? "A presence sweep is running; ownership badges refresh when it finishes."
+            : "A sweep is already in flight; this request was a no-op.",
+        });
+      },
+      onError: (e) =>
+        notifications.show({
+          color: "red",
+          title: "Codex refresh failed",
+          message: (e as Error).message,
+        }),
+    });
+  };
+
+  return (
+    <Card withBorder radius="md" p="md" data-testid="maintenance-codex-card">
+      <Stack gap="sm">
+        <Stack gap={2}>
+          <Title order={4}>Codex integration</Title>
+          <Text size="sm" c="dimmed">
+            Connection health for the Codex presence sync. Ownership badges on
+            the feed come from a periodic sweep; trigger one manually here.
+          </Text>
+        </Stack>
+
+        {status.isLoading && <Loader size="sm" />}
+        {status.isError && (
+          <Alert color="red" variant="light">
+            Failed to load Codex status: {(status.error as Error)?.message}
+          </Alert>
+        )}
+        {status.data && <CodexStatusBody status={status.data} />}
+
+        {status.data?.enabled && (
+          <Group justify="flex-end">
+            <Button
+              size="xs"
+              variant="light"
+              onClick={handleRefresh}
+              loading={refresh.isPending}
+              data-testid="maintenance-codex-refresh-button"
+            >
+              Refresh now
+            </Button>
+          </Group>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+function CodexStatusBody({ status }: { status: CodexStatusDto }) {
+  if (!status.enabled) {
+    return (
+      <Alert color="gray" variant="light" data-testid="codex-status-disabled">
+        The Codex integration is disabled. Set{" "}
+        <code>[codex] enabled = true</code> (with <code>base_url</code> and{" "}
+        <code>api_key</code>) to enable it.
+      </Alert>
+    );
+  }
+  const auth = AUTH_STATE_META[status.authState] ?? AUTH_STATE_META.unknown;
+  return (
+    <Stack gap={6} data-testid="codex-status-body">
+      <Group gap="xs" wrap="wrap">
+        <Badge
+          color={status.reachable ? "green" : "red"}
+          variant="light"
+          data-testid="codex-reachable-badge"
+        >
+          {status.reachable ? "Reachable" : "Unreachable"}
+        </Badge>
+        <Badge
+          color={auth.color}
+          variant="light"
+          data-testid="codex-auth-badge"
+        >
+          {auth.label}
+        </Badge>
+        {status.codexName && (
+          <Text size="sm" c="dimmed">
+            {status.codexName}
+            {status.codexVersion ? ` v${status.codexVersion}` : ""}
+          </Text>
+        )}
+      </Group>
+      <Group gap="lg" wrap="wrap">
+        <Text size="sm">
+          <Text span fw={600}>
+            Linked series:
+          </Text>{" "}
+          {typeof status.linkedCount === "number" ? status.linkedCount : "—"}
+        </Text>
+        <Text size="sm">
+          <Text span fw={600}>
+            Last sync:
+          </Text>{" "}
+          {typeof status.lastSuccessAt === "number"
+            ? formatRelative(status.lastSuccessAt)
+            : "never"}
+        </Text>
+      </Group>
+      {status.lastError && (
+        <Text size="xs" c="red" data-testid="codex-last-error">
+          Last error: {status.lastError}
+        </Text>
+      )}
     </Stack>
   );
 }
