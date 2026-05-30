@@ -8,7 +8,6 @@ import {
   Loader,
   Modal,
   MultiSelect,
-  Select,
   Stack,
   Text,
   Title,
@@ -270,48 +269,72 @@ function CodexStatusBody({ status }: { status: CodexStatusDto }) {
 /// Re-fetch the detail page for already-persisted releases and refresh their
 /// source-derived columns (files, description, extracted links, information
 /// link) without touching resolution state. The status picker scopes the
-/// walk; pair it with the source picker (a single source today). Use after a
-/// parser change adds or fixes a detail-page field on existing rows.
+/// walk; the source picker targets one, several, or every source. Each source
+/// is dispatched independently (its own per-source lock), so a busy source is
+/// reported as skipped without holding up the rest. Use after a parser change
+/// adds or fixes a detail-page field on existing rows.
 function ReenrichReleasesCard() {
   const sources = useSources();
   const reenrich = useReenrichSource();
   const sourceNames = sources.data?.items.map((s) => s.name) ?? [];
-  const [source, setSource] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[] | null>(null);
   const [statuses, setStatuses] = useState<string[]>(REENRICH_DEFAULT_STATUSES);
+  const [running, setRunning] = useState(false);
   // Default the picker to the first source once the list loads, without
-  // clobbering an explicit choice.
-  const effectiveSource = source ?? sourceNames[0] ?? null;
+  // clobbering an explicit choice (including an explicit "clear all").
+  const effectiveSources = selected ?? (sourceNames[0] ? [sourceNames[0]] : []);
+  const allSelected =
+    sourceNames.length > 0 && effectiveSources.length === sourceNames.length;
 
-  const handleClick = () => {
-    if (!effectiveSource || statuses.length === 0) {
+  const handleClick = async () => {
+    const targets = effectiveSources;
+    if (targets.length === 0 || statuses.length === 0) {
       return;
     }
-    reenrich.mutate(
-      { name: effectiveSource, statuses },
-      {
-        onSuccess: (data) => {
-          if (data?.triggered) {
-            notifications.show({
-              color: "blue",
-              title: "Re-enrich triggered",
-              message: `${data.source}: ${data.statuses.join(", ")}`,
-            });
-          } else {
-            notifications.show({
-              color: "gray",
-              title: "Source busy",
-              message: `${data?.source ?? effectiveSource}: a poll, backfill, or re-enrich is already in flight`,
-            });
-          }
-        },
-        onError: (e) =>
-          notifications.show({
-            color: "red",
-            title: "Re-enrich failed",
-            message: (e as Error).message,
-          }),
-      },
-    );
+    setRunning(true);
+    try {
+      // Fan out one request per source; each has its own backend lock, so a
+      // busy source just comes back skipped instead of blocking the others.
+      const results = await Promise.allSettled(
+        targets.map((name) => reenrich.mutateAsync({ name, statuses })),
+      );
+      const triggered: string[] = [];
+      const skipped: string[] = [];
+      const failed: string[] = [];
+      results.forEach((r, i) => {
+        const name = targets[i];
+        if (r.status === "fulfilled") {
+          (r.value?.triggered ? triggered : skipped).push(
+            r.value?.source ?? name,
+          );
+        } else {
+          failed.push(name);
+        }
+      });
+      if (triggered.length > 0) {
+        notifications.show({
+          color: "blue",
+          title: "Re-enrich triggered",
+          message: `${triggered.join(", ")}: ${statuses.join(", ")}`,
+        });
+      }
+      if (skipped.length > 0) {
+        notifications.show({
+          color: "gray",
+          title: "Source busy",
+          message: `${skipped.join(", ")}: a poll, backfill, or re-enrich is already in flight`,
+        });
+      }
+      if (failed.length > 0) {
+        notifications.show({
+          color: "red",
+          title: "Re-enrich failed",
+          message: failed.join(", "),
+        });
+      }
+    } finally {
+      setRunning(false);
+    }
   };
 
   return (
@@ -334,15 +357,37 @@ function ReenrichReleasesCard() {
             can mean many detail-page fetches.
           </Text>
         </Stack>
-        <Select
-          label="Source"
-          data={sourceNames}
-          value={effectiveSource}
-          onChange={setSource}
-          disabled={sources.isLoading || sourceNames.length === 0}
-          allowDeselect={false}
-          data-testid="reenrich-source-select"
-        />
+        <Stack gap={4}>
+          <Group justify="space-between" align="center" gap="xs">
+            <Text size="sm" fw={500}>
+              Sources
+            </Text>
+            <Button
+              variant="subtle"
+              size="compact-xs"
+              onClick={() => setSelected(sourceNames)}
+              disabled={
+                sources.isLoading || sourceNames.length === 0 || allSelected
+              }
+              data-testid="reenrich-source-all"
+            >
+              Select all
+            </Button>
+          </Group>
+          <MultiSelect
+            data={sourceNames}
+            value={effectiveSources}
+            onChange={setSelected}
+            placeholder={
+              effectiveSources.length === 0
+                ? "Pick one or more sources"
+                : undefined
+            }
+            clearable
+            disabled={sources.isLoading || sourceNames.length === 0}
+            data-testid="reenrich-source-select"
+          />
+        </Stack>
         <MultiSelect
           label="Statuses"
           data={REENRICH_STATUS_OPTIONS}
@@ -356,8 +401,8 @@ function ReenrichReleasesCard() {
             size="xs"
             variant="light"
             onClick={handleClick}
-            loading={reenrich.isPending}
-            disabled={!effectiveSource || statuses.length === 0}
+            loading={running}
+            disabled={effectiveSources.length === 0 || statuses.length === 0}
             data-testid="maintenance-reenrich-button"
           >
             Re-enrich releases

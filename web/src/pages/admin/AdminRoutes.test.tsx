@@ -545,6 +545,27 @@ describe("admin maintenance page", () => {
     });
   });
 
+  it("re-enriches every source after Select all", async () => {
+    renderAt("/admin/maintenance");
+    const button = await screen.findByTestId(
+      "maintenance-reenrich-button",
+      undefined,
+      { timeout: 3000 },
+    );
+    await waitFor(() => expect(button).not.toBeDisabled());
+    fireEvent.click(screen.getByTestId("reenrich-source-all"));
+    fireEvent.click(button);
+    // Fan-out dispatches one request per source; the triggered notification
+    // lists every source name (the MSW handler echoes each back).
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /english-manga-trusted, running-on-load, running-with-progress: unresolved, ambiguous, review_pending/i,
+        ),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("renders the invalidate-covers card", async () => {
     renderAt("/admin/maintenance");
     expect(
