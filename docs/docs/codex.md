@@ -14,6 +14,12 @@ newer volumes or chapters have surfaced since.
 The overlay is **admin-only**. A public (read-tier) visitor never sees it, in
 the payload or the UI — what's in your library stays private.
 
+[Codex](https://github.com/AshDevFr/codex) is the self-hosted library server
+that holds what you already own; tsundoku reads its series index and projects
+that ownership onto your discovery feed.
+
+![Codex home dashboard](/img/manual-screenshots/codex/home-dashboard.png)
+
 ## Enabling it
 
 Add a `[codex]` block to your config (see [Configuration](./configuration.md#codex)):
