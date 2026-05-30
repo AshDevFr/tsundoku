@@ -2,6 +2,16 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.6.2] - 2026-05-30
+
+### Features
+
+- *(web)* Re-enrich multiple sources or all at once
+
+### Documentation
+
+- Document the wide layout mode and refresh UI screenshots
+
 ## [1.6.1] - 2026-05-30
 
 ### Features
