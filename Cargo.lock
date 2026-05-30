@@ -1880,7 +1880,7 @@ dependencies = [
 
 [[package]]
 name = "migration"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "async-trait",
  "sea-orm-migration",
@@ -3779,7 +3779,7 @@ dependencies = [
 
 [[package]]
 name = "td-api"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3819,7 +3819,7 @@ dependencies = [
 
 [[package]]
 name = "td-codex"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "reqwest",
  "serde",
@@ -3832,7 +3832,7 @@ dependencies = [
 
 [[package]]
 name = "td-config"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "figment",
@@ -3842,7 +3842,7 @@ dependencies = [
 
 [[package]]
 name = "td-db"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3860,7 +3860,7 @@ dependencies = [
 
 [[package]]
 name = "td-http"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "dashmap",
  "rand 0.10.1",
@@ -3872,7 +3872,7 @@ dependencies = [
 
 [[package]]
 name = "td-metadata"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3885,7 +3885,7 @@ dependencies = [
 
 [[package]]
 name = "td-metadata-mangabaka"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3912,7 +3912,7 @@ dependencies = [
 
 [[package]]
 name = "td-resolution"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3936,7 +3936,7 @@ dependencies = [
 
 [[package]]
 name = "td-scheduler"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3962,7 +3962,7 @@ dependencies = [
 
 [[package]]
 name = "td-source"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3977,7 +3977,7 @@ dependencies = [
 
 [[package]]
 name = "td-source-nyaa"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4388,7 +4388,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tsundoku"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "axum",
