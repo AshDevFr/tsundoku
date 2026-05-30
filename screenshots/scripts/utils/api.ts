@@ -53,6 +53,24 @@ export async function listSources(
   return body.items ?? [];
 }
 
+export interface GenreItem {
+  name: string;
+  seriesCount: number;
+}
+
+/// Fetch the genre vocabulary (name + usage count) for the catalog. Used to
+/// drive the filtered browse screenshot toward a real, well-populated genre.
+export async function listGenres(
+  request: APIRequestContext,
+): Promise<GenreItem[]> {
+  const res = await request.get("/api/v1/genres");
+  if (!res.ok()) {
+    return [];
+  }
+  const body = (await res.json()) as { items?: GenreItem[] };
+  return body.items ?? [];
+}
+
 /// Fire off the source polls without waiting. Returns immediately so
 /// the caller can spend the soak window on other work.
 export async function triggerPolls(
