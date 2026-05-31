@@ -9,6 +9,7 @@ type ReleaseDto = components["schemas"]["ReleaseDto"];
 type StatsResponse = components["schemas"]["StatsResponse"];
 type UnresolvedRelease = components["schemas"]["UnresolvedRelease"];
 type UnresolvedPage = components["schemas"]["UnresolvedPage"];
+type ReleaseGroupsResponse = components["schemas"]["ReleaseGroupsResponse"];
 type LinkRequest = components["schemas"]["LinkRequest"];
 type CreateSeriesRequest = components["schemas"]["CreateSeriesRequest"];
 type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
@@ -422,6 +423,19 @@ export function makeUnresolved(
   return { ...INITIAL_QUEUE[1], candidates: [], ...overrides, id };
 }
 
+// The slice of `searchQueries` a given breadth considers: breadth 1 = the
+// primary `[0]`, 2 = `[0..2)`, 3 (or anything else) = all. Mirrors the
+// server's `breadth_key_bound`.
+function breadthVariants(searchQueries: string[], breadth: number): string[] {
+  if (breadth >= 3) return searchQueries;
+  return searchQueries.slice(0, Math.max(1, breadth));
+}
+
+// Whether a release belongs to the group keyed by `searchQuery` at `breadth`.
+function inGroup(r: UnresolvedRelease, searchQuery: string, breadth: number) {
+  return breadthVariants(r.searchQueries, breadth).includes(searchQuery);
+}
+
 // Resolve a bulk request body into the queue rows it targets, mirroring the
 // server: explicit `ids` win; otherwise the filter fields select the set
 // (with the status clamp).
@@ -432,6 +446,8 @@ function bulkTargets(body: BulkReviewRequest): UnresolvedRelease[] {
     return queue.filter((r) => ids.has(r.id));
   }
   const q = body.q?.trim().toLowerCase();
+  const searchQuery = body.searchQuery?.trim();
+  const breadth = body.breadth ?? 1;
   return queue.filter((r) => {
     if (q && !r.title.toLowerCase().includes(q)) return false;
     if (body.sourceName && r.sourceName !== body.sourceName) return false;
@@ -439,6 +455,7 @@ function bulkTargets(body: BulkReviewRequest): UnresolvedRelease[] {
     if (body.status && QUEUE_STATUSES.includes(body.status)) {
       if (r.resolutionStatus !== body.status) return false;
     }
+    if (searchQuery && !inGroup(r, searchQuery, breadth)) return false;
     return true;
   });
 }
@@ -1274,6 +1291,67 @@ export const handlers = [
     return HttpResponse.json(body);
   }),
 
+  // Registered before `/releases/unresolved` so MSW's first-match-wins can't
+  // let the broader route shadow this one (static-before-param convention).
+  http.get("/api/v1/releases/unresolved/groups", ({ request }) => {
+    const url = new URL(request.url);
+    const q = url.searchParams.get("q")?.trim().toLowerCase();
+    const sourceName = url.searchParams.get("sourceName");
+    const format = url.searchParams.get("format");
+    const status = url.searchParams.get("status");
+    const breadth = Number(url.searchParams.get("breadth") ?? "1");
+    const QUEUE_STATUSES = ["unresolved", "ambiguous", "review_pending"];
+    // Same filters as the list, minus the group filter itself.
+    const scoped = queue.filter((r) => {
+      if (q && !r.title.toLowerCase().includes(q)) return false;
+      if (sourceName && r.sourceName !== sourceName) return false;
+      if (format && !r.formats.includes(format)) return false;
+      if (status && QUEUE_STATUSES.includes(status)) {
+        if (r.resolutionStatus !== status) return false;
+      }
+      return true;
+    });
+    // Count distinct releases per cleaned query (within the breadth bound) and
+    // surface the most common candidate series as the hint.
+    const counts = new Map<string, number>();
+    const candidateCounts = new Map<string, Map<number, number>>();
+    const candidateTitles = new Map<number, string>();
+    for (const r of scoped) {
+      const variants = new Set(breadthVariants(r.searchQueries, breadth));
+      for (const v of variants) {
+        counts.set(v, (counts.get(v) ?? 0) + 1);
+        if (r.candidates.length > 0) {
+          const perSeries = candidateCounts.get(v) ?? new Map<number, number>();
+          for (const c of r.candidates) {
+            perSeries.set(c.seriesId, (perSeries.get(c.seriesId) ?? 0) + 1);
+            candidateTitles.set(c.seriesId, c.seriesTitle);
+          }
+          candidateCounts.set(v, perSeries);
+        }
+      }
+    }
+    const groups = [...counts.entries()]
+      .filter(([, n]) => n > 1)
+      .map(([query, count]) => {
+        const perSeries = candidateCounts.get(query);
+        let topCandidate: ReleaseGroupsResponse["groups"][number]["topCandidate"];
+        if (perSeries && perSeries.size > 0) {
+          const [seriesId] = [...perSeries.entries()].sort(
+            (a, b) => b[1] - a[1] || a[0] - b[0],
+          )[0];
+          topCandidate = {
+            seriesId,
+            title: candidateTitles.get(seriesId) ?? "",
+            coverUrl: null,
+          };
+        }
+        return { query, count, topCandidate };
+      })
+      .sort((a, b) => b.count - a.count || a.query.localeCompare(b.query));
+    const body: ReleaseGroupsResponse = { breadth, groups };
+    return HttpResponse.json(body);
+  }),
+
   http.get("/api/v1/releases/unresolved", ({ request }) => {
     const url = new URL(request.url);
     const page = Number(url.searchParams.get("page") ?? "1");
@@ -1283,6 +1361,8 @@ export const handlers = [
     const format = url.searchParams.get("format");
     const status = url.searchParams.get("status");
     const sort = url.searchParams.get("sort");
+    const searchQuery = url.searchParams.get("searchQuery")?.trim();
+    const breadth = Number(url.searchParams.get("breadth") ?? "1");
     const QUEUE_STATUSES = ["unresolved", "ambiguous", "review_pending"];
     const filtered = queue.filter((r) => {
       if (q && !r.title.toLowerCase().includes(q)) return false;
@@ -1292,6 +1372,8 @@ export const handlers = [
       if (status && QUEUE_STATUSES.includes(status)) {
         if (r.resolutionStatus !== status) return false;
       }
+      // Release-group filter: AND with the title `q`, scoped by breadth.
+      if (searchQuery && !inGroup(r, searchQuery, breadth)) return false;
       return true;
     });
     // Mirror the server ordering (case-insensitive title; recency otherwise).

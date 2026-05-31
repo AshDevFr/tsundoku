@@ -121,6 +121,12 @@ export function ReleaseGroupPanel({
                     <Text span c="dimmed">
                       ×{g.count}
                     </Text>
+                    {g.topCandidate && (
+                      <Text span c="dimmed" fs="italic">
+                        {" "}
+                        → {g.topCandidate.title}
+                      </Text>
+                    )}
                   </Chip>
                 ))}
               </Chip.Group>

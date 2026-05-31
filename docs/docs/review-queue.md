@@ -59,6 +59,33 @@ older cards:
 Changing any filter resets pagination and drops any in-flight bulk
 selection. "Clear filters" wipes all four at once.
 
+## Group similar releases
+
+Many queue entries are the same series split across volumes,
+uploaders, and formats. Rather than guessing a title substring to
+cluster them, expand the **Group similar releases** panel above the
+list: it clusters the queue by the cleaned search query stamped at
+resolution time and shows each cluster as a `query ×count` chip
+(with a muted "→ likely *Title*" hint when the releases share a
+dominant candidate series). Only clusters with more than one member
+are shown.
+
+A **breadth** control tunes how aggressively query variants collapse
+together:
+
+- **Tight** (default) — group on the primary cleaned query only.
+- **Medium** — also match the second query variant.
+- **Loose** — match any cleaned variant. Handy for noisy titles, but
+  can over-group on generic fallbacks; confirm in the filtered list
+  before acting.
+
+Clicking a chip scopes the list to that cluster (shown as a
+removable **Group: …** badge in the filter bar) and enables the bulk
+actions on exactly its members — so "link/reject the whole series"
+is one selection away. It composes with the other filters: a title
+search and a group filter AND together. The grouping is ephemeral —
+nothing is stored, and the clusters dissolve as the queue drains.
+
 ## Actions
 
 ### Link a candidate

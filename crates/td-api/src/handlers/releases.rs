@@ -766,6 +766,7 @@ async fn release_groups(
         values.push(fmt.into());
     }
 
+    let backend = db.get_database_backend();
     let where_sql = clauses.join(" AND ");
     let key_bound = breadth_key_bound(breadth);
     let sql = format!(
@@ -775,19 +776,101 @@ async fn release_groups(
          GROUP BY je.value HAVING n > 1 \
          ORDER BY n DESC, je.value ASC"
     );
-
-    let stmt = Statement::from_sql_and_values(db.get_database_backend(), &sql, values);
+    // Same value bindings drive both statements; clone since each Statement
+    // takes ownership.
+    let stmt = Statement::from_sql_and_values(backend, &sql, values.clone());
     let rows = ReleaseGroupRow::find_by_statement(stmt)
         .all(db)
         .await
         .map_err(anyhow_err)?;
-    Ok(rows
-        .into_iter()
-        .map(|row| ReleaseGroupDto {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Display-only hint: the dominant candidate series per group. Counts how
+    // many distinct releases in each group carry a given candidate series and
+    // picks the most common one (ties broken by higher total score, then lower
+    // id). Never a grouping key — purely a "likely <title>" label.
+    let dominant = dominant_candidate_per_group(db, backend, &where_sql, key_bound, values).await?;
+
+    let mut groups = Vec::with_capacity(rows.len());
+    for row in rows {
+        let top_candidate = match dominant.get(&row.query) {
+            Some(&series_id) => td_db::repos::series_repo::find_by_id(db, series_id)
+                .await
+                .map_err(anyhow_err)?
+                .map(|s| ReleaseGroupCandidateDto {
+                    series_id,
+                    title: s.canonical_title,
+                    cover_url: s.cover_url,
+                }),
+            None => None,
+        };
+        groups.push(ReleaseGroupDto {
             query: row.query,
             count: row.n,
-            top_candidate: None,
-        })
+            top_candidate,
+        });
+    }
+    Ok(groups)
+}
+
+/// Row shape for the per-group dominant-candidate aggregation.
+#[derive(Debug, sea_orm::FromQueryResult)]
+struct GroupCandidateRow {
+    query: String,
+    series_id: i32,
+    n: i64,
+    score_sum: f64,
+}
+
+/// For each group (keyed by the flattened query value), find the candidate
+/// series carried by the most distinct releases in that group. Returns a
+/// `query -> series_id` map; queries whose releases have no candidates are
+/// absent. The WHERE/breadth fragments mirror the main grouping query exactly
+/// (same `values` bindings) so the hint is computed over the same membership.
+async fn dominant_candidate_per_group(
+    db: &sea_orm::DatabaseConnection,
+    backend: sea_orm::DatabaseBackend,
+    where_sql: &str,
+    key_bound: &str,
+    values: Vec<sea_orm::Value>,
+) -> ApiResult<std::collections::HashMap<String, i32>> {
+    use sea_orm::{FromQueryResult, Statement};
+
+    let sql = format!(
+        "SELECT je.value AS query, rc.series_id AS series_id, \
+                COUNT(DISTINCT r.id) AS n, SUM(rc.score) AS score_sum \
+         FROM releases r, json_each(r.search_queries) je \
+         JOIN review_candidates rc ON rc.release_id = r.id \
+         WHERE {where_sql}{key_bound} \
+         GROUP BY je.value, rc.series_id"
+    );
+    let stmt = Statement::from_sql_and_values(backend, &sql, values);
+    let rows = GroupCandidateRow::find_by_statement(stmt)
+        .all(db)
+        .await
+        .map_err(anyhow_err)?;
+
+    // Reduce to the single best candidate per query.
+    let mut best: std::collections::HashMap<String, (i32, i64, f64)> =
+        std::collections::HashMap::new();
+    for c in rows {
+        let replace = match best.get(&c.query) {
+            None => true,
+            Some(&(sid, n, score)) => {
+                c.n > n
+                    || (c.n == n && c.score_sum > score)
+                    || (c.n == n && c.score_sum == score && c.series_id < sid)
+            }
+        };
+        if replace {
+            best.insert(c.query, (c.series_id, c.n, c.score_sum));
+        }
+    }
+    Ok(best
+        .into_iter()
+        .map(|(query, (series_id, _, _))| (query, series_id))
         .collect())
 }
 

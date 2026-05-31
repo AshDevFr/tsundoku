@@ -709,4 +709,207 @@ describe("ReviewPage", () => {
     expect(trail.textContent).toContain("Unknown Title");
     expect(trail.textContent).toContain("split_subtitle");
   });
+
+  // --- Release grouping panel ---------------------------------------------
+
+  /// Open the collapsible group panel.
+  function openGroupPanel() {
+    fireEvent.click(screen.getByTestId("release-group-toggle"));
+  }
+
+  /// Click the group chip whose label contains `text`. Mantine forwards the
+  /// `data-testid` to the hidden checkbox `<input>` (clicking it toggles
+  /// selection); the visible label lives in the input's sibling, so match on
+  /// the chip root's text.
+  async function clickGroupChip(text: string) {
+    const input = (await screen.findAllByTestId("release-group-chip")).find(
+      (el) => el.parentElement?.textContent?.includes(text),
+    );
+    if (!input) throw new Error(`no group chip matching ${text}`);
+    fireEvent.click(input);
+  }
+
+  it("clusters the queue and scopes the list to a clicked group", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    seedReviewQueue([
+      ...Array.from({ length: 3 }, (_, i) =>
+        makeUnresolved(`grp:op${i}`, {
+          externalId: `op${i}`,
+          title: `One Piece v0${i + 1}`,
+          searchQueries: ["one piece"],
+          resolutionStatus: "unresolved",
+        }),
+      ),
+      makeUnresolved("grp:bl0", {
+        externalId: "bl0",
+        title: "Bleach v01",
+        searchQueries: ["bleach"],
+        resolutionStatus: "unresolved",
+      }),
+    ]);
+    renderReview();
+    await screen.findByTestId("review-card-grp:op0");
+
+    openGroupPanel();
+    // Only the 3-member cluster qualifies (>1); the lone Bleach release doesn't.
+    await screen.findByTestId("release-group-chip");
+    const panel = screen.getByTestId("release-group-panel");
+    expect(panel.textContent).toContain("one piece");
+    expect(panel.textContent).toContain("×3");
+
+    await clickGroupChip("one piece");
+
+    // The list narrows to the group; the unrelated Bleach card drops out.
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("review-card-grp:bl0"),
+      ).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId("review-card-grp:op0")).toBeInTheDocument();
+    // The active scope is surfaced as a removable badge.
+    expect(screen.getByTestId("review-active-group")).toHaveTextContent(
+      "Group: one piece",
+    );
+  });
+
+  it("widens the clusters when breadth is loosened", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    // "one piece" is primary on one release and only a secondary variant on the
+    // other, so the cluster exists at breadth ≥ 2 but not at the tight default.
+    seedReviewQueue([
+      makeUnresolved("brd:a", {
+        externalId: "a",
+        title: "Primary v01",
+        searchQueries: ["one piece"],
+        resolutionStatus: "unresolved",
+      }),
+      makeUnresolved("brd:b", {
+        externalId: "b",
+        title: "Secondary v01",
+        searchQueries: ["bleach", "one piece"],
+        resolutionStatus: "unresolved",
+      }),
+    ]);
+    renderReview();
+    await screen.findByTestId("review-card-brd:a");
+
+    openGroupPanel();
+    // Tight (breadth 1): no cluster — each primary query is unique.
+    expect(
+      await screen.findByTestId("release-group-empty"),
+    ).toBeInTheDocument();
+
+    // Loosen to Medium (breadth 2): the secondary "one piece" now joins.
+    const panel = screen.getByTestId("release-group-panel");
+    fireEvent.click(within(panel).getByText("Medium"));
+    await screen.findByTestId("release-group-chip");
+    expect(panel.textContent).toContain("one piece");
+    expect(panel.textContent).toContain("×2");
+  });
+
+  it("clears the group scope to restore the full queue", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    seedReviewQueue([
+      makeUnresolved("clr:op0", {
+        externalId: "op0",
+        title: "One Piece v01",
+        searchQueries: ["one piece"],
+        resolutionStatus: "unresolved",
+      }),
+      makeUnresolved("clr:op1", {
+        externalId: "op1",
+        title: "One Piece v02",
+        searchQueries: ["one piece"],
+        resolutionStatus: "unresolved",
+      }),
+      makeUnresolved("clr:bl0", {
+        externalId: "bl0",
+        title: "Bleach v01",
+        searchQueries: ["bleach"],
+        resolutionStatus: "unresolved",
+      }),
+    ]);
+    renderReview();
+    await screen.findByTestId("review-card-clr:bl0");
+
+    openGroupPanel();
+    await clickGroupChip("one piece");
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("review-card-clr:bl0"),
+      ).not.toBeInTheDocument();
+    });
+
+    // Removing the active-group badge restores the unscoped queue.
+    fireEvent.click(
+      within(screen.getByTestId("review-active-group")).getByRole("button"),
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("review-card-clr:bl0")).toBeInTheDocument();
+    });
+  });
+
+  it("bulk-rejects an entire group via select-all-matching", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    // 21 group members (one more than a page) so "select all matching" surfaces
+    // and the bulk request carries the searchQuery filter, not explicit ids.
+    seedReviewQueue([
+      ...Array.from({ length: 21 }, (_, i) =>
+        makeUnresolved(`bgr:op${i}`, {
+          externalId: `op${i}`,
+          title: `One Piece v${String(i + 1).padStart(2, "0")}`,
+          searchQueries: ["one piece"],
+          resolutionStatus: "unresolved",
+        }),
+      ),
+      makeUnresolved("bgr:bl0", {
+        externalId: "bl0",
+        title: "Bleach v01",
+        searchQueries: ["bleach"],
+        resolutionStatus: "unresolved",
+      }),
+    ]);
+    renderReview();
+    await screen.findByTestId("review-card-bgr:op0");
+
+    openGroupPanel();
+    await clickGroupChip("one piece");
+    // Wait for the list to narrow to the group (Bleach drops out).
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("review-card-bgr:bl0"),
+      ).not.toBeInTheDocument();
+    });
+
+    // Select the page, which reveals the "select all matching" escalation
+    // (21 in the group > 20 on the page), then act on the whole group.
+    fireEvent.click(screen.getByTestId("select-all-page"));
+    fireEvent.click(await screen.findByTestId("select-all-matching"));
+    expect(screen.getByTestId("bulk-action-bar")).toHaveTextContent(
+      "21 selected",
+    );
+
+    fireEvent.click(screen.getByTestId("bulk-reject"));
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByTestId("confirm-bulk-reject"));
+
+    // The whole group drains; the out-of-group Bleach release survives, proving
+    // the bulk action was scoped by searchQuery and not a blanket reject.
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByTestId("review-card-bgr:op0"),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+    // Clear via the always-present active-group badge (the in-panel "Clear
+    // group" link is gone once the drained group has no chips).
+    fireEvent.click(
+      within(screen.getByTestId("review-active-group")).getByRole("button"),
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("review-card-bgr:bl0")).toBeInTheDocument();
+    });
+  });
 });

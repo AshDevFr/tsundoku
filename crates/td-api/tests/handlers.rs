@@ -1869,6 +1869,61 @@ async fn groups_endpoint_parity_with_list_filter() {
     }
 }
 
+/// Attach a review-candidate (series + score) to a release.
+async fn seed_candidate(
+    db: &sea_orm::DatabaseConnection,
+    release_id: &str,
+    series_id: i32,
+    score: f64,
+) {
+    use td_db::entities::review_candidates;
+    review_candidates::Entity::insert(review_candidates::ActiveModel {
+        release_id: Set(release_id.to_string()),
+        series_id: Set(series_id),
+        score: Set(score),
+        reason: Set(None),
+    })
+    .exec(db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn groups_endpoint_surfaces_dominant_top_candidate() {
+    let db = fresh_db().await;
+    let one_piece = seed_series(&db, "One Piece", "manga").await;
+    let look_alike = seed_series(&db, "Wan Pisu", "manga").await;
+    // Three releases in the "one piece" group; two point at One Piece, one at
+    // the look-alike (with a higher score, which must NOT win — the hint is
+    // most-common-by-distinct-releases, not best-scored).
+    let a = seed_queue_release_with_queries(&db, "1", "A", &["one piece"]).await;
+    let b = seed_queue_release_with_queries(&db, "2", "B", &["one piece"]).await;
+    let c = seed_queue_release_with_queries(&db, "3", "C", &["one piece"]).await;
+    seed_candidate(&db, &a, one_piece, 0.5).await;
+    seed_candidate(&db, &b, one_piece, 0.5).await;
+    seed_candidate(&db, &c, look_alike, 0.95).await;
+    // A second group with no candidates at all — must still appear, hint absent.
+    seed_queue_release_with_queries(&db, "4", "D", &["bleach"]).await;
+    seed_queue_release_with_queries(&db, "5", "E", &["bleach"]).await;
+    let app = queue_app(db);
+
+    let body = fetch_groups(&app, "").await;
+    let groups = body["groups"].as_array().unwrap();
+    let one_piece_group = groups
+        .iter()
+        .find(|g| g["query"] == "one piece")
+        .expect("one piece group present");
+    assert_eq!(one_piece_group["topCandidate"]["seriesId"], one_piece);
+    assert_eq!(one_piece_group["topCandidate"]["title"], "One Piece");
+
+    let bleach_group = groups
+        .iter()
+        .find(|g| g["query"] == "bleach")
+        .expect("bleach group present");
+    // No candidates → the hint is omitted entirely (skip_serializing_if).
+    assert!(bleach_group.get("topCandidate").is_none());
+}
+
 async fn queue_titles(app: &axum::Router, query: &str) -> Vec<String> {
     let resp = app
         .clone()
