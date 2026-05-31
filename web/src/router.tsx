@@ -2,6 +2,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  Navigate,
   Outlet,
 } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
@@ -188,7 +189,12 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
-export const router = createRouter({ routeTree });
+export const router = createRouter({
+  routeTree,
+  // Unknown URLs bounce back to the feed rather than dead-ending on a
+  // bare "not found" screen.
+  defaultNotFoundComponent: () => <Navigate to="/" replace />,
+});
 
 declare module "@tanstack/react-router" {
   interface Register {
