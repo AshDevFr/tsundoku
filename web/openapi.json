@@ -1014,6 +1014,117 @@
         }
       }
     },
+    "/api/v1/releases/unresolved/groups": {
+      "get": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Grouped review queue: clusters of releases sharing a cleaned search query.",
+        "description": "Honors the same `q` / `sourceName` / `format` / `status` filters as the\nlist endpoint, plus `breadth` (1 = primary query only, default; 2 = first\ntwo; 3 = all). Only clusters with more than one member are returned,\nordered by descending count. Clicking a group re-filters the list via\n`searchQuery` (at the echoed `breadth`) to reproduce exactly these members.\nPagination/sort params are ignored.",
+        "operationId": "list_groups",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "1-indexed page number.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "description": "Items per page (capped server-side at 200).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Free-text title substring match (case-insensitive). Whitespace-only\nis treated as absent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sourceName",
+            "in": "query",
+            "description": "Restrict to a single source instance (`releases.source_name`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Restrict to releases carrying this file format (e.g. `cbz`, `epub`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Narrow to one queue status. Ignored unless it's one of\n`unresolved` / `ambiguous` / `review_pending`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "searchQuery",
+            "in": "query",
+            "description": "Group filter: select only releases whose cleaned `search_queries`\ncontains this exact value (within the [`breadth`] index bound). Kept\ndistinct from the title-substring [`q`] filter — this is the handoff\nfrom a clicked release group, not free-text search. Whitespace-only is\ntreated as absent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "breadth",
+            "in": "query",
+            "description": "How many leading `search_queries` variants the [`search_query`] /\ngrouping match considers: `1` = primary `[0]` only (default), `2` =\n`[0..2)`, `3` = all elements. Out-of-range/absent clamps to `1`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Result ordering. One of `observed_desc` (default), `observed_asc`,\n`posted_desc`, `posted_asc`, `title_asc`, `title_desc`. Title sorts\nare case-insensitive. An unknown value falls back to `observed_desc`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseGroupsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/releases/{id}/keep": {
       "post": {
         "tags": [
@@ -3514,6 +3625,82 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "ReleaseGroupCandidateDto": {
+        "type": "object",
+        "description": "Display-only top-candidate hint attached to a [`ReleaseGroupDto`].",
+        "required": [
+          "seriesId",
+          "title"
+        ],
+        "properties": {
+          "coverUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seriesId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "ReleaseGroupDto": {
+        "type": "object",
+        "description": "A cluster of review-queue releases sharing one cleaned search query. The\n`query` is exactly the value to hand back as `searchQuery` (at the same\n`breadth`) to filter the list down to this group's members.",
+        "required": [
+          "query",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of distinct releases in the group (always > 1)."
+          },
+          "query": {
+            "type": "string",
+            "description": "The shared cleaned search query, and the `searchQuery` filter value\nthat reproduces this group."
+          },
+          "topCandidate": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleaseGroupCandidateDto",
+                "description": "Optional display-only hint about the group's most common top-candidate\nseries. Populated in a later phase; currently always absent. Never a\ngrouping key."
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseGroupsResponse": {
+        "type": "object",
+        "description": "Response for the grouped review-queue endpoint.",
+        "required": [
+          "breadth",
+          "groups"
+        ],
+        "properties": {
+          "breadth": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The breadth the groups were computed at (clamped to {1,2,3}). Echoed so\nthe client can pass it back as the list `breadth` unchanged.",
+            "minimum": 0
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseGroupDto"
+            },
+            "description": "Clusters with more than one member, ordered by descending count then\nquery ascending."
           }
         }
       },

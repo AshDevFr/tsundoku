@@ -238,6 +238,45 @@ pub struct BulkRetryResponse {
     pub matched: u64,
 }
 
+/// A cluster of review-queue releases sharing one cleaned search query. The
+/// `query` is exactly the value to hand back as `searchQuery` (at the same
+/// `breadth`) to filter the list down to this group's members.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseGroupDto {
+    /// The shared cleaned search query, and the `searchQuery` filter value
+    /// that reproduces this group.
+    pub query: String,
+    /// Number of distinct releases in the group (always > 1).
+    pub count: i64,
+    /// Optional display-only hint about the group's most common top-candidate
+    /// series. Populated in a later phase; currently always absent. Never a
+    /// grouping key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_candidate: Option<ReleaseGroupCandidateDto>,
+}
+
+/// Display-only top-candidate hint attached to a [`ReleaseGroupDto`].
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseGroupCandidateDto {
+    pub series_id: i32,
+    pub title: String,
+    pub cover_url: Option<String>,
+}
+
+/// Response for the grouped review-queue endpoint.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseGroupsResponse {
+    /// The breadth the groups were computed at (clamped to {1,2,3}). Echoed so
+    /// the client can pass it back as the list `breadth` unchanged.
+    pub breadth: u8,
+    /// Clusters with more than one member, ordered by descending count then
+    /// query ascending.
+    pub groups: Vec<ReleaseGroupDto>,
+}
+
 #[derive(Debug, Deserialize, IntoParams)]
 #[serde(default, rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
@@ -659,6 +698,129 @@ pub async fn list_unresolved(
         page_size: p.page_size(),
         total,
     }))
+}
+
+/// Row shape for the grouped aggregation query.
+#[derive(Debug, sea_orm::FromQueryResult)]
+struct ReleaseGroupRow {
+    query: String,
+    n: i64,
+}
+
+/// Run the flatten/group/having aggregation over the review queue, returning
+/// query-keyed clusters with more than one member.
+///
+/// This is the **one** place that reimplements the list's `q` / `source_name`
+/// / `format` / `status` predicates in raw SQL — `json_each` is a
+/// table-valued function sea-orm's entity builder doesn't model cleanly, so
+/// the grouped query can't reuse [`review_queue_select`]. The WHERE fragments
+/// below mirror that function verbatim, and the breadth index bound is shared
+/// via [`breadth_key_bound`], so group membership here and group *filtering*
+/// there can't diverge. The parity test is the gate that keeps them honest.
+async fn release_groups(
+    db: &sea_orm::DatabaseConnection,
+    q: Option<&str>,
+    source_name: Option<&str>,
+    format: Option<&str>,
+    status: Option<&str>,
+    breadth: u8,
+) -> ApiResult<Vec<ReleaseGroupDto>> {
+    use sea_orm::{ConnectionTrait, FromQueryResult, Statement};
+
+    fn trimmed(s: Option<&str>) -> Option<&str> {
+        s.map(str::trim).filter(|s| !s.is_empty())
+    }
+
+    let mut clauses: Vec<String> = Vec::new();
+    let mut values: Vec<sea_orm::Value> = Vec::new();
+
+    // Status: a single in-queue status pins to it; anything else (including
+    // resolved/rejected/bogus) falls back to the full three-status set, so the
+    // grouped view can never surface a decided row. Mirrors review_queue_select.
+    match trimmed(status) {
+        Some(s) if QUEUE_STATUSES.contains(&s) => {
+            clauses.push("r.resolution_status = ?".to_string());
+            values.push(s.into());
+        }
+        _ => {
+            let placeholders = vec!["?"; QUEUE_STATUSES.len()].join(",");
+            clauses.push(format!("r.resolution_status IN ({placeholders})"));
+            for st in QUEUE_STATUSES {
+                values.push(st.into());
+            }
+        }
+    }
+    if let Some(q) = trimmed(q) {
+        // `LIKE '%q%'` with raw `%`/`_` acting as wildcards — matches
+        // `Column::contains` in review_queue_select exactly.
+        clauses.push("r.title LIKE ?".to_string());
+        values.push(format!("%{q}%").into());
+    }
+    if let Some(name) = trimmed(source_name) {
+        clauses.push("r.source_name = ?".to_string());
+        values.push(name.into());
+    }
+    if let Some(fmt) = trimmed(format) {
+        clauses
+            .push("r.id IN (SELECT release_id FROM release_formats WHERE format = ?)".to_string());
+        values.push(fmt.into());
+    }
+
+    let where_sql = clauses.join(" AND ");
+    let key_bound = breadth_key_bound(breadth);
+    let sql = format!(
+        "SELECT je.value AS query, COUNT(DISTINCT r.id) AS n \
+         FROM releases r, json_each(r.search_queries) je \
+         WHERE {where_sql}{key_bound} \
+         GROUP BY je.value HAVING n > 1 \
+         ORDER BY n DESC, je.value ASC"
+    );
+
+    let stmt = Statement::from_sql_and_values(db.get_database_backend(), &sql, values);
+    let rows = ReleaseGroupRow::find_by_statement(stmt)
+        .all(db)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| ReleaseGroupDto {
+            query: row.query,
+            count: row.n,
+            top_candidate: None,
+        })
+        .collect())
+}
+
+/// Grouped review queue: clusters of releases sharing a cleaned search query.
+///
+/// Honors the same `q` / `sourceName` / `format` / `status` filters as the
+/// list endpoint, plus `breadth` (1 = primary query only, default; 2 = first
+/// two; 3 = all). Only clusters with more than one member are returned,
+/// ordered by descending count. Clicking a group re-filters the list via
+/// `searchQuery` (at the echoed `breadth`) to reproduce exactly these members.
+/// Pagination/sort params are ignored.
+#[utoipa::path(
+    get,
+    path = "/api/v1/releases/unresolved/groups",
+    tag = "releases",
+    params(ReviewQueueQuery),
+    responses((status = 200, body = ReleaseGroupsResponse))
+)]
+pub async fn list_groups(
+    State(state): State<AppState>,
+    Query(query): Query<ReviewQueueQuery>,
+) -> ApiResult<Json<ReleaseGroupsResponse>> {
+    let breadth = clamp_breadth(query.breadth);
+    let groups = release_groups(
+        &state.db,
+        query.q.as_deref(),
+        query.source_name.as_deref(),
+        query.format.as_deref(),
+        query.status.as_deref(),
+        breadth,
+    )
+    .await?;
+    Ok(Json(ReleaseGroupsResponse { breadth, groups }))
 }
 
 /// Body for the manual-link endpoint. Exactly one of:

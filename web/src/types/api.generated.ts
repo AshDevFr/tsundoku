@@ -509,6 +509,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/releases/unresolved/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Grouped review queue: clusters of releases sharing a cleaned search query.
+         * @description Honors the same `q` / `sourceName` / `format` / `status` filters as the
+         *     list endpoint, plus `breadth` (1 = primary query only, default; 2 = first
+         *     two; 3 = all). Only clusters with more than one member are returned,
+         *     ordered by descending count. Clicking a group re-filters the list via
+         *     `searchQuery` (at the echoed `breadth`) to reproduce exactly these members.
+         *     Pagination/sort params are ignored.
+         */
+        get: operations["list_groups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/releases/{id}/keep": {
         parameters: {
             query?: never;
@@ -1615,6 +1640,45 @@ export interface components {
             sourceName: string;
             title: string;
             torrentUrl?: string | null;
+        };
+        /** @description Display-only top-candidate hint attached to a [`ReleaseGroupDto`]. */
+        ReleaseGroupCandidateDto: {
+            coverUrl?: string | null;
+            /** Format: int32 */
+            seriesId: number;
+            title: string;
+        };
+        /**
+         * @description A cluster of review-queue releases sharing one cleaned search query. The
+         *     `query` is exactly the value to hand back as `searchQuery` (at the same
+         *     `breadth`) to filter the list down to this group's members.
+         */
+        ReleaseGroupDto: {
+            /**
+             * Format: int64
+             * @description Number of distinct releases in the group (always > 1).
+             */
+            count: number;
+            /**
+             * @description The shared cleaned search query, and the `searchQuery` filter value
+             *     that reproduces this group.
+             */
+            query: string;
+            topCandidate?: null | components["schemas"]["ReleaseGroupCandidateDto"];
+        };
+        /** @description Response for the grouped review-queue endpoint. */
+        ReleaseGroupsResponse: {
+            /**
+             * Format: int32
+             * @description The breadth the groups were computed at (clamped to {1,2,3}). Echoed so
+             *     the client can pass it back as the list `breadth` unchanged.
+             */
+            breadth: number;
+            /**
+             * @description Clusters with more than one member, ordered by descending count then
+             *     query ascending.
+             */
+            groups: components["schemas"]["ReleaseGroupDto"][];
         };
         ReleasePage: {
             items: components["schemas"]["ReleaseDto"][];
@@ -2742,6 +2806,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UnresolvedPage"];
+                };
+            };
+        };
+    };
+    list_groups: {
+        parameters: {
+            query?: {
+                /** @description 1-indexed page number. */
+                page?: number;
+                /** @description Items per page (capped server-side at 200). */
+                pageSize?: number;
+                /**
+                 * @description Free-text title substring match (case-insensitive). Whitespace-only
+                 *     is treated as absent.
+                 */
+                q?: string;
+                /** @description Restrict to a single source instance (`releases.source_name`). */
+                sourceName?: string;
+                /** @description Restrict to releases carrying this file format (e.g. `cbz`, `epub`). */
+                format?: string;
+                /**
+                 * @description Narrow to one queue status. Ignored unless it's one of
+                 *     `unresolved` / `ambiguous` / `review_pending`.
+                 */
+                status?: string;
+                /**
+                 * @description Group filter: select only releases whose cleaned `search_queries`
+                 *     contains this exact value (within the [`breadth`] index bound). Kept
+                 *     distinct from the title-substring [`q`] filter — this is the handoff
+                 *     from a clicked release group, not free-text search. Whitespace-only is
+                 *     treated as absent.
+                 */
+                searchQuery?: string;
+                /**
+                 * @description How many leading `search_queries` variants the [`search_query`] /
+                 *     grouping match considers: `1` = primary `[0]` only (default), `2` =
+                 *     `[0..2)`, `3` = all elements. Out-of-range/absent clamps to `1`.
+                 */
+                breadth?: number;
+                /**
+                 * @description Result ordering. One of `observed_desc` (default), `observed_asc`,
+                 *     `posted_desc`, `posted_asc`, `title_asc`, `title_desc`. Title sorts
+                 *     are case-insensitive. An unknown value falls back to `observed_desc`.
+                 */
+                sort?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseGroupsResponse"];
                 };
             };
         };

@@ -75,6 +75,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/series/{id}", get(series::get))
         .route("/releases", get(releases::list))
         .route("/releases/unresolved", get(releases::list_unresolved))
+        .route("/releases/unresolved/groups", get(releases::list_groups))
         .route("/sources", get(sources::list))
         .route("/providers", get(providers::list))
         .route("/providers/{id}/search", get(providers::search))

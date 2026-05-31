@@ -1721,6 +1721,154 @@ async fn bulk_reject_by_search_query_rejects_whole_group() {
     assert_eq!(queue_total(&app, "").await, 1);
 }
 
+async fn fetch_groups(app: &axum::Router, query: &str) -> Value {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/releases/unresolved/groups?{query}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    body_json(resp).await
+}
+
+/// Minimal percent-encoder for query-string values (the parity test feeds a
+/// group's own `query` string back as a `searchQuery` param).
+fn encode_query(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn groups_endpoint_clusters_and_excludes_singletons() {
+    let db = fresh_db().await;
+    seed_queue_release_with_queries(&db, "1", "A", &["one piece", "one piece digital"]).await;
+    seed_queue_release_with_queries(&db, "2", "B", &["one piece"]).await;
+    seed_queue_release_with_queries(&db, "3", "C", &["bleach", "one piece"]).await;
+    seed_queue_release_with_queries(&db, "4", "D", &["bleach"]).await;
+    seed_queue_release_with_queries(&db, "5", "E", &["naruto"]).await;
+    let app = queue_app(db);
+
+    // Breadth 1 (default): group by primary [0]. naruto is a singleton and is
+    // excluded by HAVING count > 1. one piece (A, B) and bleach (C, D) tie at
+    // 2, so they sort by query ascending: bleach before one piece.
+    let body = fetch_groups(&app, "").await;
+    assert_eq!(body["breadth"], 1);
+    let groups = body["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["query"], "bleach");
+    assert_eq!(groups[0]["count"], 2);
+    assert_eq!(groups[1]["query"], "one piece");
+    assert_eq!(groups[1]["count"], 2);
+    // Hint deferred to a later phase: never present yet.
+    assert!(groups[0].get("topCandidate").is_none());
+}
+
+#[tokio::test]
+async fn groups_endpoint_breadth_widens_clusters_and_orders_by_count() {
+    let db = fresh_db().await;
+    seed_queue_release_with_queries(&db, "1", "A", &["one piece", "one piece digital"]).await;
+    seed_queue_release_with_queries(&db, "2", "B", &["one piece"]).await;
+    seed_queue_release_with_queries(&db, "3", "C", &["bleach", "one piece"]).await;
+    seed_queue_release_with_queries(&db, "4", "D", &["bleach"]).await;
+    let app = queue_app(db);
+
+    // Breadth 2 pulls C's secondary "one piece" into that group (now 3),
+    // overtaking bleach (still 2). Ordering is by descending count.
+    let body = fetch_groups(&app, "breadth=2").await;
+    assert_eq!(body["breadth"], 2);
+    let groups = body["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["query"], "one piece");
+    assert_eq!(groups[0]["count"], 3);
+    assert_eq!(groups[1]["query"], "bleach");
+    assert_eq!(groups[1]["count"], 2);
+}
+
+#[tokio::test]
+async fn groups_endpoint_compose_with_filters() {
+    let db = fresh_db().await;
+    // Two "one piece" releases on different sources; a source filter narrows
+    // the group below the singleton threshold and drops it.
+    let a = seed_queue_release(&db, "1", "trusted", "A", "a.cbz", "unresolved").await;
+    let b = seed_queue_release(&db, "2", "popular", "B", "b.cbz", "unresolved").await;
+    for id in [&a, &b] {
+        td_resolution::persist::persist_search_queries(&db, id, &["one piece".into()], &[])
+            .await
+            .unwrap();
+    }
+    let app = queue_app(db);
+
+    // No filter: a single 2-member group.
+    assert_eq!(
+        fetch_groups(&app, "").await["groups"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // Scoped to one source: only one member remains, so the group falls below
+    // the HAVING threshold and disappears.
+    let scoped = fetch_groups(&app, "sourceName=trusted").await;
+    assert_eq!(scoped["groups"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn groups_endpoint_parity_with_list_filter() {
+    let db = fresh_db().await;
+    // A deliberately mixed queue: shared primaries, secondary-only overlaps,
+    // singletons, and a release with no search_queries at all.
+    seed_queue_release_with_queries(&db, "1", "A", &["one piece", "one piece digital"]).await;
+    seed_queue_release_with_queries(&db, "2", "B", &["one piece"]).await;
+    seed_queue_release_with_queries(&db, "3", "C", &["bleach", "one piece"]).await;
+    seed_queue_release_with_queries(&db, "4", "D", &["bleach", "naruto"]).await;
+    seed_queue_release_with_queries(&db, "5", "E", &["naruto"]).await;
+    seed_queue_release_with_queries(&db, "6", "F", &["solo leveling"]).await;
+    // A queue release that never had queries stamped — must never appear.
+    seed_queue_release(&db, "7", "feed", "G", "g.cbz", "unresolved").await;
+    let app = queue_app(db);
+
+    // The gate: for every group at breadth B, the list endpoint filtered by
+    // (searchQuery=group.query, breadth=B) must return exactly group.count
+    // distinct releases. This is what guarantees the raw grouped SQL and
+    // review_queue_select's filter predicate can't silently diverge.
+    for breadth in 1u8..=3 {
+        let body = fetch_groups(&app, &format!("breadth={breadth}")).await;
+        assert_eq!(body["breadth"], breadth);
+        let groups = body["groups"].as_array().unwrap();
+        assert!(
+            !groups.is_empty(),
+            "breadth {breadth} should yield clusters"
+        );
+        for g in groups {
+            let query = g["query"].as_str().unwrap();
+            let count = g["count"].as_u64().unwrap();
+            assert!(count > 1, "groups must exclude singletons");
+            let list_total = queue_total(
+                &app,
+                &format!("searchQuery={}&breadth={breadth}", encode_query(query)),
+            )
+            .await;
+            assert_eq!(
+                list_total, count,
+                "parity failed for query={query:?} breadth={breadth}"
+            );
+        }
+    }
+}
+
 async fn queue_titles(app: &axum::Router, query: &str) -> Vec<String> {
     let resp = app
         .clone()
