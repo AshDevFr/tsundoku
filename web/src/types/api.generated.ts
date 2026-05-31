@@ -982,12 +982,26 @@ export interface components {
          *     queue statuses so a decided release can't be re-acted on.
          */
         BulkReviewRequest: {
+            /**
+             * Format: int32
+             * @description Grouping breadth mirroring [`ReviewQueueQuery::breadth`] (clamped to
+             *     {1,2,3}, default 1).
+             * @default null
+             */
+            breadth: number | null;
             /** @default null */
             format: string | null;
             /** @default [] */
             ids: string[];
             /** @default null */
             q: string | null;
+            /**
+             * @description Release-group filter mirroring [`ReviewQueueQuery::search_query`], so
+             *     "reject/retry the whole group" acts on exactly the releases the chip
+             *     shows.
+             * @default null
+             */
+            searchQuery: string | null;
             /** @default null */
             sourceName: string | null;
             /** @default null */
@@ -2695,6 +2709,20 @@ export interface operations {
                  *     `unresolved` / `ambiguous` / `review_pending`.
                  */
                 status?: string;
+                /**
+                 * @description Group filter: select only releases whose cleaned `search_queries`
+                 *     contains this exact value (within the [`breadth`] index bound). Kept
+                 *     distinct from the title-substring [`q`] filter — this is the handoff
+                 *     from a clicked release group, not free-text search. Whitespace-only is
+                 *     treated as absent.
+                 */
+                searchQuery?: string;
+                /**
+                 * @description How many leading `search_queries` variants the [`search_query`] /
+                 *     grouping match considers: `1` = primary `[0]` only (default), `2` =
+                 *     `[0..2)`, `3` = all elements. Out-of-range/absent clamps to `1`.
+                 */
+                breadth?: number;
                 /**
                  * @description Result ordering. One of `observed_desc` (default), `observed_asc`,
                  *     `posted_desc`, `posted_asc`, `title_asc`, `title_desc`. Title sorts

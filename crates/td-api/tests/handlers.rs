@@ -1620,6 +1620,107 @@ async fn bulk_reject_by_filter_rejects_whole_matching_set() {
     assert_eq!(queue_total(&app, "format=epub").await, 1);
 }
 
+/// Seed a queue release and stamp its cleaned `search_queries` (longest-first,
+/// as the resolver would) so the `searchQuery`/`breadth` group filter has
+/// something to match against.
+async fn seed_queue_release_with_queries(
+    db: &sea_orm::DatabaseConnection,
+    external_id: &str,
+    title: &str,
+    queries: &[&str],
+) -> String {
+    let id = seed_queue_release(db, external_id, "feed", title, "a.cbz", "unresolved").await;
+    let queries: Vec<String> = queries.iter().map(|s| s.to_string()).collect();
+    td_resolution::persist::persist_search_queries(db, &id, &queries, &[])
+        .await
+        .unwrap();
+    id
+}
+
+#[tokio::test]
+async fn unresolved_endpoint_search_query_filter_honors_breadth() {
+    let db = fresh_db().await;
+    // A & B match "one piece" on the primary [0]; C matches it only at [1];
+    // D never matches.
+    seed_queue_release_with_queries(&db, "1", "A", &["one piece", "one piece digital"]).await;
+    seed_queue_release_with_queries(&db, "2", "B", &["one piece"]).await;
+    seed_queue_release_with_queries(&db, "3", "C", &["bleach", "one piece"]).await;
+    seed_queue_release_with_queries(&db, "4", "D", &["naruto"]).await;
+    let app = queue_app(db);
+
+    // Breadth 1 (default): only [0] matches → A, B.
+    assert_eq!(queue_total(&app, "searchQuery=one+piece").await, 2);
+    assert_eq!(
+        queue_total(&app, "searchQuery=one+piece&breadth=1").await,
+        2
+    );
+    // Breadth 2: [0..2) now includes C's secondary query → A, B, C.
+    assert_eq!(
+        queue_total(&app, "searchQuery=one+piece&breadth=2").await,
+        3
+    );
+    // Breadth 3: flatten all → still A, B, C here.
+    assert_eq!(
+        queue_total(&app, "searchQuery=one+piece&breadth=3").await,
+        3
+    );
+    // Out-of-range breadth clamps to the tight default (1).
+    assert_eq!(
+        queue_total(&app, "searchQuery=one+piece&breadth=9").await,
+        2
+    );
+
+    // The [1]-only match (C) is excluded at breadth 1 but present at breadth 2.
+    let tight = queue_titles(&app, "searchQuery=one+piece&breadth=1").await;
+    assert!(!tight.contains(&"C".to_string()));
+    let loose = queue_titles(&app, "searchQuery=one+piece&breadth=2").await;
+    assert!(loose.contains(&"C".to_string()));
+
+    // An exact-string match: a query that is a substring of another variant
+    // must not match it (json_each compares the whole element).
+    assert_eq!(queue_total(&app, "searchQuery=one+piece+digital").await, 0);
+    assert_eq!(
+        queue_total(&app, "searchQuery=one+piece+digital&breadth=3").await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn unresolved_endpoint_search_query_composes_with_title_q() {
+    let db = fresh_db().await;
+    // Two releases share the "one piece" group; only one has "Color" in its
+    // title, so `q` and `searchQuery` AND together.
+    seed_queue_release_with_queries(&db, "1", "One Piece Color Vol 1", &["one piece"]).await;
+    seed_queue_release_with_queries(&db, "2", "One Piece Vol 2", &["one piece"]).await;
+    seed_queue_release_with_queries(&db, "3", "Bleach Color", &["bleach"]).await;
+    let app = queue_app(db);
+
+    assert_eq!(queue_total(&app, "searchQuery=one+piece").await, 2);
+    assert_eq!(queue_total(&app, "q=Color").await, 2);
+    // AND: group "one piece" AND title contains "Color" → just release 1.
+    assert_eq!(queue_total(&app, "searchQuery=one+piece&q=Color").await, 1);
+}
+
+#[tokio::test]
+async fn bulk_reject_by_search_query_rejects_whole_group() {
+    let db = fresh_db().await;
+    seed_queue_release_with_queries(&db, "1", "A", &["one piece"]).await;
+    seed_queue_release_with_queries(&db, "2", "B", &["bleach", "one piece"]).await;
+    seed_queue_release_with_queries(&db, "3", "C", &["naruto"]).await;
+    let app = queue_app(db);
+
+    // Breadth 2 so the [1]-only member (B) is included in the group action.
+    let body = post_json(
+        &app,
+        "/api/v1/releases/bulk/reject",
+        serde_json::json!({ "searchQuery": "one piece", "breadth": 2 }),
+    )
+    .await;
+    assert_eq!(body["rejected"], 2);
+    // Only the naruto release remains.
+    assert_eq!(queue_total(&app, "").await, 1);
+}
+
 async fn queue_titles(app: &axum::Router, query: &str) -> Vec<String> {
     let resp = app
         .clone()

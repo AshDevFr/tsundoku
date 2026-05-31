@@ -185,6 +185,13 @@ pub struct BulkReviewRequest {
     pub source_name: Option<String>,
     pub format: Option<String>,
     pub status: Option<String>,
+    /// Release-group filter mirroring [`ReviewQueueQuery::search_query`], so
+    /// "reject/retry the whole group" acts on exactly the releases the chip
+    /// shows.
+    pub search_query: Option<String>,
+    /// Grouping breadth mirroring [`ReviewQueueQuery::breadth`] (clamped to
+    /// {1,2,3}, default 1).
+    pub breadth: Option<u8>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -290,6 +297,16 @@ pub struct ReviewQueueQuery {
     /// Narrow to one queue status. Ignored unless it's one of
     /// `unresolved` / `ambiguous` / `review_pending`.
     pub status: Option<String>,
+    /// Group filter: select only releases whose cleaned `search_queries`
+    /// contains this exact value (within the [`breadth`] index bound). Kept
+    /// distinct from the title-substring [`q`] filter — this is the handoff
+    /// from a clicked release group, not free-text search. Whitespace-only is
+    /// treated as absent.
+    pub search_query: Option<String>,
+    /// How many leading `search_queries` variants the [`search_query`] /
+    /// grouping match considers: `1` = primary `[0]` only (default), `2` =
+    /// `[0..2)`, `3` = all elements. Out-of-range/absent clamps to `1`.
+    pub breadth: Option<u8>,
     /// Result ordering. One of `observed_desc` (default), `observed_asc`,
     /// `posted_desc`, `posted_asc`, `title_asc`, `title_desc`. Title sorts
     /// are case-insensitive. An unknown value falls back to `observed_desc`.
@@ -305,8 +322,22 @@ impl Default for ReviewQueueQuery {
             source_name: None,
             format: None,
             status: None,
+            search_query: None,
+            breadth: None,
             sort: None,
         }
+    }
+}
+
+/// Clamp the `breadth` knob to {1, 2, 3}, defaulting to `1` (tightest) for
+/// `None` or any out-of-range value. Shared by the `search_query` list filter
+/// and the grouped endpoint so a clicked group reproduces its own membership
+/// at the same looseness.
+fn clamp_breadth(breadth: Option<u8>) -> u8 {
+    match breadth {
+        Some(2) => 2,
+        Some(3) => 3,
+        _ => 1,
     }
 }
 
@@ -331,11 +362,18 @@ impl ReviewQueueQuery {
 ///   single-user title search.
 /// - `format` filters via the `release_formats` join table by subquery, since
 ///   a release can carry several formats.
+/// - `search_query` (the release-group filter) matches a cleaned query against
+///   the flattened `search_queries` JSON array via a correlated `json_each`
+///   `EXISTS`, bounded by `breadth`. This is the same predicate the grouped
+///   endpoint groups on (see [`search_query_exists`]) so a clicked group
+///   reproduces its own membership exactly.
 fn review_queue_select(
     q: Option<&str>,
     source_name: Option<&str>,
     format: Option<&str>,
     status: Option<&str>,
+    search_query: Option<&str>,
+    breadth: u8,
 ) -> Select<releases::Entity> {
     fn trimmed(s: Option<&str>) -> Option<&str> {
         s.map(str::trim).filter(|s| !s.is_empty())
@@ -364,7 +402,36 @@ fn review_queue_select(
             .to_owned();
         select = select.filter(releases::Column::Id.in_subquery(sub));
     }
+    if let Some(sq) = trimmed(search_query) {
+        select = select.filter(search_query_exists(sq, breadth));
+    }
     select
+}
+
+/// The `breadth` index bound applied to the flattened `search_queries` array,
+/// as a raw SQL fragment (with the leading `AND`). `breadth = 3` means "all
+/// elements," so it drops the bound entirely. The two callers (the list filter
+/// in [`review_queue_select`] and the grouped aggregation query) must share
+/// this so group membership and group filtering can't diverge.
+fn breadth_key_bound(breadth: u8) -> &'static str {
+    match breadth {
+        2 => " AND je.key < 2",
+        3 => "",
+        _ => " AND je.key = 0",
+    }
+}
+
+/// Correlated `EXISTS` predicate matching releases whose `search_queries`
+/// array (within the `breadth` index bound) contains `value` exactly. The
+/// `je` alias must match the bound produced by [`breadth_key_bound`].
+fn search_query_exists(value: &str, breadth: u8) -> sea_orm::sea_query::SimpleExpr {
+    use sea_orm::sea_query::Expr;
+    let bound = breadth_key_bound(breadth);
+    let sql = format!(
+        "EXISTS (SELECT 1 FROM json_each(releases.search_queries) je \
+         WHERE je.value = ?{bound})"
+    );
+    Expr::cust_with_values(&sql, [value])
 }
 
 /// Apply the review-queue ordering selected by the `sort` query param.
@@ -410,6 +477,8 @@ async fn review_queue_target_ids(
         req.source_name.as_deref(),
         req.format.as_deref(),
         req.status.as_deref(),
+        req.search_query.as_deref(),
+        clamp_breadth(req.breadth),
     );
     if !req.ids.is_empty() {
         select = select.filter(releases::Column::Id.is_in(req.ids.iter().cloned()));
@@ -503,6 +572,8 @@ pub async fn list_unresolved(
         query.source_name.as_deref(),
         query.format.as_deref(),
         query.status.as_deref(),
+        query.search_query.as_deref(),
+        clamp_breadth(query.breadth),
     );
     let total = select.clone().count(&state.db).await.map_err(anyhow_err)?;
     let rows = apply_review_sort(select, query.sort.as_deref())

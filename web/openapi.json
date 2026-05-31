@@ -971,6 +971,26 @@
             }
           },
           {
+            "name": "searchQuery",
+            "in": "query",
+            "description": "Group filter: select only releases whose cleaned `search_queries`\ncontains this exact value (within the [`breadth`] index bound). Kept\ndistinct from the title-substring [`q`] filter — this is the handoff\nfrom a clicked release group, not free-text search. Whitespace-only is\ntreated as absent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "breadth",
+            "in": "query",
+            "description": "How many leading `search_queries` variants the [`search_query`] /\ngrouping match considers: `1` = primary `[0]` only (default), `2` =\n`[0..2)`, `3` = all elements. Out-of-range/absent clamps to `1`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
             "name": "sort",
             "in": "query",
             "description": "Result ordering. One of `observed_desc` (default), `observed_asc`,\n`posted_desc`, `posted_asc`, `title_asc`, `title_desc`. Title sorts\nare case-insensitive. An unknown value falls back to `observed_desc`.",
@@ -1981,6 +2001,16 @@
         "type": "object",
         "description": "Shared body for the bulk review actions. The target set is either an\nexplicit `ids` list (when non-empty) or every queue release matching the\nfilter fields. An all-empty body targets the entire queue. The filters\nmirror [`ReviewQueueQuery`] so \"select all matching\" acts on exactly what\nthe list endpoint shows; explicit `ids` are still intersected with the\nqueue statuses so a decided release can't be re-acted on.",
         "properties": {
+          "breadth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Grouping breadth mirroring [`ReviewQueueQuery::breadth`] (clamped to\n{1,2,3}, default 1).",
+            "default": null,
+            "minimum": 0
+          },
           "format": {
             "type": [
               "string",
@@ -2000,6 +2030,14 @@
               "string",
               "null"
             ],
+            "default": null
+          },
+          "searchQuery": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release-group filter mirroring [`ReviewQueueQuery::search_query`], so\n\"reject/retry the whole group\" acts on exactly the releases the chip\nshows.",
             "default": null
           },
           "sourceName": {
