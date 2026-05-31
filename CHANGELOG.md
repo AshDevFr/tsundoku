@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.7.2] - 2026-05-31
+
+### Features
+
+- *(review)* Add a per-page size selector to the queue
+
 ## [1.7.1] - 2026-05-31
 
 ### Features
