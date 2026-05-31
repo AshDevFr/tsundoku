@@ -8,6 +8,7 @@ import {
   Card,
   Center,
   Checkbox,
+  CloseButton,
   Group,
   Image,
   Loader,
@@ -55,6 +56,7 @@ import {
   ReleaseDescription,
   ReleaseFiles,
 } from "@/components/ReleaseDetails";
+import { ReleaseGroupPanel } from "@/components/ReleaseGroupPanel";
 import {
   BulkLinkPanel,
   CANDIDATE_PLACEHOLDER,
@@ -115,6 +117,13 @@ export function ReviewPage() {
   const [format, setFormat] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [sort, setSort] = useState<string | null>(null);
+  // Release-group scope: the cleaned query a clicked group chip hands off, and
+  // the breadth it was computed at. `searchQuery` is a list filter kept
+  // distinct from the title `q`; `breadth` is the grouping looseness. The
+  // group panel collapses by default — it's a shortcut, not a primary surface.
+  const [searchQuery, setSearchQuery] = useState<string | null>(null);
+  const [breadth, setBreadth] = useState(1);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   // Explicit per-card selection. `selectAllMatching` overrides it: the bulk
   // action then targets every release matching the current filters (resolved
   // server-side), not just the checked ids on this page.
@@ -179,6 +188,8 @@ export function ReviewPage() {
     sourceName: sourceName ?? undefined,
     format: format ?? undefined,
     status: status ?? undefined,
+    searchQuery: searchQuery ?? undefined,
+    breadth,
     sort: sort ?? undefined,
   });
   const retryAll = useRetryAllReleases();
@@ -186,7 +197,7 @@ export function ReviewPage() {
   const bulkReject = useBulkReject();
 
   const hasFilters = Boolean(
-    debouncedQ.trim() || sourceName || format || status,
+    debouncedQ.trim() || sourceName || format || status || searchQuery,
   );
   // The select filters reset pagination + selection synchronously on change
   // (the search box does so via its debounce effect above).
@@ -218,6 +229,35 @@ export function ReviewPage() {
     setSourceName(null);
     setFormat(null);
     setStatus(null);
+    setSearchQuery(null);
+    setPage(1);
+    resetSelection();
+  };
+  // Scope the list to a clicked group. Snaps back to page 1, drops any
+  // selection that referred to the broader set, and brings the list into view
+  // (a tall chip row can otherwise leave it below the fold). `scrollIntoView`
+  // is guarded since jsdom doesn't implement it.
+  const listAnchorRef = useRef<HTMLDivElement>(null);
+  const selectGroup = (query: string) => {
+    setSearchQuery(query);
+    setPage(1);
+    resetSelection();
+    listAnchorRef.current?.scrollIntoView?.({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+  const clearGroup = () => {
+    setSearchQuery(null);
+    setPage(1);
+    resetSelection();
+  };
+  // Changing breadth reshuffles the clusters, so any currently-selected group
+  // (whose membership was computed at the old breadth) is no longer
+  // well-defined — clear it and let the operator pick a fresh cluster.
+  const changeBreadth = (b: number) => {
+    setBreadth(b);
+    setSearchQuery(null);
     setPage(1);
     resetSelection();
   };
@@ -317,6 +357,9 @@ export function ReviewPage() {
           sourceName,
           format,
           status,
+          searchQuery: searchQuery ?? null,
+          // Only meaningful alongside searchQuery; mirrors the list query.
+          breadth: searchQuery ? breadth : null,
         }
       : {
           ids: [...selected],
@@ -324,6 +367,8 @@ export function ReviewPage() {
           sourceName: null,
           format: null,
           status: null,
+          searchQuery: null,
+          breadth: null,
         };
 
   const handleBulkRetry = () => {
@@ -444,7 +489,29 @@ export function ReviewPage() {
         onSort={changeSort}
         hasFilters={hasFilters}
         onClear={clearFilters}
+        activeGroup={searchQuery}
+        onClearGroup={clearGroup}
       />
+
+      <ReleaseGroupPanel
+        open={groupsOpen}
+        onToggle={() => setGroupsOpen((o) => !o)}
+        filters={{
+          q: debouncedQ.trim() || undefined,
+          sourceName: sourceName ?? undefined,
+          format: format ?? undefined,
+          status: status ?? undefined,
+        }}
+        breadth={breadth}
+        onBreadth={changeBreadth}
+        activeQuery={searchQuery}
+        onSelect={selectGroup}
+        onClear={clearGroup}
+      />
+
+      {/* Scroll target so a group click brings the list into view past a tall
+          chip row. */}
+      <div ref={listAnchorRef} />
 
       {queue.isError && (
         <Alert color="red" title="Failed to load review queue">
@@ -856,6 +923,8 @@ function ReviewFilterBar({
   onSort,
   hasFilters,
   onClear,
+  activeGroup,
+  onClearGroup,
 }: {
   search: string;
   onSearch: (v: string) => void;
@@ -869,6 +938,11 @@ function ReviewFilterBar({
   onSort: (v: string | null) => void;
   hasFilters: boolean;
   onClear: () => void;
+  /// The active release-group scope (a cleaned query), shown as a removable
+  /// indicator so the operator knows the list is group-scoped even with the
+  /// group panel collapsed. `null` when no group is selected.
+  activeGroup: string | null;
+  onClearGroup: () => void;
 }) {
   const sources = useSources();
   const sourceOptions =
@@ -930,6 +1004,25 @@ function ReviewFilterBar({
         style={{ width: 170 }}
         data-testid="review-sort"
       />
+      {activeGroup && (
+        <Badge
+          variant="light"
+          color="cyan"
+          size="lg"
+          rightSection={
+            <CloseButton
+              size="xs"
+              aria-label="Clear group filter"
+              onClick={onClearGroup}
+              data-testid="review-active-group-clear"
+            />
+          }
+          data-testid="review-active-group"
+          style={{ alignSelf: "center", textTransform: "none" }}
+        >
+          Group: {activeGroup}
+        </Badge>
+      )}
       {hasFilters && (
         <Button
           variant="subtle"

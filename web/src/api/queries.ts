@@ -448,6 +448,12 @@ export interface ReviewFilters {
   /// One of the queue statuses (`unresolved` / `ambiguous` /
   /// `review_pending`); anything else is clamped server-side.
   status?: string;
+  /// Release-group filter: the cleaned search query a clicked group hands off.
+  /// Kept distinct from the free-text title `q`; the two AND together.
+  searchQuery?: string;
+  /// Grouping breadth for `searchQuery` (1 = primary query only, default; 2 =
+  /// first two; 3 = all). Ignored unless `searchQuery` is set.
+  breadth?: number;
   /// Result ordering. One of `observed_desc` (default) / `observed_asc` /
   /// `posted_desc` / `posted_asc` / `title_asc` / `title_desc`; anything
   /// else falls back to `observed_desc` server-side.
@@ -456,6 +462,7 @@ export interface ReviewFilters {
 
 export function useUnresolvedReleases(filters: ReviewFilters = {}) {
   const trimmedQ = filters.q?.trim();
+  const trimmedSearchQuery = filters.searchQuery?.trim();
   const query = {
     page: filters.page ?? 1,
     pageSize: filters.pageSize ?? DEFAULT_REVIEW_PAGE_SIZE,
@@ -463,6 +470,10 @@ export function useUnresolvedReleases(filters: ReviewFilters = {}) {
     sourceName: filters.sourceName || undefined,
     format: filters.format || undefined,
     status: filters.status || undefined,
+    searchQuery: trimmedSearchQuery || undefined,
+    // Breadth only affects the result set together with searchQuery; omit it
+    // otherwise so toggling the grouping looseness doesn't refetch the list.
+    breadth: trimmedSearchQuery ? (filters.breadth ?? 1) : undefined,
     sort: filters.sort || undefined,
   };
   return useQuery({
@@ -474,6 +485,46 @@ export function useUnresolvedReleases(filters: ReviewFilters = {}) {
       if (error) throw new Error("failed to load review queue");
       return data;
     },
+    placeholderData: (prev) => prev,
+  });
+}
+
+/// Filters for the grouped review-queue endpoint. Mirrors the list filters
+/// minus pagination/sort and the group filter itself (a group within a group
+/// is meaningless — the clusters are computed over the non-group-scoped set).
+export interface ReleaseGroupFilters {
+  q?: string;
+  sourceName?: string;
+  format?: string;
+  status?: string;
+  breadth?: number;
+}
+
+/// Cluster the review queue by cleaned search query at the given breadth.
+/// `enabled` gates the fetch so a collapsed panel doesn't hit the endpoint.
+export function useReleaseGroups(
+  filters: ReleaseGroupFilters = {},
+  enabled = true,
+) {
+  const trimmedQ = filters.q?.trim();
+  const query = {
+    q: trimmedQ || undefined,
+    sourceName: filters.sourceName || undefined,
+    format: filters.format || undefined,
+    status: filters.status || undefined,
+    breadth: filters.breadth ?? 1,
+  };
+  return useQuery({
+    queryKey: ["releases-unresolved-groups", query],
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/api/v1/releases/unresolved/groups",
+        { params: { query } },
+      );
+      if (error) throw new Error("failed to load release groups");
+      return data;
+    },
+    enabled,
     placeholderData: (prev) => prev,
   });
 }
