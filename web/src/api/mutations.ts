@@ -21,6 +21,10 @@ function describeError(error: unknown, fallback: string): string {
 
 function invalidateReleaseQueries(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["releases-unresolved"] });
+  // The grouping panel's clusters are a separate query key (per-element match,
+  // so the line above doesn't cover it); refresh them too or a decision leaves
+  // a now-stale group in the list until a manual refetch.
+  qc.invalidateQueries({ queryKey: ["releases-unresolved-groups"] });
   qc.invalidateQueries({ queryKey: ["releases-kept"] });
   qc.invalidateQueries({ queryKey: ["stats"] });
   qc.invalidateQueries({ queryKey: ["series-list"] });

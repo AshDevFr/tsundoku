@@ -4,6 +4,7 @@ import {
   Group,
   Loader,
   Paper,
+  ScrollArea,
   SegmentedControl,
   Stack,
   Text,
@@ -104,64 +105,67 @@ export function ReleaseGroupPanel({
           ) : (
             // One group per line, each row contained within the panel width so
             // a long candidate title is readable but never overflows. Clicking
-            // an active row clears it.
-            <Stack gap={4}>
-              {items.map((g) => {
-                const hint = g.topCandidate?.title;
-                const active = g.query === activeQuery;
-                const full = hint ? `${g.query} → ${hint}` : g.query;
-                return (
-                  <UnstyledButton
-                    key={g.query}
-                    title={full}
-                    onClick={() => (active ? onClear() : onSelect(g.query))}
-                    data-testid="release-group-chip"
-                    data-active={active || undefined}
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      borderRadius: "var(--mantine-radius-sm)",
-                      border: "1px solid var(--mantine-color-default-border)",
-                      padding: "3px 8px",
-                      backgroundColor: active
-                        ? "var(--mantine-color-cyan-light)"
-                        : undefined,
-                    }}
-                  >
-                    <Group gap={6} wrap="nowrap" w="100%">
-                      <Text size="sm" style={{ flex: "none" }}>
-                        {g.query}
-                      </Text>
-                      <Text size="sm" c="dimmed" style={{ flex: "none" }}>
-                        ×{g.count}
-                      </Text>
-                      {hint && (
-                        <Text
-                          size="sm"
-                          c="dimmed"
-                          fs="italic"
-                          truncate
-                          style={{ minWidth: 0 }}
-                        >
-                          → {hint}
+            // an active row clears it. Capped at ~10 rows tall; the rest scroll
+            // so a large queue can't push the review list off-screen.
+            <ScrollArea.Autosize mah={320} type="auto" offsetScrollbars>
+              <Stack gap={4}>
+                {items.map((g) => {
+                  const hint = g.topCandidate?.title;
+                  const active = g.query === activeQuery;
+                  const full = hint ? `${g.query} → ${hint}` : g.query;
+                  return (
+                    <UnstyledButton
+                      key={g.query}
+                      title={full}
+                      onClick={() => (active ? onClear() : onSelect(g.query))}
+                      data-testid="release-group-chip"
+                      data-active={active || undefined}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        borderRadius: "var(--mantine-radius-sm)",
+                        border: "1px solid var(--mantine-color-default-border)",
+                        padding: "3px 8px",
+                        backgroundColor: active
+                          ? "var(--mantine-color-cyan-light)"
+                          : undefined,
+                      }}
+                    >
+                      <Group gap={6} wrap="nowrap" w="100%">
+                        <Text size="sm" style={{ flex: "none" }}>
+                          {g.query}
                         </Text>
-                      )}
-                      {active && (
-                        <Text
-                          size="sm"
-                          c="dimmed"
-                          ml="auto"
-                          style={{ flex: "none" }}
-                          aria-hidden
-                        >
-                          ✕
+                        <Text size="sm" c="dimmed" style={{ flex: "none" }}>
+                          ×{g.count}
                         </Text>
-                      )}
-                    </Group>
-                  </UnstyledButton>
-                );
-              })}
-            </Stack>
+                        {hint && (
+                          <Text
+                            size="sm"
+                            c="dimmed"
+                            fs="italic"
+                            truncate
+                            style={{ minWidth: 0 }}
+                          >
+                            → {hint}
+                          </Text>
+                        )}
+                        {active && (
+                          <Text
+                            size="sm"
+                            c="dimmed"
+                            ml="auto"
+                            style={{ flex: "none" }}
+                            aria-hidden
+                          >
+                            ✕
+                          </Text>
+                        )}
+                      </Group>
+                    </UnstyledButton>
+                  );
+                })}
+              </Stack>
+            </ScrollArea.Autosize>
           )}
         </Box>
       </Collapse>
