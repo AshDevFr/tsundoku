@@ -25,6 +25,7 @@ import {
   seedReviewQueue,
 } from "@/mocks/handlers";
 import { useAdminAuth } from "@/stores/auth";
+import { DEFAULT_REVIEW_PAGE_SIZE, useUiPrefs } from "@/stores/uiPrefs";
 import { ReviewPage } from "./ReviewPage";
 
 function makeRouter() {
@@ -65,6 +66,9 @@ describe("ReviewPage", () => {
   beforeEach(() => {
     resetReviewQueue();
     useAdminAuth.getState().clear();
+    // Page size is persisted in localStorage; reset it so a size change in one
+    // test doesn't bleed into the next.
+    useUiPrefs.getState().setReviewPageSize(DEFAULT_REVIEW_PAGE_SIZE);
   });
 
   afterEach(() => {
@@ -575,6 +579,38 @@ describe("ReviewPage", () => {
       const cards = screen.getAllByTestId(/^review-card-/);
       expect(cards[0]).toHaveAttribute("data-testid", "review-card-nyaa:9002");
     });
+  });
+
+  it("changes the page size via the per-page selector", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    // 25 rows: one more than the default page of 20, so a second page exists.
+    seedReviewQueue(
+      Array.from({ length: 25 }, (_, i) =>
+        makeUnresolved(`nyaa:83${String(i).padStart(2, "0")}`, {
+          externalId: `83${String(i).padStart(2, "0")}`,
+          title: `Paged Series ${i} v01`,
+          resolutionStatus: "unresolved",
+        }),
+      ),
+    );
+    renderReview();
+    await screen.findByTestId("review-card-nyaa:8300");
+
+    // The default page shows 20 of the 25 rows; pagination is present.
+    expect(screen.getAllByTestId(/^review-card-/)).toHaveLength(20);
+    expect(
+      screen.queryByTestId("review-card-nyaa:8324"),
+    ).not.toBeInTheDocument();
+
+    // Bump to 50/page: the whole queue now fits on one page.
+    const select = screen.getByTestId("review-page-size");
+    fireEvent.click(select);
+    fireEvent.click(await screen.findByText("50 / page"));
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId(/^review-card-/)).toHaveLength(25);
+    });
+    expect(screen.getByTestId("review-card-nyaa:8324")).toBeInTheDocument();
   });
 
   it("bulk-links the selected releases to a catalog series", async () => {

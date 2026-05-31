@@ -62,6 +62,7 @@ import {
   MetadataCounts,
   ProviderSearchPanel,
 } from "@/components/ReleaseLinking";
+import { REVIEW_PAGE_SIZE_OPTIONS, useUiPrefs } from "@/stores/uiPrefs";
 import type { components } from "@/types/api.generated";
 
 type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
@@ -104,6 +105,10 @@ const REVIEW_SORTS = [
 
 export function ReviewPage() {
   const [page, setPage] = useState(1);
+  // Page size is a per-device display preference (persisted), not a shareable
+  // filter, so it lives in the prefs store rather than component state.
+  const reviewPageSize = useUiPrefs((s) => s.reviewPageSize);
+  const setReviewPageSize = useUiPrefs((s) => s.setReviewPageSize);
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [sourceName, setSourceName] = useState<string | null>(null);
@@ -169,6 +174,7 @@ export function ReviewPage() {
 
   const queue = useUnresolvedReleases({
     page,
+    pageSize: reviewPageSize,
     q: debouncedQ,
     sourceName: sourceName ?? undefined,
     format: format ?? undefined,
@@ -221,9 +227,16 @@ export function ReviewPage() {
     setPage(p);
     resetSelection();
   };
+  // Resizing the page reshuffles which rows land where, so reset to page 1 and
+  // drop any selection that referred to the old page boundaries.
+  const changePageSize = (size: number) => {
+    setReviewPageSize(size);
+    setPage(1);
+    resetSelection();
+  };
 
   const total = queue.data?.total ?? 0;
-  const pageSize = queue.data?.pageSize ?? 20;
+  const pageSize = queue.data?.pageSize ?? reviewPageSize;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const items = queue.data?.items ?? [];
@@ -389,18 +402,33 @@ export function ReviewPage() {
               : `${total.toLocaleString()} release${total === 1 ? "" : "s"} awaiting a decision`}
           </Text>
         </Stack>
-        <Tooltip label="Re-run the resolver against every release currently in this queue">
-          <Button
-            variant="light"
+        <Group gap="sm" align="center" wrap="nowrap">
+          <Select
             size="xs"
-            onClick={handleRetryAll}
-            loading={retryAll.isPending}
-            disabled={total === 0}
-            data-testid="retry-all-button"
-          >
-            Retry all
-          </Button>
-        </Tooltip>
+            w={110}
+            aria-label="Releases per page"
+            data={REVIEW_PAGE_SIZE_OPTIONS.map((n) => ({
+              value: String(n),
+              label: `${n} / page`,
+            }))}
+            value={String(reviewPageSize)}
+            onChange={(v) => changePageSize(Number(v) || reviewPageSize)}
+            allowDeselect={false}
+            data-testid="review-page-size"
+          />
+          <Tooltip label="Re-run the resolver against every release currently in this queue">
+            <Button
+              variant="light"
+              size="xs"
+              onClick={handleRetryAll}
+              loading={retryAll.isPending}
+              disabled={total === 0}
+              data-testid="retry-all-button"
+            >
+              Retry all
+            </Button>
+          </Tooltip>
+        </Group>
       </Group>
 
       <ReviewFilterBar
