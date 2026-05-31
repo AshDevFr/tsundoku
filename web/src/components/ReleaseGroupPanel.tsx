@@ -107,7 +107,12 @@ export function ReleaseGroupPanel({
             // a long candidate title is readable but never overflows. Clicking
             // an active row clears it. Capped at ~10 rows tall; the rest scroll
             // so a large queue can't push the review list off-screen.
-            <ScrollArea.Autosize mah={320} type="auto" offsetScrollbars>
+            <ScrollArea.Autosize
+              mah={320}
+              type="auto"
+              scrollbars="y"
+              offsetScrollbars="y"
+            >
               <Stack gap={4}>
                 {items.map((g) => {
                   const hint = g.topCandidate?.title;
