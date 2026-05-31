@@ -2,6 +2,22 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.7.0] - 2026-05-31
+
+### Features
+
+- *(review)* Sort by title, collapsible cards, and bulk assign-to-series
+- *(review)* Resolve foreign provider IDs and surface comment-sourced link suggestions
+
+### Bug Fixes
+
+- *(web)* Redirect unknown routes to the feed instead of dead-ending
+
+### Documentation
+
+- *(codex)* Add a Codex dashboard screenshot to the integration page
+- Add MIT and Apache-2.0 license files
+
 ## [1.6.2] - 2026-05-30
 
 ### Features
