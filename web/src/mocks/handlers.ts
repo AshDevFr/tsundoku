@@ -402,6 +402,26 @@ export function resetReviewQueue() {
   kept = INITIAL_KEPT.map((r) => ({ ...r }));
 }
 
+/// Replace the unresolved queue with caller-supplied rows. Tests that need a
+/// specific size or ordering (e.g. exercising shift+click range selection,
+/// which is meaningless with the two-row default) seed it directly.
+export function seedReviewQueue(items: UnresolvedRelease[]) {
+  queue = items.map((r) => ({
+    ...r,
+    candidates: r.candidates.map((c) => ({ ...c })),
+  }));
+}
+
+/// Build an unresolved release off the simple (no-candidate) template,
+/// overriding only what the test cares about. `id` is required so each row is
+/// individually addressable via its `select-${id}` testid.
+export function makeUnresolved(
+  id: string,
+  overrides: Partial<UnresolvedRelease> = {},
+): UnresolvedRelease {
+  return { ...INITIAL_QUEUE[1], candidates: [], ...overrides, id };
+}
+
 // Resolve a bulk request body into the queue rows it targets, mirroring the
 // server: explicit `ids` win; otherwise the filter fields select the set
 // (with the status clamp).

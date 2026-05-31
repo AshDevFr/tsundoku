@@ -18,7 +18,12 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminShell } from "@/components/admin/AdminShell";
-import { ADMIN_TEST_TOKEN, resetReviewQueue } from "@/mocks/handlers";
+import {
+  ADMIN_TEST_TOKEN,
+  makeUnresolved,
+  resetReviewQueue,
+  seedReviewQueue,
+} from "@/mocks/handlers";
 import { useAdminAuth } from "@/stores/auth";
 import { ReviewPage } from "./ReviewPage";
 
@@ -443,6 +448,65 @@ describe("ReviewPage", () => {
       { timeout: 3000 },
     );
     expect(screen.getByTestId("review-card-nyaa:9001")).toBeInTheDocument();
+  });
+
+  it("shift+clicks to select a contiguous range of releases", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    // Five rows so a mid-list range has a meaningful interior. Seed before
+    // render so the first query already sees them.
+    seedReviewQueue(
+      Array.from({ length: 5 }, (_, i) =>
+        makeUnresolved(`nyaa:81${i}`, {
+          externalId: `81${i}`,
+          title: `Range Series ${i} v01`,
+          resolutionStatus: "unresolved",
+        }),
+      ),
+    );
+    renderReview();
+    await screen.findByTestId("review-card-nyaa:810");
+
+    // Anchor on the second row, then shift+click the fourth: rows 1..3 select.
+    fireEvent.click(screen.getByTestId("select-nyaa:811"));
+    fireEvent.click(screen.getByTestId("select-nyaa:813"), { shiftKey: true });
+
+    expect(screen.getByTestId("bulk-action-bar")).toHaveTextContent(
+      "3 selected",
+    );
+    for (const id of ["nyaa:811", "nyaa:812", "nyaa:813"]) {
+      expect(screen.getByTestId(`select-${id}`)).toBeChecked();
+    }
+    // The rows outside the range stay untouched.
+    expect(screen.getByTestId("select-nyaa:810")).not.toBeChecked();
+    expect(screen.getByTestId("select-nyaa:814")).not.toBeChecked();
+  });
+
+  it("anchors range selection at the last single click (not the page top)", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    seedReviewQueue(
+      Array.from({ length: 4 }, (_, i) =>
+        makeUnresolved(`nyaa:82${i}`, {
+          externalId: `82${i}`,
+          title: `Anchor Series ${i} v01`,
+          resolutionStatus: "unresolved",
+        }),
+      ),
+    );
+    renderReview();
+    await screen.findByTestId("review-card-nyaa:820");
+
+    // A plain click on the third row re-anchors there; shift+clicking the
+    // first row extends back up over rows 0..2, leaving the last row alone.
+    fireEvent.click(screen.getByTestId("select-nyaa:822"));
+    fireEvent.click(screen.getByTestId("select-nyaa:820"), { shiftKey: true });
+
+    expect(screen.getByTestId("bulk-action-bar")).toHaveTextContent(
+      "3 selected",
+    );
+    for (const id of ["nyaa:820", "nyaa:821", "nyaa:822"]) {
+      expect(screen.getByTestId(`select-${id}`)).toBeChecked();
+    }
+    expect(screen.getByTestId("select-nyaa:823")).not.toBeChecked();
   });
 
   it("collapses a single card to its header via the chevron and expands it back", async () => {

@@ -115,6 +115,11 @@ export function ReviewPage() {
   // server-side), not just the checked ids on this page.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectAllMatching, setSelectAllMatching] = useState(false);
+  // Anchor for shift+click range selection: the index (into the current
+  // page's `pageIds`) of the last release toggled on its own. A shift+click
+  // selects every card between this anchor and the clicked card. Reset
+  // alongside the selection so it can't point into a stale page ordering.
+  const lastSelectedIndex = useRef<number | null>(null);
   // Cards collapse to a one-line header so a sorted run of the same series is
   // easy to scan and bulk-select. Default expanded (an id present here is
   // collapsed); membership is per-id so the expand/collapse-all toggle and
@@ -132,6 +137,7 @@ export function ReviewPage() {
   const resetSelection = () => {
     setSelected(new Set());
     setSelectAllMatching(false);
+    lastSelectedIndex.current = null;
   };
 
   // Debounce the search box so each keystroke doesn't fire a request. A
@@ -156,6 +162,7 @@ export function ReviewPage() {
       // only dependency stays `searchInput`; the state setters are stable.
       setSelected(new Set());
       setSelectAllMatching(false);
+      lastSelectedIndex.current = null;
     }, 300);
     return () => window.clearTimeout(handle);
   }, [searchInput]);
@@ -228,17 +235,36 @@ export function ReviewPage() {
   const moreMatchThanPage = total > items.length;
   const selectionCount = selectAllMatching ? total : selected.size;
 
-  const toggleOne = (id: string) => {
+  // Toggle the card at `index` on the current page. A plain click flips that
+  // one release and re-anchors the range. A shift+click extends from the
+  // anchor to here, selecting the whole run (the anchor itself stays put so
+  // successive shift+clicks re-extend from the same origin).
+  const toggleAt = (index: number, shiftKey: boolean) => {
+    const id = pageIds[index];
+    if (id === undefined) return;
     setSelectAllMatching(false);
+    if (shiftKey && lastSelectedIndex.current !== null) {
+      const start = Math.min(lastSelectedIndex.current, index);
+      const end = Math.max(lastSelectedIndex.current, index);
+      const rangeIds = pageIds.slice(start, end + 1);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const rid of rangeIds) next.add(rid);
+        return next;
+      });
+      return;
+    }
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+    lastSelectedIndex.current = index;
   };
   const toggleAllOnPage = () => {
     setSelectAllMatching(false);
+    lastSelectedIndex.current = null;
     setSelected((prev) => {
       if (pageIds.every((id) => prev.has(id))) return new Set();
       return new Set(pageIds);
@@ -554,12 +580,12 @@ export function ReviewPage() {
           </Group>
 
           <Stack gap="md">
-            {items.map((item) => (
+            {items.map((item, index) => (
               <ReviewCard
                 key={item.id}
                 item={item}
                 selected={selected.has(item.id) || selectAllMatching}
-                onToggleSelect={() => toggleOne(item.id)}
+                onToggleSelect={(shiftKey) => toggleAt(index, shiftKey)}
                 collapsed={collapsed.has(item.id)}
                 onToggleCollapse={() => toggleCollapseOne(item.id)}
               />
@@ -900,7 +926,7 @@ function ReviewCard({
 }: {
   item: UnresolvedRelease;
   selected: boolean;
-  onToggleSelect: () => void;
+  onToggleSelect: (shiftKey: boolean) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
@@ -908,6 +934,9 @@ function ReviewCard({
   const reject = useRejectRelease();
   const keep = useKeepRelease();
   const retry = useRetryRelease();
+  // Holds whether shift was held on the click that drives the next select
+  // toggle (see the select Checkbox below).
+  const shiftKeyRef = useRef(false);
   const [manualOpen, { open: openManual, close: closeManual }] =
     useDisclosure(false);
   // Seed for the manual-search modal. Comment-suggested links pre-fill it; the
@@ -1001,7 +1030,16 @@ function ReviewCard({
           <Checkbox
             mt={4}
             checked={selected}
-            onChange={onToggleSelect}
+            // The `change` event doesn't carry modifier keys, so stash the
+            // shift state from the preceding `click` (same gesture, fires
+            // first) and read it back when the toggle actually commits.
+            onClick={(e) => {
+              shiftKeyRef.current = e.shiftKey;
+            }}
+            onChange={() => {
+              onToggleSelect(shiftKeyRef.current);
+              shiftKeyRef.current = false;
+            }}
             aria-label="Select release"
             data-testid={`select-${item.id}`}
           />
