@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.8.1] - 2026-05-31
+
+### Bug Fixes
+
+- *(review)* Cap the group list height and refresh it after a decision
+
 ## [1.8.0] - 2026-05-31
 
 ### Features
