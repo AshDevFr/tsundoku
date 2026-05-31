@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.8.2] - 2026-05-31
+
+### Bug Fixes
+
+- *(review)* Keep the group list from scrolling horizontally
+
 ## [1.8.1] - 2026-05-31
 
 ### Bug Fixes
