@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.7.1] - 2026-05-31
+
+### Features
+
+- *(review)* Shift+click to select a range of releases in the queue
+
 ## [1.7.0] - 2026-05-31
 
 ### Features
