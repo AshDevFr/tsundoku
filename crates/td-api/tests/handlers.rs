@@ -2323,6 +2323,7 @@ async fn provider_search_title_returns_dice_rescored_hits() {
             },
         ],
         get_table,
+        ..Default::default()
     };
     let app = build_app(
         db,
@@ -2367,6 +2368,7 @@ async fn provider_search_external_id_short_circuits_to_get_with_score_one() {
         returns: None,
         search_hits: vec![],
         get_table,
+        ..Default::default()
     };
     let app = build_app(
         db,
@@ -2401,6 +2403,7 @@ async fn provider_search_external_id_miss_returns_empty_hits() {
         returns: None,
         search_hits: vec![],
         get_table: std::collections::HashMap::new(),
+        ..Default::default()
     };
     let app = build_app(
         db,
@@ -2431,6 +2434,7 @@ async fn provider_search_rejects_empty_query() {
         returns: None,
         search_hits: vec![],
         get_table: std::collections::HashMap::new(),
+        ..Default::default()
     };
     let app = build_app(
         db,
@@ -2459,6 +2463,7 @@ async fn provider_search_unknown_provider_returns_404() {
         returns: None,
         search_hits: vec![],
         get_table: std::collections::HashMap::new(),
+        ..Default::default()
     };
     let app = build_app(
         db,
@@ -2477,6 +2482,86 @@ async fn provider_search_unknown_provider_returns_404() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Build an app whose stub cross-resolves only `(mangaupdates, ylx5wzn)` and
+/// has an empty `get_table`, so a native `get` of that id misses. Proves the
+/// foreign-id path routes to `resolve_by_foreign_id`, not `get`.
+async fn foreign_search_app() -> axum::Router {
+    let mut foreign_table = std::collections::HashMap::new();
+    foreign_table.insert(
+        ("mangaupdates".to_string(), "ylx5wzn".to_string()),
+        sample_metadata("mb", "42", "Cross Resolved"),
+    );
+    let stub = StubProvider {
+        id: "mb",
+        foreign_table,
+        foreign_sources: vec!["mangaupdates"],
+        ..Default::default()
+    };
+    build_app(
+        fresh_db().await,
+        metadata_registry_with(stub),
+        source_registry_with(vec![]),
+        open_auth(),
+    )
+}
+
+#[tokio::test]
+async fn provider_search_foreign_provider_param_cross_resolves() {
+    let app = foreign_search_app().await;
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/providers/mb/search?externalId=ylx5wzn&foreignProvider=mangaupdates")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let hits = body["hits"].as_array().unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0]["title"], "Cross Resolved");
+    assert_eq!(hits[0]["score"].as_f64().unwrap(), 1.0);
+}
+
+#[tokio::test]
+async fn provider_search_full_url_auto_detects_foreign_provider() {
+    // No foreignProvider param: the handler detects the host from the URL.
+    let app = foreign_search_app().await;
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/providers/mb/search?externalId=https%3A%2F%2Fwww.mangaupdates.com%2Fseries%2Fylx5wzn%2Fx")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["hits"][0]["title"], "Cross Resolved");
+}
+
+#[tokio::test]
+async fn provider_search_legacy_mangaupdates_url_returns_no_hits() {
+    // A legacy series.html?id=NNN link can't be translated in the synchronous
+    // search path, so it yields no hits (the modal hints to use the modern URL).
+    let app = foreign_search_app().await;
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/providers/mb/search?externalId=https%3A%2F%2Fwww.mangaupdates.com%2Fseries.html%3Fid%3D151349")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert!(body["hits"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]

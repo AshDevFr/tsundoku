@@ -272,6 +272,10 @@ const INITIAL_QUEUE: UnresolvedRelease[] = [
     resolutionAttempts: 2,
     lastResolveAttemptAt: NOW - 1_200,
     informationUrl: "https://sevenseasentertainment.com/series/mystery-series/",
+    commentSuggestedLinks: {
+      mangaupdates:
+        "https://www.mangaupdates.com/series/ylx5wzn/mystery-series",
+    },
     candidates: [
       {
         seriesId: 1,
@@ -497,6 +501,7 @@ export const handlers = [
           id: "mangabaka",
           displayName: "MangaBaka",
           active: true,
+          foreignSources: ["mangaupdates", "mal", "anilist", "mangadex"],
           lastRefresh: {
             fetchedAt: NOW - 3_600,
             cacheVersion: "abc123",

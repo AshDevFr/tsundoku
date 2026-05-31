@@ -113,6 +113,8 @@ fn parse_row(
         files: Vec::new(),
         description_html: None,
         external_links: ExternalLinks::default(),
+        // The listing row has no comments either; populated by `enrich`.
+        comment_suggested_links: ExternalLinks::default(),
         // The listing row has no "Information" field; `enrich` fills it in
         // from the detail page when `fetch_details` is on.
         information_url: None,

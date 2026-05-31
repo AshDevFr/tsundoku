@@ -628,7 +628,16 @@
           {
             "name": "externalId",
             "in": "query",
-            "description": "Direct provider external-id lookup. When set, the handler short-\ncircuits to `MetadataProvider::get` and returns at most one hit\nwith `score = 1.0`.",
+            "description": "Direct provider external-id lookup. When set, the handler short-\ncircuits to a single hit with `score = 1.0`. May be a bare id or a\nfull provider URL (the host is auto-detected).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "foreignProvider",
+            "in": "query",
+            "description": "Canonical id of the provider the `externalId` belongs to, when it is\na *foreign* id resolved through the path provider's\n`resolve_by_foreign_id` (e.g. `foreignProvider=mangaupdates` against\nthe MangaBaka provider). Ignored when it equals the path provider.\nA full provider URL in `externalId` overrides this via host detection.",
             "required": false,
             "schema": {
               "type": "string"
@@ -2834,7 +2843,8 @@
         "required": [
           "id",
           "displayName",
-          "active"
+          "active",
+          "foreignSources"
         ],
         "properties": {
           "active": {
@@ -2853,6 +2863,13 @@
           },
           "displayName": {
             "type": "string"
+          },
+          "foreignSources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Canonical ids of other providers this provider can cross-resolve via\n`resolve_by_foreign_id`. Drives the review modal's \"ID source\"\ndropdown. Empty for providers without foreign-ID resolution."
           },
           "id": {
             "type": "string"
@@ -3321,6 +3338,17 @@
           "resolutionAttempts"
         ],
         "properties": {
+          "commentSuggestedLinks": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExtractedLinksDto",
+                "description": "Provider links found in the post's *comments* — untrusted, so they are\nnever auto-resolved. The review UI offers them as one-click lookups the\noperator can confirm. Omitted when absent. Distinct from\n`extracted_links` (the uploader's links)."
+              }
+            ]
+          },
           "ddlUrl": {
             "type": [
               "string",

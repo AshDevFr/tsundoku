@@ -29,6 +29,12 @@ pub struct StubProvider {
     /// search-endpoint tests register multiple candidates with
     /// distinct metadata.
     pub get_table: std::collections::HashMap<String, SeriesMetadata>,
+    /// `(foreign_provider, foreign_id) → metadata` for
+    /// `resolve_by_foreign_id`. Lets the foreign-id search tests prove the
+    /// handler routes a foreign id to cross-resolution rather than `get`.
+    pub foreign_table: std::collections::HashMap<(String, String), SeriesMetadata>,
+    /// Advertised cross-resolvable providers (drives `foreign_sources()`).
+    pub foreign_sources: Vec<&'static str>,
 }
 
 #[async_trait]
@@ -47,6 +53,21 @@ impl MetadataProvider for StubProvider {
     }
     async fn search(&self, _query: &str, _limit: u32) -> MetadataResult<Vec<SearchHit>> {
         Ok(self.search_hits.clone())
+    }
+    async fn resolve_by_foreign_id(
+        &self,
+        foreign_provider: &str,
+        foreign_id: &str,
+    ) -> MetadataResult<Option<SeriesMetadata>> {
+        Ok(self
+            .foreign_table
+            .get(&(foreign_provider.to_string(), foreign_id.to_string()))
+            .cloned())
+    }
+    fn foreign_sources(&self) -> &'static [&'static str] {
+        // Leak once per stub: tests are short-lived and this keeps the
+        // trait's `&'static` contract without a global.
+        Box::leak(self.foreign_sources.clone().into_boxed_slice())
     }
     async fn refresh_cache(&self) -> MetadataResult<RefreshSummary> {
         let now = chrono::Utc::now();
@@ -295,6 +316,7 @@ pub fn sample_release(id: &str, source_name: &str, title: &str) -> DiscoveredRel
         files: vec![],
         description_html: None,
         external_links: Default::default(),
+        comment_suggested_links: Default::default(),
         information_url: None,
         posted_at: chrono::Utc::now(),
     }

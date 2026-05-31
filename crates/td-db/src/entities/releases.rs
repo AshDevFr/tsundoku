@@ -19,6 +19,11 @@ pub struct Model {
     pub files_json: Option<String>,
     pub description_html: Option<String>,
     pub extracted_links_json: Option<String>,
+    /// Provider links found in the post's comment section (serialized
+    /// `ExternalLinks`). Untrusted — never fed to the resolver; the review UI
+    /// surfaces them as operator-confirmable suggestions. Distinct from
+    /// `extracted_links_json` (the uploader's links).
+    pub comment_suggested_links_json: Option<String>,
     /// URL from the post's "Information" field, verbatim. Kept even when it
     /// is not a provider link we resolve against, so the review UI can show
     /// the uploader's cited source.

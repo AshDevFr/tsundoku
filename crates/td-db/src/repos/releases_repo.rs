@@ -72,6 +72,11 @@ pub fn model_to_discovered(m: &Model) -> DiscoveredRelease {
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
+    let comment_suggested_links = m
+        .comment_suggested_links_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
     DiscoveredRelease {
         source_kind: m.source_kind.clone(),
         source_name: m.source_name.clone(),
@@ -86,6 +91,7 @@ pub fn model_to_discovered(m: &Model) -> DiscoveredRelease {
         files,
         description_html: m.description_html.clone(),
         external_links,
+        comment_suggested_links,
         information_url: m.information_url.clone(),
         posted_at: DateTime::from_timestamp(m.posted_at, 0).unwrap_or_default(),
     }
@@ -127,6 +133,11 @@ fn to_active_model(
     } else {
         Some(serde_json::to_string(&release.external_links)?)
     };
+    let comment_suggested_links_json = if release.comment_suggested_links.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&release.comment_suggested_links)?)
+    };
     let files_json = if release.files.is_empty() {
         None
     } else {
@@ -161,6 +172,7 @@ fn to_active_model(
         files_json: Set(files_json),
         description_html: Set(release.description_html.clone()),
         extracted_links_json: Set(extracted_links_json),
+        comment_suggested_links_json: Set(comment_suggested_links_json),
         information_url: Set(release.information_url.clone()),
         posted_at: Set(release.posted_at.timestamp()),
         observed_at: Set(observed_at),
@@ -193,6 +205,7 @@ pub async fn upsert<C: ConnectionTrait>(db: &C, model: releases::ActiveModel) ->
                     releases::Column::FilesJson,
                     releases::Column::DescriptionHtml,
                     releases::Column::ExtractedLinksJson,
+                    releases::Column::CommentSuggestedLinksJson,
                     releases::Column::InformationUrl,
                     releases::Column::PostedAt,
                     releases::Column::VolumeSpanJson,
@@ -523,6 +536,7 @@ mod tests {
             files: vec!["Some Manga v01.cbz".into()],
             description_html: None,
             external_links: ExternalLinks::default(),
+            comment_suggested_links: ExternalLinks::default(),
             information_url: None,
             posted_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
         }

@@ -270,6 +270,8 @@ impl ItemBuilder {
             files: Vec::new(),
             description_html,
             external_links,
+            // The RSS feed has no comments; populated later by `enrich`.
+            comment_suggested_links: Default::default(),
             // The RSS feed has no "Information" field; populated later by
             // `enrich` from the detail page when `fetch_details` is on.
             information_url: None,

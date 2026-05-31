@@ -140,6 +140,22 @@ describe("ReviewPage", () => {
     );
   });
 
+  it("offers comment-suggested links as a one-click seeded lookup", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderReview();
+    await screen.findByText(/Mystery Series v01/, undefined, { timeout: 3000 });
+    const card = screen.getByTestId("review-card-nyaa:9001");
+    const block = within(card).getByTestId("comment-suggestions");
+    expect(block.textContent).toMatch(/Suggested in comments/i);
+    const btn = within(card).getByTestId("comment-suggestion-mangaupdates");
+    fireEvent.click(btn);
+    // The modal opens with the External ID pre-filled from the comment link.
+    const input = await screen.findByTestId("search-external-id");
+    expect(input).toHaveValue(
+      "https://www.mangaupdates.com/series/ylx5wzn/mystery-series",
+    );
+  });
+
   it("links a release by picking a candidate and drops it from the queue", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderReview();

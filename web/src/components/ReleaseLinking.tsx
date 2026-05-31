@@ -257,21 +257,67 @@ function ExistingSeriesResults({
   );
 }
 
+/** Friendly labels for the foreign providers a metadata provider can
+ * cross-resolve. Falls back to the raw canonical id. */
+const FOREIGN_SOURCE_LABELS: Record<string, string> = {
+  mangaupdates: "MangaUpdates",
+  mal: "MyAnimeList",
+  anilist: "AniList",
+  mangadex: "MangaDex",
+  kitsu: "Kitsu",
+  anime_planet: "Anime-Planet",
+  anime_news_network: "Anime News Network",
+  shikimori: "Shikimori",
+};
+
+function foreignSourceLabel(id: string): string {
+  return FOREIGN_SOURCE_LABELS[id] ?? id;
+}
+
+/** Detect which provider a pasted URL belongs to. Mirrors the backend
+ * `foreign_id::detect` host map so the "ID source" dropdown follows a pasted
+ * link. Returns `null` for bare ids / unknown hosts. */
+function detectIdSource(input: string): string | null {
+  const s = input.trim().toLowerCase();
+  if (!s) return null;
+  if (s.includes("mangaupdates.com")) return "mangaupdates";
+  if (s.includes("anilist.co")) return "anilist";
+  if (s.includes("myanimelist.net")) return "mal";
+  if (s.includes("mangadex.org")) return "mangadex";
+  if (s.includes("mangabaka.org") || s.includes("mangabaka.dev"))
+    return "mangabaka";
+  return null;
+}
+
+/** Legacy MangaUpdates links (`series.html?id=N`) can't be resolved by the
+ * search path; the resolver translates them elsewhere. */
+function isLegacyMangaUpdates(input: string): boolean {
+  const s = input.trim().toLowerCase();
+  return s.includes("mangaupdates.com/series.html") && s.includes("?id=");
+}
+
 /// Provider search panel. Two paths share one UI:
 ///
 /// - Paste an external ID → exact lookup, single result, one click.
 /// - Type a title → debounced search, scrollable result list, click-to-link.
 ///
 /// External ID takes priority when both are filled; the helper text makes
-/// that explicit.
+/// that explicit. `seedExternalId` / `seedIdSource` pre-fill the lookup (used
+/// by comment-suggested links).
 export function ProviderSearchPanel({
   releaseId,
   seedQuery,
   onLinked,
+  seedExternalId,
+  seedIdSource,
 }: {
   releaseId: string;
   seedQuery: string;
   onLinked?: () => void;
+  /** Pre-fill the External ID field (e.g. a comment-suggested link). */
+  seedExternalId?: string;
+  /** Pre-select the "ID source" (canonical foreign provider id). */
+  seedIdSource?: string;
 }) {
   const link = useLinkRelease();
 
@@ -304,6 +350,8 @@ export function ProviderSearchPanel({
   return (
     <ProviderSearchControls
       seedQuery={seedQuery}
+      seedExternalId={seedExternalId}
+      seedIdSource={seedIdSource}
       disabled={link.isPending}
       onPick={handleLink}
     />
@@ -316,17 +364,24 @@ export function ProviderSearchPanel({
 /// bulk link flows.
 function ProviderSearchControls({
   seedQuery,
+  seedExternalId,
+  seedIdSource,
   disabled,
   onPick,
 }: {
   seedQuery: string;
+  /** Pre-fill the External ID field (e.g. a comment-suggested link). */
+  seedExternalId?: string;
+  /** Pre-select the "ID source" (canonical foreign provider id). */
+  seedIdSource?: string;
   disabled: boolean;
   onPick: (provider: string, externalId: string, label: string) => void;
 }) {
   const providers = useProviders();
   const [provider, setProvider] = useState<string | null>(null);
   const [title, setTitle] = useState(seedQuery);
-  const [externalId, setExternalId] = useState("");
+  const [externalId, setExternalId] = useState(seedExternalId ?? "");
+  const [idSource, setIdSource] = useState<string | null>(seedIdSource ?? null);
   // Debounce the title input so each keystroke doesn't fire a search.
   const [debouncedTitle, setDebouncedTitle] = useState(seedQuery);
 
@@ -348,10 +403,38 @@ function ProviderSearchControls({
 
   const effectiveProvider = provider ?? activeId;
 
+  const providerRow = providers.data?.items.find(
+    (p) => p.id === effectiveProvider,
+  );
+  const foreignSources = providerRow?.foreignSources ?? [];
+  // Stable primitive key so the auto-detect effect's deps are exact (the
+  // array identity changes every render).
+  const foreignSourcesKey = foreignSources.join(",");
+
+  // Follow a pasted URL: auto-select the matching "ID source". Bare ids leave
+  // the current selection alone.
+  useEffect(() => {
+    const detected = detectIdSource(externalId);
+    if (!detected) return;
+    const allowed = foreignSourcesKey ? foreignSourcesKey.split(",") : [];
+    if (detected === effectiveProvider || allowed.includes(detected)) {
+      setIdSource(detected);
+    }
+  }, [externalId, effectiveProvider, foreignSourcesKey]);
+
+  // "native" means the External ID is one of effectiveProvider's own ids.
+  const effectiveIdSource = idSource ?? effectiveProvider;
+  const foreignProvider =
+    effectiveIdSource && effectiveIdSource !== effectiveProvider
+      ? effectiveIdSource
+      : undefined;
+  const legacyMu = isLegacyMangaUpdates(externalId);
+
   const search = useProviderSearch({
     providerId: effectiveProvider,
     q: debouncedTitle,
     externalId,
+    foreignProvider,
   });
 
   return (
@@ -364,12 +447,37 @@ function ProviderSearchControls({
         allowDeselect={false}
         searchable={options.length > 5}
       />
+      {foreignSources.length > 0 && (
+        <Select
+          label="ID source"
+          description="Which site the External ID is from. Pasting a full URL auto-selects this."
+          data={[
+            {
+              value: effectiveProvider ?? "",
+              label: `${providerRow?.displayName ?? "This provider"} (native id)`,
+            },
+            ...foreignSources.map((s) => ({
+              value: s,
+              label: foreignSourceLabel(s),
+            })),
+          ]}
+          value={effectiveIdSource}
+          onChange={setIdSource}
+          allowDeselect={false}
+          data-testid="search-id-source"
+        />
+      )}
       <TextInput
         label="External ID"
-        description="Paste a provider ID to look up directly (takes priority over title)"
+        description="Paste a provider ID (or full URL) to look up directly (takes priority over title)"
         placeholder="e.g. 12345"
         value={externalId}
         onChange={(e) => setExternalId(e.currentTarget.value)}
+        error={
+          legacyMu
+            ? "Legacy MangaUpdates links aren't supported here — use the modern /series/<slug> URL."
+            : undefined
+        }
         data-testid="search-external-id"
       />
       <TextInput

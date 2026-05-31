@@ -245,25 +245,46 @@ export function useProviderSearch(opts: {
   providerId: string | null;
   q: string;
   externalId: string;
+  /**
+   * Canonical id of the provider the `externalId` belongs to, when it's a
+   * foreign id resolved through `providerId` (e.g. a MangaUpdates id against
+   * MangaBaka). Only sent on the externalId path.
+   */
+  foreignProvider?: string;
   enabled?: boolean;
   /** Server-side cap. Default 50; the backend currently allows up to 100. */
   limit?: number;
 }) {
   const trimmedQ = opts.q.trim();
   const trimmedExt = opts.externalId.trim();
+  const foreignProvider = opts.foreignProvider?.trim() || undefined;
   const hasInput = Boolean(trimmedQ || trimmedExt);
   const enabled =
     Boolean(opts.providerId) && hasInput && (opts.enabled ?? true);
   const limit = opts.limit ?? 50;
   return useQuery({
-    queryKey: ["provider-search", opts.providerId, trimmedQ, trimmedExt, limit],
+    queryKey: [
+      "provider-search",
+      opts.providerId,
+      trimmedQ,
+      trimmedExt,
+      foreignProvider,
+      limit,
+    ],
     enabled,
     queryFn: async () => {
-      const params: { q?: string; externalId?: string; limit?: number } = {
-        limit,
-      };
-      if (trimmedExt) params.externalId = trimmedExt;
-      else if (trimmedQ) params.q = trimmedQ;
+      const params: {
+        q?: string;
+        externalId?: string;
+        foreignProvider?: string;
+        limit?: number;
+      } = { limit };
+      if (trimmedExt) {
+        params.externalId = trimmedExt;
+        if (foreignProvider) params.foreignProvider = foreignProvider;
+      } else if (trimmedQ) {
+        params.q = trimmedQ;
+      }
       const { data, error } = await api.GET("/api/v1/providers/{id}/search", {
         params: {
           path: { id: opts.providerId as string },

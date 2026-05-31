@@ -910,6 +910,20 @@ function ReviewCard({
   const retry = useRetryRelease();
   const [manualOpen, { open: openManual, close: closeManual }] =
     useDisclosure(false);
+  // Seed for the manual-search modal. Comment-suggested links pre-fill it; the
+  // plain "Search & link manually" button clears it first.
+  const [manualSeed, setManualSeed] = useState<{
+    externalId?: string;
+    idSource?: string;
+  }>({});
+  const openManualSeeded = (externalId: string, idSource: string) => {
+    setManualSeed({ externalId, idSource });
+    openManual();
+  };
+  const openManualBlank = () => {
+    setManualSeed({});
+    openManual();
+  };
   const [createOpen, { open: openCreate, close: closeCreate }] =
     useDisclosure(false);
   const [
@@ -1039,12 +1053,41 @@ function ReviewCard({
               disabled={busy}
               onPick={handleLinkCandidate}
             />
+            {/* Untrusted provider links pulled from the post's comments.
+                Offered as one-click seeded lookups the operator confirms —
+                never auto-linked. */}
+            {item.commentSuggestedLinks &&
+              Object.entries(item.commentSuggestedLinks).filter(([, v]) => v)
+                .length > 0 && (
+                <Box data-testid="comment-suggestions">
+                  <Text size="xs" c="dimmed" mb={4}>
+                    Suggested in comments (unverified):
+                  </Text>
+                  <Group gap="xs">
+                    {Object.entries(item.commentSuggestedLinks)
+                      .filter(([, url]) => url)
+                      .map(([provider, url]) => (
+                        <Button
+                          key={provider}
+                          variant="default"
+                          size="xs"
+                          onClick={() =>
+                            openManualSeeded(url as string, provider)
+                          }
+                          data-testid={`comment-suggestion-${provider}`}
+                        >
+                          Look up {provider}
+                        </Button>
+                      ))}
+                  </Group>
+                </Box>
+              )}
             <Group justify="space-between" wrap="wrap" gap="xs">
               <Group gap="xs">
                 <Button
                   variant="light"
                   size="xs"
-                  onClick={openManual}
+                  onClick={openManualBlank}
                   disabled={busy}
                 >
                   Search provider
@@ -1120,6 +1163,8 @@ function ReviewCard({
         onClose={closeManual}
         releaseId={item.id}
         seedQuery={item.searchQueries[0] ?? item.title}
+        seedExternalId={manualSeed.externalId}
+        seedIdSource={manualSeed.idSource}
       />
       <CreateSeriesModal
         opened={createOpen}
@@ -1540,11 +1585,17 @@ function ProviderSearchModal({
   onClose,
   releaseId,
   seedQuery,
+  seedExternalId,
+  seedIdSource,
 }: {
   opened: boolean;
   onClose: () => void;
   releaseId: string;
   seedQuery: string;
+  /** Pre-fill the External ID field (e.g. a comment-suggested link). */
+  seedExternalId?: string;
+  /** Pre-select the "ID source" (canonical foreign provider id). */
+  seedIdSource?: string;
 }) {
   return (
     <Modal
@@ -1559,6 +1610,8 @@ function ProviderSearchModal({
           <ProviderSearchPanel
             releaseId={releaseId}
             seedQuery={seedQuery}
+            seedExternalId={seedExternalId}
+            seedIdSource={seedIdSource}
             onLinked={onClose}
           />
           <Group justify="flex-end">

@@ -239,6 +239,10 @@ impl MetadataProvider for MangabakaProvider {
         Ok(api_hit)
     }
 
+    fn foreign_sources(&self) -> &'static [&'static str] {
+        FOREIGN_SOURCES
+    }
+
     async fn offline_cache_loaded(&self) -> bool {
         self.offline.read().await.is_some()
     }
@@ -286,20 +290,41 @@ fn map_anyhow(err: anyhow::Error) -> MetadataError {
     }
 }
 
+/// Canonical provider id → MangaBaka `source` URL component, for every
+/// provider MangaBaka can cross-resolve. Single source of truth for both
+/// [`canonical_to_mb_source`] and [`FOREIGN_SOURCES`].
+const SOURCE_MAP: &[(&str, &str)] = &[
+    ("mangaupdates", "manga_updates"),
+    ("mal", "my_anime_list"),
+    ("anilist", "anilist"),
+    ("mangadex", "mangadex"),
+    ("kitsu", "kitsu"),
+    ("anime_planet", "anime_planet"),
+    ("anime_news_network", "anime_news_network"),
+    ("shikimori", "shikimori"),
+];
+
+/// Canonical provider ids MangaBaka cross-resolves, surfaced to the review
+/// modal via [`MetadataProvider::foreign_sources`]. Mirrors [`SOURCE_MAP`];
+/// a unit test guards against drift.
+const FOREIGN_SOURCES: &[&str] = &[
+    "mangaupdates",
+    "mal",
+    "anilist",
+    "mangadex",
+    "kitsu",
+    "anime_planet",
+    "anime_news_network",
+    "shikimori",
+];
+
 /// Translate our canonical provider id → MangaBaka's `source` URL component.
 /// Unknown providers return `None` and are skipped in the resolution chain.
 pub(crate) fn canonical_to_mb_source(provider: &str) -> Option<&'static str> {
-    match provider {
-        "mangaupdates" => Some("manga_updates"),
-        "mal" => Some("my_anime_list"),
-        "anilist" => Some("anilist"),
-        "mangadex" => Some("mangadex"),
-        "kitsu" => Some("kitsu"),
-        "anime_planet" => Some("anime_planet"),
-        "anime_news_network" => Some("anime_news_network"),
-        "shikimori" => Some("shikimori"),
-        _ => None,
-    }
+    SOURCE_MAP
+        .iter()
+        .find(|(canonical, _)| *canonical == provider)
+        .map(|(_, mb)| *mb)
 }
 
 #[cfg(test)]

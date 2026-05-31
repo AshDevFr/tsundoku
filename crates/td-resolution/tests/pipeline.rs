@@ -149,6 +149,7 @@ async fn insert_release(
         files_json: Set(None),
         description_html: Set(None),
         extracted_links_json: Set(extracted_links_json.map(str::to_string)),
+        comment_suggested_links_json: Set(None),
         information_url: Set(None),
         posted_at: Set(1_700_000_000),
         observed_at: Set(1_700_000_100),

@@ -42,6 +42,42 @@ pub fn pairs(links: &ExternalLinks) -> Vec<(&'static str, String, Option<String>
         .collect()
 }
 
+/// Detect the provider and extract the id from a single pasted string that
+/// may be a full provider URL. Returns `None` when no known provider host is
+/// present (the caller should then treat the input as a bare id for an
+/// explicitly chosen provider, or as a native id).
+///
+/// The host→provider mapping mirrors `td_source_nyaa::links` (the Nyaa link
+/// extractor); keep the two in sync when adding a provider. Legacy
+/// MangaUpdates URLs classify as [`MANGAUPDATES_LEGACY`] so callers that
+/// can't translate them (e.g. the synchronous review-search path) can tell
+/// the operator to use the modern `/series/<slug>` link instead.
+pub fn detect(input: &str) -> Option<(&'static str, String)> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let provider = if lower.contains("mangaupdates.com") {
+        if is_mangaupdates_legacy(trimmed) {
+            MANGAUPDATES_LEGACY
+        } else {
+            "mangaupdates"
+        }
+    } else if lower.contains("anilist.co") {
+        "anilist"
+    } else if lower.contains("myanimelist.net") {
+        "mal"
+    } else if lower.contains("mangadex.org") {
+        "mangadex"
+    } else if lower.contains("mangabaka.org") || lower.contains("mangabaka.dev") {
+        "mangabaka"
+    } else {
+        return None;
+    };
+    extract_id(provider, trimmed).map(|id| (provider, id))
+}
+
 /// Pull the provider-side external ID from a known-shape URL. Returns
 /// `None` only when the URL doesn't look like one we can map; for bare
 /// IDs (no `/`, no scheme) it returns the input unchanged.
@@ -316,6 +352,55 @@ mod tests {
             extract_id("mangabaka", "https://mangabaka.org/api/v1/series/123"),
             None
         );
+    }
+
+    #[test]
+    fn detect_identifies_each_provider_from_full_url() {
+        assert_eq!(
+            detect("https://www.mangaupdates.com/series/ylx5wzn/chainsaw-man"),
+            Some(("mangaupdates", "ylx5wzn".to_string()))
+        );
+        assert_eq!(
+            detect("https://anilist.co/manga/105778/Chainsaw-Man"),
+            Some(("anilist", "105778".to_string()))
+        );
+        assert_eq!(
+            detect("https://myanimelist.net/manga/116778/Chainsaw_Man"),
+            Some(("mal", "116778".to_string()))
+        );
+        assert_eq!(
+            detect("https://mangadex.org/title/a77742b1-befd-49a4-bff5-1ad4e6b0ef7b/x"),
+            Some((
+                "mangadex",
+                "a77742b1-befd-49a4-bff5-1ad4e6b0ef7b".to_string()
+            ))
+        );
+        assert_eq!(
+            detect("https://mangabaka.org/35296?utm_source=nyaa"),
+            Some(("mangabaka", "35296".to_string()))
+        );
+    }
+
+    #[test]
+    fn detect_classifies_legacy_mangaupdates_url() {
+        assert_eq!(
+            detect("https://www.mangaupdates.com/series.html?id=151349"),
+            Some((MANGAUPDATES_LEGACY, "151349".to_string()))
+        );
+    }
+
+    #[test]
+    fn detect_returns_none_for_bare_id_or_unknown_host() {
+        // Bare ids carry no host, so the caller decides the provider.
+        assert!(detect("151349").is_none());
+        assert!(detect("ylx5wzn").is_none());
+        assert!(detect("https://example.com/series/1").is_none());
+        assert!(detect("   ").is_none());
+    }
+
+    #[test]
+    fn detect_returns_none_for_non_series_mangabaka_paths() {
+        assert!(detect("https://mangabaka.org/search?q=foo").is_none());
     }
 
     #[test]

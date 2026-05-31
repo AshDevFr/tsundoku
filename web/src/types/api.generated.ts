@@ -1383,6 +1383,12 @@ export interface components {
             active: boolean;
             config?: null | components["schemas"]["ProviderConfigDto"];
             displayName: string;
+            /**
+             * @description Canonical ids of other providers this provider can cross-resolve via
+             *     `resolve_by_foreign_id`. Drives the review modal's "ID source"
+             *     dropdown. Empty for providers without foreign-ID resolution.
+             */
+            foreignSources: string[];
             id: string;
             inFlight?: null | components["schemas"]["InFlight"];
             lastRefresh?: null | components["schemas"]["ProviderCacheState"];
@@ -1552,6 +1558,7 @@ export interface components {
             unresolved: number;
         };
         ReleaseDto: {
+            commentSuggestedLinks?: null | components["schemas"]["ExtractedLinksDto"];
             ddlUrl?: string | null;
             /**
              * @description Raw description blob (markdown for Nyaa posts that ran detail fetch;
@@ -2474,10 +2481,18 @@ export interface operations {
                 q?: string;
                 /**
                  * @description Direct provider external-id lookup. When set, the handler short-
-                 *     circuits to `MetadataProvider::get` and returns at most one hit
-                 *     with `score = 1.0`.
+                 *     circuits to a single hit with `score = 1.0`. May be a bare id or a
+                 *     full provider URL (the host is auto-detected).
                  */
                 externalId?: string;
+                /**
+                 * @description Canonical id of the provider the `externalId` belongs to, when it is
+                 *     a *foreign* id resolved through the path provider's
+                 *     `resolve_by_foreign_id` (e.g. `foreignProvider=mangaupdates` against
+                 *     the MangaBaka provider). Ignored when it equals the path provider.
+                 *     A full provider URL in `externalId` overrides this via host detection.
+                 */
+                foreignProvider?: string;
                 /**
                  * @description Maximum number of hits to enrich with full metadata. Defaults to
                  *     10; clamped to `[1, 50]` to keep the per-request cost bounded.

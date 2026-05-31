@@ -51,6 +51,12 @@ pub struct ReleaseDto {
     /// nothing was found.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extracted_links: Option<ExtractedLinksDto>,
+    /// Provider links found in the post's *comments* — untrusted, so they are
+    /// never auto-resolved. The review UI offers them as one-click lookups the
+    /// operator can confirm. Omitted when absent. Distinct from
+    /// `extracted_links` (the uploader's links).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment_suggested_links: Option<ExtractedLinksDto>,
     /// URL from the post's "Information" field, verbatim. Surfaced even when
     /// it is not a provider link we resolve against (a publisher page, a
     /// Discord invite, …) so the review and kept views show the uploader's
@@ -1116,6 +1122,7 @@ fn model_to_release(m: releases::Model, formats: Vec<String>) -> ReleaseDto {
         .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
         .unwrap_or_default();
     let extracted_links = parse_extracted_links(m.extracted_links_json.as_deref());
+    let comment_suggested_links = parse_extracted_links(m.comment_suggested_links_json.as_deref());
     ReleaseDto {
         id: m.id,
         source_kind: m.source_kind,
@@ -1140,6 +1147,7 @@ fn model_to_release(m: releases::Model, formats: Vec<String>) -> ReleaseDto {
         last_resolve_attempt_at: m.last_resolve_attempt_at,
         description_html: m.description_html,
         extracted_links,
+        comment_suggested_links,
         information_url: m.information_url,
     }
 }

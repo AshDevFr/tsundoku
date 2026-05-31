@@ -56,6 +56,7 @@ fn sample_release(id: &str, series_id: Option<i32>) -> releases::ActiveModel {
         files_json: Set(Some(r#"["Some Release v01.cbz"]"#.into())),
         description_html: Set(None),
         extracted_links_json: Set(None),
+        comment_suggested_links_json: Set(None),
         information_url: Set(None),
         posted_at: Set(1_700_000_000),
         observed_at: Set(1_700_000_100),
@@ -472,6 +473,7 @@ async fn persist_discovered_upserts_release_and_attaches_formats() {
             anilist: Some("https://anilist.co/manga/123".into()),
             ..Default::default()
         },
+        comment_suggested_links: ExternalLinks::default(),
         information_url: Some("https://sevenseasentertainment.com/series/x/".into()),
         posted_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
     };
@@ -552,6 +554,7 @@ async fn select_for_reenrich_filters_by_source_and_status_and_round_trips() {
             anilist: Some("https://anilist.co/manga/9".into()),
             ..Default::default()
         },
+        comment_suggested_links: ExternalLinks::default(),
         information_url: Some("https://example.com/info".into()),
         posted_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
     };

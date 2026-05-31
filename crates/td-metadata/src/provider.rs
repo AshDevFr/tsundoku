@@ -45,6 +45,16 @@ pub trait MetadataProvider: Send + Sync {
         Ok(None)
     }
 
+    /// Canonical provider ids this provider can cross-resolve through
+    /// [`Self::resolve_by_foreign_id`]. Reported to the review UI so the
+    /// "Search provider" modal can offer a foreign-ID lookup against the
+    /// active provider (e.g. paste a MangaUpdates id, resolve it via
+    /// MangaBaka). Default empty: providers without cross-resolution offer
+    /// only native id lookup.
+    fn foreign_sources(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// Refresh the provider's local cache (e.g. download an offline dump).
     /// Default impl returns [`crate::RefreshStatus::NotSupported`] so the
     /// generic `tsundoku refresh-provider-cache` CLI can iterate the

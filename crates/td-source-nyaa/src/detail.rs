@@ -23,6 +23,11 @@ pub struct DetailFields {
     pub magnet: Option<String>,
     pub description_html: Option<String>,
     pub external_links: ExternalLinks,
+    /// Provider links found in the post's *comment* section. Untrusted (any
+    /// user can comment), so the resolver never consumes them; the review UI
+    /// surfaces them as operator-confirmable suggestions. Empty when there are
+    /// no comments or none carry a recognizable link.
+    pub comment_suggested_links: ExternalLinks,
     /// URL from the post's "Information" row, verbatim. Captured whether or
     /// not it points at a provider we resolve against — the review UI shows
     /// it as the uploader's cited source. `None` when the row is absent or
@@ -37,12 +42,53 @@ pub fn parse_detail(html: &str, _site_base_url: &str) -> Result<DetailFields> {
     out.files = parse_file_list(&doc);
     out.magnet = parse_magnet(html);
     out.description_html = parse_description_html(&doc);
+    // Comment links first: the no-description fallback below scans the whole
+    // page (comments included), so we need these to subtract them out and keep
+    // an untrusted commenter link from ever reaching `external_links` (which
+    // feeds the resolver).
+    out.comment_suggested_links = parse_comment_links(&doc);
     out.external_links = match out.description_html.as_deref() {
         Some(desc) => extract_external_links(desc),
-        None => extract_external_links(html),
+        None => subtract_links(extract_external_links(html), &out.comment_suggested_links),
     };
     out.information_url = parse_information_url(&doc);
     Ok(out)
+}
+
+/// Extract provider links from the post's comment section (`#comments`),
+/// kept apart from the uploader's [`DetailFields::external_links`]. Returns
+/// an empty set when there is no comment panel.
+fn parse_comment_links(doc: &Html) -> ExternalLinks {
+    static COMMENTS_SEL: OnceLock<Selector> = OnceLock::new();
+    let sel = COMMENTS_SEL.get_or_init(|| Selector::parse("#comments").expect("static selector"));
+    match doc.select(sel).next() {
+        Some(comments) => extract_external_links(&comments.inner_html()),
+        None => ExternalLinks::default(),
+    }
+}
+
+/// Drop from `base` any provider link that is identical to the one in
+/// `remove`. Used by the no-description fallback, which scans the whole page
+/// (comments included): this guarantees a comment-sourced link can never
+/// masquerade as an uploader link in `external_links`, which is the only
+/// links field the resolver consumes.
+fn subtract_links(mut base: ExternalLinks, remove: &ExternalLinks) -> ExternalLinks {
+    if base.mangaupdates.is_some() && base.mangaupdates == remove.mangaupdates {
+        base.mangaupdates = None;
+    }
+    if base.anilist.is_some() && base.anilist == remove.anilist {
+        base.anilist = None;
+    }
+    if base.mal.is_some() && base.mal == remove.mal {
+        base.mal = None;
+    }
+    if base.mangadex.is_some() && base.mangadex == remove.mangadex {
+        base.mangadex = None;
+    }
+    if base.mangabaka.is_some() && base.mangabaka == remove.mangabaka {
+        base.mangabaka = None;
+    }
+    base
 }
 
 /// Pull the URL out of the post's "Information" row. The detail page lays
@@ -196,5 +242,94 @@ mod tests {
         "#;
         let detail = parse_detail(html, "https://nyaa.si").unwrap();
         assert_eq!(detail.information_url, None);
+    }
+
+    #[test]
+    fn comment_links_are_separated_from_uploader_links() {
+        // A post whose body has no provider link, but a commenter pasted a
+        // MangaUpdates link. It must land in comment_suggested_links (a
+        // review-only hint), never in external_links (the resolver's input).
+        let html = r#"
+            <div id="torrent-description">Uploader notes, nothing linked here.</div>
+            <div id="comments">
+              <div class="panel comment-panel">
+                <div class="comment-content">
+                  this is https://www.mangaupdates.com/series/ylx5wzn/chainsaw-man
+                </div>
+              </div>
+            </div>
+        "#;
+        let detail = parse_detail(html, "https://nyaa.si").unwrap();
+        assert!(
+            detail.external_links.is_empty(),
+            "comment link leaked into uploader links: {:?}",
+            detail.external_links
+        );
+        assert_eq!(
+            detail.comment_suggested_links.mangaupdates.as_deref(),
+            Some("https://www.mangaupdates.com/series/ylx5wzn/chainsaw-man")
+        );
+    }
+
+    #[test]
+    fn comment_links_empty_when_no_comment_panel() {
+        let html = r#"<div id="torrent-description">no comments section</div>"#;
+        let detail = parse_detail(html, "https://nyaa.si").unwrap();
+        assert!(detail.comment_suggested_links.is_empty());
+    }
+
+    #[test]
+    fn comment_link_does_not_leak_into_external_links_without_description() {
+        // No `#torrent-description` block, so external_links falls back to a
+        // whole-page scan. The only provider link is in a comment — it must
+        // NOT leak into external_links (the resolver's input), only into the
+        // suggestions.
+        let html = r#"
+            <div class="panel-body">file list etc, no description block</div>
+            <div id="comments">
+              <div class="comment-content">
+                see https://www.mangaupdates.com/series/ylx5wzn/x
+              </div>
+            </div>
+        "#;
+        let detail = parse_detail(html, "https://nyaa.si").unwrap();
+        assert!(
+            detail.external_links.is_empty(),
+            "comment link leaked into external_links: {:?}",
+            detail.external_links
+        );
+        assert_eq!(
+            detail.comment_suggested_links.mangaupdates.as_deref(),
+            Some("https://www.mangaupdates.com/series/ylx5wzn/x")
+        );
+    }
+
+    #[test]
+    fn uploader_link_survives_when_no_description_and_comment_differs() {
+        // No description block: a bare uploader link in the body plus a
+        // different comment link. The uploader link must remain in
+        // external_links; only the matching comment link is subtracted.
+        let html = r#"
+            <div class="panel-body">
+              https://anilist.co/manga/123 by the uploader
+            </div>
+            <div id="comments">
+              <div class="comment-content">
+                https://www.mangaupdates.com/series/ylx5wzn/x
+              </div>
+            </div>
+        "#;
+        let detail = parse_detail(html, "https://nyaa.si").unwrap();
+        assert_eq!(
+            detail.external_links.anilist.as_deref(),
+            Some("https://anilist.co/manga/123"),
+            "uploader link was wrongly dropped: {:?}",
+            detail.external_links
+        );
+        assert!(detail.external_links.mangaupdates.is_none());
+        assert_eq!(
+            detail.comment_suggested_links.mangaupdates.as_deref(),
+            Some("https://www.mangaupdates.com/series/ylx5wzn/x")
+        );
     }
 }

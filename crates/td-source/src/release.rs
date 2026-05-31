@@ -36,10 +36,17 @@ pub struct DiscoveredRelease {
     #[serde(default)]
     pub files: Vec<String>,
     pub description_html: Option<String>,
-    /// External provider links extracted from the post body / description.
-    /// Empty fields mean the source could not find that provider's link.
+    /// External provider links extracted from the post body / description
+    /// (the *uploader's* assertion). Empty fields mean the source could not
+    /// find that provider's link. Consumed by the resolution pipeline.
     #[serde(default)]
     pub external_links: ExternalLinks,
+    /// External provider links found in *comments* on the post. Untrusted
+    /// (anyone can comment), so these are **never** fed to the resolver;
+    /// they surface in the review UI as operator-confirmable suggestions.
+    /// Persisted to `releases.comment_suggested_links_json`.
+    #[serde(default)]
+    pub comment_suggested_links: ExternalLinks,
     /// URL the uploader cited in the post's "Information" field, verbatim.
     /// Unlike [`ExternalLinks`], this is kept even when it points at a site
     /// we don't resolve against (a publisher page, a Discord invite, …) so

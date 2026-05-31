@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use td_config::{MangabakaProviderConfig, ProvidersConfig};
 use td_db::repos::{provider_cache_state_repo, run_metrics_repo};
 use td_metadata::{MetadataProvider, SeriesKind, SeriesStatus};
+use td_resolution::foreign_id;
 use td_resolution::scoring::dice;
 use td_scheduler::dispatch;
 use td_scheduler::jobs::refresh_provider_cache;
@@ -33,6 +34,10 @@ pub struct ProviderDto {
     pub id: String,
     pub display_name: String,
     pub active: bool,
+    /// Canonical ids of other providers this provider can cross-resolve via
+    /// `resolve_by_foreign_id`. Drives the review modal's "ID source"
+    /// dropdown. Empty for providers without foreign-ID resolution.
+    pub foreign_sources: Vec<String>,
     pub last_refresh: Option<ProviderCacheState>,
     /// Operator-facing snapshot of the `[providers.<id>]` config block. May
     /// be `None` for providers that don't have a typed config block (today
@@ -153,6 +158,11 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<ProviderList>
             id: id.to_string(),
             display_name: provider.display_name().to_string(),
             active: id == active,
+            foreign_sources: provider
+                .foreign_sources()
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             last_refresh: latest.map(|r| ProviderCacheState {
                 fetched_at: r.fetched_at,
                 cache_version: r.cache_version,
@@ -314,10 +324,17 @@ pub struct ProviderSearchQuery {
     #[serde(default)]
     pub q: Option<String>,
     /// Direct provider external-id lookup. When set, the handler short-
-    /// circuits to `MetadataProvider::get` and returns at most one hit
-    /// with `score = 1.0`.
+    /// circuits to a single hit with `score = 1.0`. May be a bare id or a
+    /// full provider URL (the host is auto-detected).
     #[serde(default)]
     pub external_id: Option<String>,
+    /// Canonical id of the provider the `externalId` belongs to, when it is
+    /// a *foreign* id resolved through the path provider's
+    /// `resolve_by_foreign_id` (e.g. `foreignProvider=mangaupdates` against
+    /// the MangaBaka provider). Ignored when it equals the path provider.
+    /// A full provider URL in `externalId` overrides this via host detection.
+    #[serde(default)]
+    pub foreign_provider: Option<String>,
     /// Maximum number of hits to enrich with full metadata. Defaults to
     /// 10; clamped to `[1, 50]` to keep the per-request cost bounded.
     #[serde(default)]
@@ -397,10 +414,13 @@ pub async fn search(
 
     // externalId path: precise lookup, single hit at score 1.0.
     if let Some(external_id) = external_id {
-        let meta = provider
-            .get(external_id)
-            .await
-            .map_err(|e| ApiError::Internal(anyhow::anyhow!("provider get failed: {e}")))?;
+        let foreign_provider = params
+            .foreign_provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let meta =
+            lookup_external_id(provider.as_ref(), &id, external_id, foreign_provider).await?;
         let hits = match meta {
             Some(m) => vec![enrich(m, 1.0)],
             None => Vec::new(),
@@ -442,6 +462,48 @@ pub async fn search(
         provider: id,
         hits: enriched,
     }))
+}
+
+/// Resolve a single `externalId` lookup, picking the right provider method:
+///
+/// 1. An explicit `foreign_provider` (the modal's "ID source" dropdown), or
+/// 2. host auto-detection when `external_id` is a full provider URL, or
+/// 3. a native id lookup on the path provider.
+///
+/// When the resolved source is a foreign provider, the path provider's
+/// `resolve_by_foreign_id` does the cross-resolution; when it is the path
+/// provider itself, a direct `get`. Legacy MangaUpdates ids resolve to
+/// `Ok(None)` here on purpose: translating them to modern slugs needs the
+/// resolver's redirect cache, not this synchronous path. The modal shows an
+/// inline hint to use the modern `/series/<slug>` link instead.
+async fn lookup_external_id(
+    provider: &dyn MetadataProvider,
+    provider_id: &str,
+    external_id: &str,
+    foreign_provider: Option<&str>,
+) -> ApiResult<Option<td_metadata::SeriesMetadata>> {
+    let (source, lookup_id): (Option<&str>, String) = if let Some(fp) = foreign_provider {
+        (
+            Some(fp),
+            foreign_id::extract_id(fp, external_id).unwrap_or_else(|| external_id.to_string()),
+        )
+    } else if let Some((detected, detected_id)) = foreign_id::detect(external_id) {
+        (Some(detected), detected_id)
+    } else {
+        (None, external_id.to_string())
+    };
+
+    let map_err =
+        |e: td_metadata::MetadataError| ApiError::Internal(anyhow::anyhow!("provider lookup: {e}"));
+
+    match source {
+        Some(src) if src == foreign_id::MANGAUPDATES_LEGACY => Ok(None),
+        Some(src) if src != provider_id => provider
+            .resolve_by_foreign_id(src, &lookup_id)
+            .await
+            .map_err(map_err),
+        _ => provider.get(&lookup_id).await.map_err(map_err),
+    }
 }
 
 fn enrich(m: td_metadata::SeriesMetadata, score: f32) -> ProviderSearchHit {
