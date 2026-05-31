@@ -2,6 +2,16 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.8.0] - 2026-05-31
+
+### Features
+
+- *(review)* Add searchQuery + breadth group filter to the review queue
+- *(review)* Add release grouping to the review queue
+- *(review)* Add a release-grouping panel to the review queue
+- *(review)* Surface a dominant-candidate hint on release groups
+- *(review)* Make group rows full-width and auto-collapse on select
+
 ## [1.7.2] - 2026-05-31
 
 ### Features
