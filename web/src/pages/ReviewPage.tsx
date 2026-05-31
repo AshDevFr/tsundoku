@@ -192,6 +192,17 @@ export function ReviewPage() {
     breadth,
     sort: sort ?? undefined,
   });
+  // Collapse the group's members once they arrive after a chip click. Keyed on
+  // the fetched data so it fires when the filtered set lands, then disarms so a
+  // later manual expand isn't fought.
+  useEffect(() => {
+    if (!collapseOnGroupLoad.current) return;
+    const ids = queue.data?.items.map((i) => i.id) ?? [];
+    if (ids.length === 0) return;
+    setCollapsed(new Set(ids));
+    collapseOnGroupLoad.current = false;
+  }, [queue.data]);
+
   const retryAll = useRetryAllReleases();
   const bulkRetry = useBulkRetry();
   const bulkReject = useBulkReject();
@@ -238,10 +249,16 @@ export function ReviewPage() {
   // (a tall chip row can otherwise leave it below the fold). `scrollIntoView`
   // is guarded since jsdom doesn't implement it.
   const listAnchorRef = useRef<HTMLDivElement>(null);
+  // When a group is picked the result cards should come in collapsed (a tight,
+  // scannable run of the same series). The members aren't known until the list
+  // refetches, so we arm this and collapse them once they land (see effect
+  // below).
+  const collapseOnGroupLoad = useRef(false);
   const selectGroup = (query: string) => {
     setSearchQuery(query);
     setPage(1);
     resetSelection();
+    collapseOnGroupLoad.current = true;
     listAnchorRef.current?.scrollIntoView?.({
       behavior: "smooth",
       block: "start",
@@ -251,6 +268,8 @@ export function ReviewPage() {
     setSearchQuery(null);
     setPage(1);
     resetSelection();
+    // Back to the full queue at the expanded default.
+    setCollapsed(new Set());
   };
   // Changing breadth reshuffles the clusters, so any currently-selected group
   // (whose membership was computed at the old breadth) is no longer
@@ -260,6 +279,7 @@ export function ReviewPage() {
     setSearchQuery(null);
     setPage(1);
     resetSelection();
+    setCollapsed(new Set());
   };
   // Paging is a different view of the same filtered set; drop the per-page
   // selection so a stale checkbox can't ride along to the next page.

@@ -717,16 +717,13 @@ describe("ReviewPage", () => {
     fireEvent.click(screen.getByTestId("release-group-toggle"));
   }
 
-  /// Click the group chip whose label contains `text`. Mantine forwards the
-  /// `data-testid` to the hidden checkbox `<input>` (clicking it toggles
-  /// selection); the visible label lives in the input's sibling, so match on
-  /// the chip root's text.
+  /// Click the group row whose label contains `text`.
   async function clickGroupChip(text: string) {
-    const input = (await screen.findAllByTestId("release-group-chip")).find(
-      (el) => el.parentElement?.textContent?.includes(text),
+    const row = (await screen.findAllByTestId("release-group-chip")).find(
+      (el) => el.textContent?.includes(text),
     );
-    if (!input) throw new Error(`no group chip matching ${text}`);
-    fireEvent.click(input);
+    if (!row) throw new Error(`no group chip matching ${text}`);
+    fireEvent.click(row);
   }
 
   it("clusters the queue and scopes the list to a clicked group", async () => {
@@ -770,6 +767,13 @@ describe("ReviewPage", () => {
     expect(screen.getByTestId("review-active-group")).toHaveTextContent(
       "Group: one piece",
     );
+    // Picking a group collapses its members by default (toolbar flips to
+    // "Expand all" once every loaded card is collapsed).
+    await waitFor(() => {
+      expect(screen.getByTestId("toggle-collapse-all")).toHaveTextContent(
+        "Expand all",
+      );
+    });
   });
 
   it("widens the clusters when breadth is loosened", async () => {
