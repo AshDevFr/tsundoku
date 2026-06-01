@@ -896,6 +896,122 @@ pub async fn create(
     ))
 }
 
+/// Body for editing a manual series. Mirrors [`CreateSeriesRequest`] plus
+/// `status` and `alternateTitles`. Only `canonicalTitle` is required; every
+/// other field is a full replacement of the stored value (empty/absent →
+/// cleared). `alternateTitles` replaces the whole list; `[]` or omission
+/// clears it.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSeriesRequest {
+    pub canonical_title: String,
+    #[serde(default)]
+    pub alternate_titles: Option<Vec<String>>,
+    pub kind: Option<String>,
+    pub status: Option<String>,
+    pub year: Option<i32>,
+    pub cover_url: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Edit a manual series' descriptive fields. **Manual rows only**: a
+/// provider-backed series (`metadataSource` ≠ `manual`) is owned by the
+/// provider and would have any edit overwritten on the next metadata refresh,
+/// so it is rejected with `409`. Provider/metadata/provenance columns are never
+/// touched — only the operator-authored descriptive fields change.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/series/{id}",
+    tag = "series",
+    params(("id" = i32, Path, description = "Internal series id")),
+    request_body = UpdateSeriesRequest,
+    responses(
+        (status = 200, body = SeriesDetail),
+        (status = 400, description = "canonicalTitle is empty"),
+        (status = 404, description = "No series with that id"),
+        (status = 409, description = "Series is provider-backed and not editable")
+    ),
+    security(("admin" = []))
+)]
+pub async fn update(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    Json(req): Json<UpdateSeriesRequest>,
+) -> ApiResult<Json<SeriesDetail>> {
+    let title = req.canonical_title.trim();
+    if title.is_empty() {
+        return Err(ApiError::BadRequest(
+            "canonicalTitle must not be empty".into(),
+        ));
+    }
+    // Trim each alternate title and drop empties so search never sees blank
+    // entries; the whole list is a full replacement.
+    let alternate_titles: Vec<String> = req
+        .alternate_titles
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect();
+    let edit = series_repo::ManualSeriesEdit {
+        canonical_title: title.to_string(),
+        alternate_titles,
+        kind: req.kind.filter(|s| !s.trim().is_empty()),
+        status: req.status.filter(|s| !s.trim().is_empty()),
+        year: req.year,
+        cover_url: req.cover_url.filter(|s| !s.trim().is_empty()),
+        description: req.description.filter(|s| !s.trim().is_empty()),
+    };
+
+    let row = match series_repo::update_manual_fields(&state.db, id, edit)
+        .await
+        .map_err(anyhow_err)?
+    {
+        series_repo::UpdateManualOutcome::Updated(row) => *row,
+        series_repo::UpdateManualOutcome::NotFound => {
+            return Err(ApiError::NotFound(format!("series {id}")));
+        }
+        series_repo::UpdateManualOutcome::NotManual => {
+            return Err(ApiError::Conflict(format!(
+                "series {id} is provider-backed; only manual series can be edited"
+            )));
+        }
+    };
+
+    // A manual series has no external ids, genres, tags, or Codex link — but
+    // re-hydrate via the same helpers as the read path so the response shape is
+    // identical to GET and stays correct if a manual row ever gains a join row.
+    let mappings = series_external_ids_repo::list_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    let tags_for_series = tagging_repo::list_tags_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    let genres_for_series = tagging_repo::list_genres_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    // This endpoint is admin-gated by the router, so surface the Codex overlay
+    // like the read path does for an admin caller.
+    let codex = codex_link_repo::get(&state.db, id)
+        .await
+        .map_err(anyhow_err)?
+        .map(|l| {
+            build_codex_info(
+                &l,
+                row.highest_volume,
+                row.highest_chapter,
+                state.codex.normalized_base_url().as_deref(),
+            )
+        });
+    Ok(Json(model_to_detail(
+        row,
+        mappings,
+        genres_for_series,
+        tags_for_series,
+        codex,
+    )))
+}
+
 /// Re-fetch metadata for a series from the active provider and re-persist.
 #[utoipa::path(
     post,

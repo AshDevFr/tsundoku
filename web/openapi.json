@@ -1620,6 +1620,61 @@
             "description": "No series with that id"
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Edit a manual series' descriptive fields. **Manual rows only**: a\nprovider-backed series (`metadataSource` ≠ `manual`) is owned by the\nprovider and would have any edit overwritten on the next metadata refresh,\nso it is rejected with `409`. Provider/metadata/provenance columns are never\ntouched — only the operator-authored descriptive fields change.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Internal series id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSeriesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "canonicalTitle is empty"
+          },
+          "404": {
+            "description": "No series with that id"
+          },
+          "409": {
+            "description": "Series is provider-backed and not editable"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
       }
     },
     "/api/v1/series/{id}/codex-link": {
@@ -4781,6 +4836,58 @@
             }
           }
         ]
+      },
+      "UpdateSeriesRequest": {
+        "type": "object",
+        "description": "Body for editing a manual series. Mirrors [`CreateSeriesRequest`] plus\n`status` and `alternateTitles`. Only `canonicalTitle` is required; every\nother field is a full replacement of the stored value (empty/absent →\ncleared). `alternateTitles` replaces the whole list; `[]` or omission\nclears it.",
+        "required": [
+          "canonicalTitle"
+        ],
+        "properties": {
+          "alternateTitles": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "canonicalTitle": {
+            "type": "string"
+          },
+          "coverUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
       }
     },
     "securitySchemes": {

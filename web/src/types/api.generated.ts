@@ -749,7 +749,14 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Edit a manual series' descriptive fields. **Manual rows only**: a
+         *     provider-backed series (`metadataSource` ≠ `manual`) is owned by the
+         *     provider and would have any edit overwritten on the next metadata refresh,
+         *     so it is rejected with `409`. Provider/metadata/provenance columns are never
+         *     touched — only the operator-authored descriptive fields change.
+         */
+        patch: operations["update"];
         trace?: never;
     };
     "/api/v1/series/{id}/codex-link": {
@@ -2088,6 +2095,23 @@ export interface components {
             searchQueries: string[];
             topCandidate?: null | components["schemas"]["ReviewCandidateDto"];
         };
+        /**
+         * @description Body for editing a manual series. Mirrors [`CreateSeriesRequest`] plus
+         *     `status` and `alternateTitles`. Only `canonicalTitle` is required; every
+         *     other field is a full replacement of the stored value (empty/absent →
+         *     cleared). `alternateTitles` replaces the whole list; `[]` or omission
+         *     clears it.
+         */
+        UpdateSeriesRequest: {
+            alternateTitles?: string[] | null;
+            canonicalTitle: string;
+            coverUrl?: string | null;
+            description?: string | null;
+            kind?: string | null;
+            status?: string | null;
+            /** Format: int32 */
+            year?: number | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -3187,6 +3211,53 @@ export interface operations {
             };
             /** @description No series with that id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Internal series id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSeriesRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description canonicalTitle is empty */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No series with that id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Series is provider-backed and not editable */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -64,6 +64,80 @@ pub async fn create(db: &DatabaseConnection, model: series::ActiveModel) -> Resu
         .await?)
 }
 
+/// Editable descriptive fields of a manual series. All values are the new
+/// desired state (a full replace, not a partial patch); the caller is
+/// expected to have trimmed strings and mapped empties to `None` already.
+/// `alternate_titles` is the full replacement list — an empty vec clears the
+/// stored alternates (persisted as SQL `NULL`, matching "absent" elsewhere in
+/// the schema).
+#[derive(Debug, Clone)]
+pub struct ManualSeriesEdit {
+    pub canonical_title: String,
+    pub alternate_titles: Vec<String>,
+    pub kind: Option<String>,
+    pub status: Option<String>,
+    pub year: Option<i32>,
+    pub cover_url: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Result of [`update_manual_fields`]. The caller maps these to HTTP statuses:
+/// `Updated` → 200, `NotManual` → 409, `NotFound` → 404.
+#[derive(Debug)]
+pub enum UpdateManualOutcome {
+    /// The row was a manual series and its editable fields were rewritten.
+    /// Boxed because `Model` is large relative to the unit variants.
+    Updated(Box<Model>),
+    /// A row with this id exists but is provider-backed (`metadata_source`
+    /// is not `manual`), so it is owned by the provider and must not be
+    /// hand-edited — a refresh would clobber the change.
+    NotManual,
+    /// No series row with this id.
+    NotFound,
+}
+
+/// Overwrite the editable descriptive fields of a *manual* series.
+///
+/// Only `metadata_source = 'manual'` rows are editable: provider-backed rows
+/// are the provider's to own and would have any edit overwritten on the next
+/// metadata refresh, so they are rejected with [`UpdateManualOutcome::NotManual`]
+/// and left untouched. Provider/metadata/provenance columns (`metadata_source`,
+/// `metadata_hash`, `metadata_json`, `metadata_fetched_at`, the `*_at`
+/// timestamps, the span/total/rating denormalizations, `owned`) are never
+/// written here — only the operator-authored descriptive fields change.
+pub async fn update_manual_fields(
+    db: &DatabaseConnection,
+    id: i32,
+    edit: ManualSeriesEdit,
+) -> Result<UpdateManualOutcome> {
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set};
+
+    let Some(row) = series::Entity::find_by_id(id).one(db).await? else {
+        return Ok(UpdateManualOutcome::NotFound);
+    };
+    if row.metadata_source != MANUAL_METADATA_SOURCE {
+        return Ok(UpdateManualOutcome::NotManual);
+    }
+
+    let alternate_titles_json = if edit.alternate_titles.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&edit.alternate_titles)?)
+    };
+
+    let mut active: series::ActiveModel = row.into();
+    active.canonical_title = Set(edit.canonical_title);
+    active.alternate_titles_json = Set(alternate_titles_json);
+    active.kind = Set(edit.kind);
+    active.status = Set(edit.status);
+    active.year = Set(edit.year);
+    active.cover_url = Set(edit.cover_url);
+    active.description = Set(edit.description);
+
+    let updated = active.update(db).await?;
+    Ok(UpdateManualOutcome::Updated(Box::new(updated)))
+}
+
 pub async fn find_by_id(db: &DatabaseConnection, id: i32) -> Result<Option<Model>> {
     Ok(series::Entity::find_by_id(id).one(db).await?)
 }
@@ -260,6 +334,112 @@ mod tests {
         let out = invalidate_metadata_hashes(&db, None).await.unwrap();
         assert_eq!(out.invalidated, 1, "only the row with a hash counts");
         assert_eq!(hash_of(&db, live).await, None);
+    }
+
+    fn sample_edit(title: &str) -> ManualSeriesEdit {
+        ManualSeriesEdit {
+            canonical_title: title.into(),
+            alternate_titles: vec!["Alt One".into(), "Alt Two".into()],
+            kind: Some("manga".into()),
+            status: Some("ongoing".into()),
+            year: Some(2021),
+            cover_url: Some("https://example/cover.jpg".into()),
+            description: Some("a synopsis".into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_manual_fields_rewrites_a_manual_row() {
+        let db = fresh().await;
+        let id = seed(&db, "Old Title", "manual", None).await;
+
+        let outcome = update_manual_fields(&db, id, sample_edit("New Title"))
+            .await
+            .unwrap();
+        let model = match outcome {
+            UpdateManualOutcome::Updated(m) => *m,
+            other => panic!("expected Updated, got {other:?}"),
+        };
+
+        // Returned model reflects the edit...
+        assert_eq!(model.canonical_title, "New Title");
+        assert_eq!(model.kind.as_deref(), Some("manga"));
+        assert_eq!(model.year, Some(2021));
+        assert_eq!(
+            model.cover_url.as_deref(),
+            Some("https://example/cover.jpg")
+        );
+        assert_eq!(model.description.as_deref(), Some("a synopsis"));
+        // ...and metadata provenance is untouched.
+        assert_eq!(model.metadata_source, "manual");
+
+        // Alternate titles round-trip through the JSON column.
+        let persisted = series::Entity::find_by_id(id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        let alts: Vec<String> =
+            serde_json::from_str(persisted.alternate_titles_json.as_deref().unwrap()).unwrap();
+        assert_eq!(alts, vec!["Alt One", "Alt Two"]);
+    }
+
+    #[tokio::test]
+    async fn update_manual_fields_clears_alternates_with_empty_list() {
+        let db = fresh().await;
+        let id = seed(&db, "Title", "manual", None).await;
+        // Seed some alternates first.
+        update_manual_fields(&db, id, sample_edit("Title"))
+            .await
+            .unwrap();
+
+        let mut edit = sample_edit("Title");
+        edit.alternate_titles = vec![];
+        update_manual_fields(&db, id, edit).await.unwrap();
+
+        let persisted = series::Entity::find_by_id(id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            persisted.alternate_titles_json, None,
+            "an empty alternate-title list clears the column to NULL"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_manual_fields_refuses_provider_backed_rows() {
+        let db = fresh().await;
+        for source in ["api", "offline_cache"] {
+            let id = seed(&db, "Provider Owned", source, Some("hash")).await;
+            let outcome = update_manual_fields(&db, id, sample_edit("Hijacked"))
+                .await
+                .unwrap();
+            assert!(
+                matches!(outcome, UpdateManualOutcome::NotManual),
+                "{source} row should be NotManual"
+            );
+
+            // The row is left exactly as it was.
+            let row = series::Entity::find_by_id(id)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.canonical_title, "Provider Owned");
+            assert_eq!(row.metadata_source, source);
+            assert_eq!(row.metadata_hash.as_deref(), Some("hash"));
+        }
+    }
+
+    #[tokio::test]
+    async fn update_manual_fields_reports_not_found() {
+        let db = fresh().await;
+        let outcome = update_manual_fields(&db, 9999, sample_edit("Ghost"))
+            .await
+            .unwrap();
+        assert!(matches!(outcome, UpdateManualOutcome::NotFound));
     }
 
     #[tokio::test]

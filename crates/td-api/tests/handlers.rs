@@ -625,6 +625,218 @@ async fn create_manual_series_then_link_release_resolves_to_it() {
     assert_eq!(row.metadata_source, "manual");
 }
 
+/// Seed a manual series straight into the DB (bypassing the create endpoint)
+/// so update tests don't depend on the create handler.
+async fn seed_manual_series(db: &sea_orm::DatabaseConnection, title: &str) -> i32 {
+    let now = Utc::now().timestamp();
+    series::ActiveModel {
+        canonical_title: Set(title.into()),
+        metadata_source: Set("manual".into()),
+        metadata_fetched_at: Set(now),
+        first_seen_at: Set(now),
+        last_release_at: Set(now),
+        owned: Set(0),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .unwrap()
+    .id
+}
+
+#[tokio::test]
+async fn update_manual_series_edits_descriptive_fields() {
+    let db = fresh_db().await;
+    let sid = seed_manual_series(&db, "Old Title").await;
+    let app = build_app(
+        db.clone(),
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let body = serde_json::json!({
+        "canonicalTitle": "New Title",
+        "alternateTitles": ["Alt One", "  ", "Alt Two"],
+        "kind": "manga",
+        "status": "completed",
+        "year": 2021,
+        "coverUrl": "https://example/cover.jpg",
+        "description": "a synopsis"
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/series/{sid}"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["canonicalTitle"], "New Title");
+    // Blank alternate titles are trimmed out.
+    assert_eq!(
+        body["alternateTitles"].as_array().unwrap(),
+        &vec![Value::from("Alt One"), Value::from("Alt Two")]
+    );
+    assert_eq!(body["kind"], "manga");
+    assert_eq!(body["status"], "completed");
+    assert_eq!(body["year"], 2021);
+    assert_eq!(body["coverUrl"], "https://example/cover.jpg");
+    assert_eq!(body["description"], "a synopsis");
+    // Still manual; editing never changes provenance.
+    assert_eq!(body["metadataSource"], "manual");
+
+    let row = series::Entity::find_by_id(sid)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.canonical_title, "New Title");
+    assert_eq!(row.metadata_source, "manual");
+}
+
+#[tokio::test]
+async fn update_manual_series_rejects_empty_title() {
+    let db = fresh_db().await;
+    let sid = seed_manual_series(&db, "Keep Me").await;
+    let app = build_app(
+        db.clone(),
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let body = serde_json::json!({ "canonicalTitle": "   " });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/series/{sid}"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn update_series_409s_for_provider_backed_row() {
+    let db = fresh_db().await;
+    // seed_series defaults to metadata_source = "api".
+    let sid = seed_series(&db, "Provider Owned", "manga").await;
+    let app = build_app(
+        db.clone(),
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let body = serde_json::json!({ "canonicalTitle": "Hijacked" });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/series/{sid}"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    // The row is left untouched.
+    let row = series::Entity::find_by_id(sid)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.canonical_title, "Provider Owned");
+    assert_eq!(row.metadata_source, "api");
+}
+
+#[tokio::test]
+async fn update_series_404s_for_unknown_id() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let body = serde_json::json!({ "canonicalTitle": "Ghost" });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/v1/series/999999")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn update_series_requires_admin_token() {
+    let db = fresh_db().await;
+    let sid = seed_manual_series(&db, "Title").await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let body = serde_json::json!({ "canonicalTitle": "New" });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/series/{sid}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn release_keep_sets_standalone_status() {
     let db = fresh_db().await;

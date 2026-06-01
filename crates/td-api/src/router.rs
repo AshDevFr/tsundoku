@@ -6,7 +6,7 @@
 
 use axum::Router;
 use axum::middleware;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use td_config::AppConfig;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -27,6 +27,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
 
     let writes = Router::new()
         .route("/series", post(series::create))
+        .route("/series/{id}", patch(series::update))
         .route("/series/refresh-all", post(series::refresh_all))
         .route("/series/recompute-spans", post(series::recompute_spans))
         .route(
