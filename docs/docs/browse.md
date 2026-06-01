@@ -69,6 +69,18 @@ Tri-state segmented control over the orphan / has-releases axis:
   residue of a manual re-link in the review queue.
 - **Has releases** — series with ≥1 linked release.
 
+### Source
+
+Tri-state segmented control over the metadata-provenance axis:
+
+- **Any** — no constraint (default).
+- **Auto** — only provider-backed series (`metadataSource` of `api` or
+  `offline_cache`), i.e. rows the resolver matched to a provider.
+- **Manual** — only operator-authored series (`metadataSource = manual`),
+  the provider-less catalog entries created from the [review
+  queue](./review-queue.md). Handy for curating the manual rows, since
+  those are the only ones you can [edit](#editing-a-manual-series).
+
 ### Sort by / Order
 
 | Sort field | Default order | Notes |
@@ -179,6 +191,24 @@ that landed on the wrong series. The modal accepts either a catalog
 series id (paste from another detail page) or a provider search
 result. Useful when the fuzzy resolver picked the wrong target and
 you want to fix it after the fact without retrying the whole row.
+
+### Editing a manual series
+
+Signed in as admin, a manual series (the **manual** badge, created from
+the [review queue](./review-queue.md)) shows an **✎ Edit** button next to
+the metadata line. It opens a form to change the title, alternate titles,
+kind, status, year, cover URL, and description. Alternate titles feed the
+[text search](#text-search) rerank, so adding them makes a manual series
+findable by its other names.
+
+Editing is **manual-only by design**. Provider-backed series (`api` /
+`offline_cache`) are owned by their metadata provider: a refresh re-pulls
+and overwrites their fields, so any hand-edit would be silently clobbered
+on the next [cache refresh](./providers.md). The Edit button is therefore
+absent on provider-backed series, and the API rejects a `PATCH` to one with
+`409 Conflict`. To re-pull a provider-backed series instead, use the **↻
+Refresh** button. Edits never touch provenance, so a manual series stays
+manual after editing.
 
 ## API
 
