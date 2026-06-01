@@ -67,6 +67,9 @@ export interface SeriesFilters {
   genresMode?: "any" | "all";
   tags?: string[];
   tagsMode?: "any" | "all";
+  /// Metadata provenance filter: `manual` keeps only operator-authored
+  /// series, `auto` keeps only provider-backed ones. Mirrors the backend.
+  metadataSource?: "manual" | "auto";
   sort?: string;
   order?: string;
   page?: number;
@@ -106,6 +109,7 @@ export function useSeriesList(filters: SeriesFilters) {
     genresMode: genresCsv && filters.genresMode === "all" ? "all" : undefined,
     tags: tagsCsv,
     tagsMode: tagsCsv && filters.tagsMode === "all" ? "all" : undefined,
+    metadataSource: filters.metadataSource || undefined,
     sort: filters.sort || undefined,
     order: filters.order || undefined,
     q: trimmedQ || undefined,

@@ -4,6 +4,7 @@ import type { components } from "@/types/api.generated";
 
 type LinkRequest = components["schemas"]["LinkRequest"];
 type CreateSeriesRequest = components["schemas"]["CreateSeriesRequest"];
+type UpdateSeriesRequest = components["schemas"]["UpdateSeriesRequest"];
 type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
 type BulkLinkRequest = components["schemas"]["BulkLinkRequest"];
 
@@ -102,6 +103,28 @@ export function useCreateSeries() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["series-list"] });
       qc.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+}
+
+/// Edit a manual series' descriptive fields. Backend rejects provider-backed
+/// rows with 409, so the caller only exposes this for `metadataSource ===
+/// "manual"`. Invalidates the detail + list caches on success.
+export function useUpdateSeries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { id: number; body: UpdateSeriesRequest }) => {
+      const { data, error } = await api.PATCH("/api/v1/series/{id}", {
+        params: { path: { id: args.id } },
+        body: args.body,
+      });
+      if (error)
+        throw new Error(describeError(error, "failed to update series"));
+      return data;
+    },
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: ["series-detail", id] });
+      qc.invalidateQueries({ queryKey: ["series-list"] });
     },
   });
 }

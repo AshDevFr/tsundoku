@@ -12,6 +12,7 @@ type UnresolvedPage = components["schemas"]["UnresolvedPage"];
 type ReleaseGroupsResponse = components["schemas"]["ReleaseGroupsResponse"];
 type LinkRequest = components["schemas"]["LinkRequest"];
 type CreateSeriesRequest = components["schemas"]["CreateSeriesRequest"];
+type UpdateSeriesRequest = components["schemas"]["UpdateSeriesRequest"];
 type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
 type BulkLinkRequest = components["schemas"]["BulkLinkRequest"];
 type TagList = components["schemas"]["TagList"];
@@ -238,7 +239,48 @@ const SERIES: (SeriesListItem & {
     highestChapter: 68,
     totalChapters: 83,
   },
+  {
+    // A manual (operator-authored) series, used by the edit + manual/auto
+    // filter tests. The PATCH handler mutates this row in place, so the
+    // fixture is snapshot/restored by `resetSeries()`.
+    id: 10,
+    canonicalTitle: "Obscure Doujin Anthology",
+    coverUrl: null,
+    firstSeenAt: NOW - 86_400 * 3,
+    lastReleaseAt: NOW - 86_400,
+    kind: "manga",
+    status: null,
+    year: 2023,
+    owned: false,
+    description: "A manual catalog entry MangaBaka lacks.",
+    genres: [],
+    tags: [],
+    alternateTitles: [],
+    metadataSource: "manual",
+    releaseCount: 1,
+  },
 ];
+
+// Deep snapshot of the seed catalog. The series handlers (create, edit)
+// mutate `SERIES` in place, so tests restore it via `resetSeries()`.
+const INITIAL_SERIES = SERIES.map((s) => ({
+  ...s,
+  genres: [...s.genres],
+  tags: [...s.tags],
+  alternateTitles: [...s.alternateTitles],
+}));
+
+export function resetSeries() {
+  SERIES.length = 0;
+  for (const s of INITIAL_SERIES) {
+    SERIES.push({
+      ...s,
+      genres: [...s.genres],
+      tags: [...s.tags],
+      alternateTitles: [...s.alternateTitles],
+    });
+  }
+}
 
 // Mutable review queue so tests can assert that a release leaves the queue
 // after a link / reject. Reset via `resetReviewQueue()`.
@@ -401,6 +443,9 @@ export function resetReviewQueue() {
     candidates: r.candidates.map((c) => ({ ...c })),
   }));
   kept = INITIAL_KEPT.map((r) => ({ ...r }));
+  // The series catalog is mutated by the create/edit handlers; restore it
+  // alongside the queue so every test starts from the same fixtures.
+  resetSeries();
 }
 
 /// Replace the unresolved queue with caller-supplied rows. Tests that need a
@@ -1012,6 +1057,68 @@ export const handlers = [
     return HttpResponse.json(detail, { status: 201 });
   }),
 
+  // Edit a manual series. Mirrors the backend: 409 for provider-backed rows,
+  // 404 for unknown ids, 400 for an empty title. PATCH on `:id` is a distinct
+  // method from the POST static siblings, so ordering is not a concern here.
+  http.patch("/api/v1/series/:id", async ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const id = Number(params.id);
+    const found = SERIES.find((s) => s.id === id);
+    if (!found) return new HttpResponse(null, { status: 404 });
+    if (found.metadataSource !== "manual") {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "conflict",
+          message: `series ${id} is provider-backed; only manual series can be edited`,
+        }),
+        { status: 409, headers: { "content-type": "application/json" } },
+      );
+    }
+    const body = (await request.json()) as UpdateSeriesRequest;
+    const title = (body.canonicalTitle ?? "").trim();
+    if (!title) {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "bad_request",
+          message: "canonicalTitle must not be empty",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    const alternateTitles = (body.alternateTitles ?? [])
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    found.canonicalTitle = title;
+    found.alternateTitles = alternateTitles;
+    found.kind = body.kind?.trim() || null;
+    found.status = body.status?.trim() || null;
+    found.year = typeof body.year === "number" ? body.year : null;
+    found.coverUrl = body.coverUrl?.trim() || null;
+    found.description = body.description?.trim() || null;
+    const detail: SeriesDetail = {
+      id: found.id,
+      canonicalTitle: found.canonicalTitle,
+      alternateTitles: found.alternateTitles,
+      coverUrl: found.coverUrl,
+      kind: found.kind,
+      status: found.status,
+      year: found.year,
+      description: found.description,
+      owned: found.owned,
+      genres: found.genres,
+      tags: found.tags,
+      externalIds: [],
+      firstSeenAt: found.firstSeenAt,
+      lastReleaseAt: found.lastReleaseAt,
+      metadataFetchedAt: NOW,
+      metadataSource: "manual",
+      highestVolume: null,
+      highestChapter: null,
+    };
+    return HttpResponse.json(detail);
+  }),
+
   // Static path registered before any `:id`-style sibling so MSW's matcher
   // can't shadow it (see memory: MSW static vs param route ordering).
   http.post("/api/v1/series/invalidate-metadata-hashes", ({ request }) => {
@@ -1110,6 +1217,7 @@ export const handlers = [
       url.searchParams.get("genresMode") === "all" ? "all" : "any";
     const tagsCsv = url.searchParams.get("tags");
     const tagsMode = url.searchParams.get("tagsMode") === "all" ? "all" : "any";
+    const metadataSource = url.searchParams.get("metadataSource");
     const q = url.searchParams.get("q");
     const page = Number(url.searchParams.get("page") ?? "1");
     const pageSize = Number(url.searchParams.get("pageSize") ?? "24");
@@ -1117,6 +1225,10 @@ export const handlers = [
     let filtered = SERIES.slice();
     if (kind) filtered = filtered.filter((s) => s.kind === kind);
     if (status) filtered = filtered.filter((s) => s.status === status);
+    if (metadataSource === "manual")
+      filtered = filtered.filter((s) => s.metadataSource === "manual");
+    else if (metadataSource === "auto")
+      filtered = filtered.filter((s) => s.metadataSource !== "manual");
     if (owned === "true") filtered = filtered.filter((s) => s.owned === true);
     if (owned === "false") filtered = filtered.filter((s) => s.owned === false);
     if (hasReleases === "true")

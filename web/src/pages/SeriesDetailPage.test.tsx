@@ -112,4 +112,54 @@ describe("SeriesDetailPage", () => {
       }
     });
   });
+
+  it("hides the Edit button without an admin token", async () => {
+    // Series 10 is manual, but editing is admin-only.
+    renderSeriesDetail(10);
+    await screen.findByText("Obscure Doujin Anthology");
+    expect(screen.queryByTestId("edit-series")).not.toBeInTheDocument();
+  });
+
+  it("hides the Edit button for a provider-backed series even as admin", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    // Series 1 (Chainsaw Man) is metadataSource="offline_cache".
+    renderSeriesDetail(1);
+    await screen.findByText("Chainsaw Man");
+    expect(screen.queryByTestId("edit-series")).not.toBeInTheDocument();
+  });
+
+  it("edits a manual series and reflects the change in the detail view", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(10);
+    const editBtn = await screen.findByTestId("edit-series");
+    fireEvent.click(editBtn);
+
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = dialog.querySelector<HTMLInputElement>(
+      '[data-testid="edit-series-title"]',
+    );
+    if (!titleInput) throw new Error("title input not rendered");
+    fireEvent.change(titleInput, {
+      target: { value: "Renamed Anthology" },
+    });
+    fireEvent.click(screen.getByTestId("edit-series-submit"));
+
+    // The detail view picks up the new title after the mutation invalidates
+    // and refetches the detail query.
+    await screen.findByText("Renamed Anthology");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("disables save when the title is cleared", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(10);
+    fireEvent.click(await screen.findByTestId("edit-series"));
+    const dialog = await screen.findByRole("dialog");
+    const titleInput = dialog.querySelector<HTMLInputElement>(
+      '[data-testid="edit-series-title"]',
+    );
+    if (!titleInput) throw new Error("title input not rendered");
+    fireEvent.change(titleInput, { target: { value: "  " } });
+    expect(screen.getByTestId("edit-series-submit")).toBeDisabled();
+  });
 });

@@ -28,6 +28,10 @@ export interface FilterSearch {
   tags?: string[];
   /// `any` (default) or `all`. See [[genresMode]].
   tagsMode?: TagFilterMode;
+  /// Metadata provenance filter: `manual` keeps only operator-authored
+  /// series, `auto` keeps only provider-backed ones. Absent means "no
+  /// constraint". Unrecognized values are ignored by the backend.
+  metadataSource?: "manual" | "auto";
   sort?: string;
   order?: string;
   page?: number;

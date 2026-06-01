@@ -1,18 +1,28 @@
 import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAdminAuth } from "@/stores/auth";
+import type { FilterSearch } from "@/stores/filters";
 import { FilterPanel } from "./FilterPanel";
 
-function renderPanel() {
+function renderPanel(
+  search: FilterSearch = {},
+  onChange: (next: FilterSearch) => void = () => {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <MantineProvider>
       <QueryClientProvider client={client}>
-        <FilterPanel search={{}} onChange={() => {}} />
+        <FilterPanel search={search} onChange={onChange} />
       </QueryClientProvider>
     </MantineProvider>,
   );
@@ -35,6 +45,30 @@ describe("FilterPanel — Codex filter visibility", () => {
     renderPanel();
     await waitFor(() =>
       expect(screen.getByTestId("filter-codex-status")).toBeInTheDocument(),
+    );
+  });
+});
+
+describe("FilterPanel — manual/auto source filter", () => {
+  afterEach(() => useAdminAuth.getState().clear());
+
+  it("selecting Manual emits metadataSource=manual", async () => {
+    const onChange = vi.fn();
+    renderPanel({}, onChange);
+    const control = await screen.findByTestId("filter-metadata-source");
+    fireEvent.click(within(control).getByText("Manual"));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ metadataSource: "manual", page: 1 }),
+    );
+  });
+
+  it("selecting Any clears metadataSource", async () => {
+    const onChange = vi.fn();
+    renderPanel({ metadataSource: "manual" }, onChange);
+    const control = await screen.findByTestId("filter-metadata-source");
+    fireEvent.click(within(control).getByText("Any"));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ metadataSource: undefined, page: 1 }),
     );
   });
 });

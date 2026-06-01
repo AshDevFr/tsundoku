@@ -38,6 +38,7 @@ import {
   providerUrl,
 } from "@/api/utils";
 import { CodexBadge } from "@/components/CodexBadge";
+import { EditSeriesModal } from "@/components/EditSeriesModal";
 import {
   ExtractedLinks,
   InformationLink,
@@ -83,6 +84,7 @@ export function SeriesDetailPage() {
   const isAdmin = useAdminAuth((s) => Boolean(s.token));
   const refresh = useRefreshSeriesMetadata();
   const [tagsExpanded, setTagsExpanded] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   const handleRefresh = () => {
     if (!Number.isFinite(id)) return;
@@ -266,6 +268,19 @@ export function SeriesDetailPage() {
                   {formatRelative(s.lastReleaseAt)} · metadata{" "}
                   {s.metadataSource} ({formatRelative(s.metadataFetchedAt)})
                 </Text>
+                {isAdmin && s.metadataSource === "manual" && (
+                  <Tooltip label="Edit this manual series' title and metadata.">
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      color="gray"
+                      onClick={() => setEditOpen(true)}
+                      data-testid="edit-series"
+                    >
+                      ✎ Edit
+                    </Button>
+                  </Tooltip>
+                )}
                 {isAdmin && (
                   <Tooltip label="Re-fetch metadata from the active provider and overwrite this series.">
                     <Button
@@ -326,6 +341,10 @@ export function SeriesDetailPage() {
         )}
         {releases.data && <ReleaseList items={releases.data.items} />}
       </Box>
+
+      {editOpen && (
+        <EditSeriesModal series={s} onClose={() => setEditOpen(false)} />
+      )}
     </Container>
   );
 }

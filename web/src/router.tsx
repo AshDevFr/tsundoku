@@ -72,6 +72,8 @@ function validateFilterSearch(raw: Record<string, unknown>): FilterSearch {
     search.hasReleases = true;
   else if (raw.hasReleases === false || raw.hasReleases === "false")
     search.hasReleases = false;
+  if (raw.metadataSource === "manual" || raw.metadataSource === "auto")
+    search.metadataSource = raw.metadataSource;
   const page = Number(raw.page);
   if (Number.isFinite(page) && page > 0) search.page = Math.floor(page);
   if (typeof raw.q === "string" && raw.q.trim()) search.q = raw.q;

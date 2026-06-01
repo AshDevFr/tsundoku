@@ -20,6 +20,7 @@ import { useDebouncedCallback, useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useMemo, useState } from "react";
 import { useGenres, useTags } from "@/api/queries";
+import { KIND_OPTIONS, STATUS_OPTIONS } from "@/constants/series";
 import { useAdminAuth } from "@/stores/auth";
 import {
   type FilterSearch,
@@ -36,22 +37,8 @@ interface FilterPanelProps {
 
 // Vocabularies are open-ended (the backend doesn't restrict them), but in
 // practice these are the values the resolver writes. Use combobox-style selects
-// so the user can type anything if they need to.
-const KIND_OPTIONS = [
-  "manga",
-  "manhwa",
-  "manhua",
-  "novel",
-  "one_shot",
-  "other",
-];
-const STATUS_OPTIONS = [
-  "ongoing",
-  "completed",
-  "hiatus",
-  "cancelled",
-  "unknown",
-];
+// so the user can type anything if they need to. The option lists live in
+// `@/constants/series` so the manual-series editor shares the exact vocab.
 const SORT_OPTIONS = [
   { value: "last_release_at", label: "Last release" },
   { value: "first_seen_at", label: "First seen" },
@@ -148,6 +135,7 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     Boolean(search.q) ||
     typeof search.owned === "boolean" ||
     typeof search.hasReleases === "boolean" ||
+    Boolean(search.metadataSource) ||
     Boolean(search.codexStatus);
 
   const activeSort = search.sort ?? "last_release_at";
@@ -337,6 +325,28 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
               { label: "Orphans", value: "false" },
               { label: "Has releases", value: "true" },
             ]}
+          />
+        </Box>
+
+        <Box>
+          <Text size="sm" fw={500} mb={4}>
+            Source
+          </Text>
+          <SegmentedControl
+            size="xs"
+            fullWidth
+            value={search.metadataSource ?? "any"}
+            onChange={(v) =>
+              merge({
+                metadataSource: v === "manual" || v === "auto" ? v : undefined,
+              })
+            }
+            data={[
+              { label: "Any", value: "any" },
+              { label: "Auto", value: "auto" },
+              { label: "Manual", value: "manual" },
+            ]}
+            data-testid="filter-metadata-source"
           />
         </Box>
 
