@@ -2,6 +2,18 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.9.0] - 2026-06-01
+
+### Features
+
+- *(series)* Add PATCH endpoint to edit manual series
+- *(series)* Add manual/auto metadataSource filter to the list endpoint
+- *(web)* Edit manual series + manual/auto feed filter
+
+### Documentation
+
+- *(browse)* Document manual-series editing and the source filter
+
 ## [1.8.2] - 2026-05-31
 
 ### Bug Fixes
