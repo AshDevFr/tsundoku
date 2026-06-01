@@ -164,6 +164,11 @@ pub struct SeriesListQuery {
     /// keeps only series with ≥1 release; `false` keeps only orphaned
     /// series (zero releases — often the residue of a manual re-link).
     pub has_releases: Option<bool>,
+    /// Filter by metadata provenance: `manual` keeps only operator-authored
+    /// rows (`metadata_source = 'manual'`); `auto` keeps only provider-backed
+    /// rows (`api` or `offline_cache`). Any other value (or absence) applies
+    /// no constraint, matching the lenient handling of the other filters.
+    pub metadata_source: Option<String>,
     /// Comma-separated genre names. Combined with [`Self::genres_mode`]:
     /// `any` (default) keeps series matching at least one; `all` keeps
     /// only series matching every entry. Each entry is matched case-
@@ -203,6 +208,7 @@ impl Default for SeriesListQuery {
             status: None,
             owned: None,
             has_releases: None,
+            metadata_source: None,
             genres: None,
             genres_mode: None,
             tags: None,
@@ -486,6 +492,19 @@ fn apply_series_filters(
     if let Some(owned) = q.owned {
         let flag = if owned { 1 } else { 0 };
         select = select.filter(series::Column::Owned.eq(flag));
+    }
+    // Manual/auto provenance filter. `auto` is "any provider-backed row",
+    // expressed as `!= manual` so it stays correct as new provider sources
+    // (beyond api / offline_cache) are added. Unrecognized values fall
+    // through to no constraint.
+    match q.metadata_source.as_deref() {
+        Some("manual") => {
+            select = select.filter(series::Column::MetadataSource.eq(MANUAL_METADATA_SOURCE));
+        }
+        Some("auto") => {
+            select = select.filter(series::Column::MetadataSource.ne(MANUAL_METADATA_SOURCE));
+        }
+        _ => {}
     }
     if let Some(has_releases) = q.has_releases {
         // Subquery rather than a JOIN so the outer count stays correct

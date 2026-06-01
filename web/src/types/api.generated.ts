@@ -3037,6 +3037,13 @@ export interface operations {
                  */
                 hasReleases?: boolean;
                 /**
+                 * @description Filter by metadata provenance: `manual` keeps only operator-authored
+                 *     rows (`metadata_source = 'manual'`); `auto` keeps only provider-backed
+                 *     rows (`api` or `offline_cache`). Any other value (or absence) applies
+                 *     no constraint, matching the lenient handling of the other filters.
+                 */
+                metadataSource?: string;
+                /**
                  * @description Comma-separated genre names. Combined with [`Self::genres_mode`]:
                  *     `any` (default) keeps series matching at least one; `all` keeps
                  *     only series matching every entry. Each entry is matched case-

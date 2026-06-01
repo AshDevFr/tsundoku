@@ -1364,6 +1364,15 @@
             }
           },
           {
+            "name": "metadataSource",
+            "in": "query",
+            "description": "Filter by metadata provenance: `manual` keeps only operator-authored\nrows (`metadata_source = 'manual'`); `auto` keeps only provider-backed\nrows (`api` or `offline_cache`). Any other value (or absence) applies\nno constraint, matching the lenient handling of the other filters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "genres",
             "in": "query",
             "description": "Comma-separated genre names. Combined with [`Self::genres_mode`]:\n`any` (default) keeps series matching at least one; `all` keeps\nonly series matching every entry. Each entry is matched case-\ninsensitively. AND-combined with the other filters.",

@@ -153,6 +153,142 @@ async fn series_list_paginates_and_filters_by_kind() {
 }
 
 #[tokio::test]
+async fn series_list_filters_by_metadata_source() {
+    let db = fresh_db().await;
+    // seed_series defaults to metadata_source = "api" (provider-backed).
+    seed_series(&db, "Provider Manga", "manga").await;
+    seed_manual_series(&db, "Manual Manga").await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let titles = |body: &Value| -> Vec<String> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["canonicalTitle"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // metadataSource=manual keeps only the manual row.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?metadataSource=manual")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(titles(&body), vec!["Manual Manga"]);
+
+    // metadataSource=auto keeps only the provider-backed row.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?metadataSource=auto")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(titles(&body), vec!["Provider Manga"]);
+
+    // An unrecognized value applies no constraint (both rows returned).
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?metadataSource=bogus")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 2);
+}
+
+#[tokio::test]
+async fn series_list_metadata_source_composes_with_kind_and_search() {
+    let db = fresh_db().await;
+    // Two manual rows (one manga, one novel) + a provider-backed manga that
+    // shares the search term, so we can prove the filter ANDs with both `kind`
+    // and the `q` search path.
+    seed_manual_series_with_kind(&db, "Solo Leveling", "manga").await;
+    seed_manual_series_with_kind(&db, "Solo Diary", "novel").await;
+    seed_series(&db, "Solo Leveling Provider", "manga").await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let titles = |body: &Value| -> Vec<String> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["canonicalTitle"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // manual + kind=manga → only the manual manga row.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?metadataSource=manual&kind=manga")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(titles(&body), vec!["Solo Leveling"]);
+
+    // manual + q=solo leveling → the search path honors the filter too,
+    // excluding the provider-backed "Solo Leveling Provider".
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?metadataSource=manual&q=solo%20leveling")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let got = titles(&body);
+    assert!(got.contains(&"Solo Leveling".to_string()), "got {got:?}");
+    assert!(
+        !got.contains(&"Solo Leveling Provider".to_string()),
+        "search path must apply metadataSource filter; got {got:?}"
+    );
+}
+
+#[tokio::test]
 async fn series_detail_returns_external_ids() {
     let db = fresh_db().await;
     let sid = seed_series(&db, "Test Series", "manga").await;
@@ -631,6 +767,29 @@ async fn seed_manual_series(db: &sea_orm::DatabaseConnection, title: &str) -> i3
     let now = Utc::now().timestamp();
     series::ActiveModel {
         canonical_title: Set(title.into()),
+        metadata_source: Set("manual".into()),
+        metadata_fetched_at: Set(now),
+        first_seen_at: Set(now),
+        last_release_at: Set(now),
+        owned: Set(0),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .unwrap()
+    .id
+}
+
+/// Manual series with an explicit `kind`, for filter-composition tests.
+async fn seed_manual_series_with_kind(
+    db: &sea_orm::DatabaseConnection,
+    title: &str,
+    kind: &str,
+) -> i32 {
+    let now = Utc::now().timestamp();
+    series::ActiveModel {
+        canonical_title: Set(title.into()),
+        kind: Set(Some(kind.into())),
         metadata_source: Set("manual".into()),
         metadata_fetched_at: Set(now),
         first_seen_at: Set(now),
