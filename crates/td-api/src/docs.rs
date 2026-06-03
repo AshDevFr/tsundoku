@@ -14,7 +14,9 @@ use crate::handlers::codex::{
     CodexLinkRequest, CodexLinkResponse, CodexRefreshResponse, CodexStatusDto,
 };
 use crate::handlers::covers::InvalidateCoverCacheResponse;
-use crate::handlers::download::{DownloadStatusDto, SendToClientRequest};
+use crate::handlers::download::{
+    DownloadStatusDto, HealthCheckDto, SendRecordDto, SendToClientRequest,
+};
 use crate::handlers::metrics::{
     ErrorKindBucket, ExternalIdMapCount, FetchLatencyDto, IdMapMetrics, MangaupdatesRedirectStats,
     ProviderMetricsBucket, ProviderMetricsDetail, ProviderMetricsSummary,
@@ -107,6 +109,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         codex::unlink,
         download::send,
         download::status,
+        download::test,
     ),
     components(schemas(
         ApiErrorBody,
@@ -191,6 +194,8 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         CodexLinkKind,
         SendToClientRequest,
         DownloadStatusDto,
+        HealthCheckDto,
+        SendRecordDto,
     )),
     tags(
         (name = "system", description = "Health and aggregate counters"),

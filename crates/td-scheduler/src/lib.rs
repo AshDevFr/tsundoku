@@ -119,6 +119,11 @@ pub struct SchedulerContext {
     /// `td-api::AppState` so the manual `POST /codex/refresh` trigger drives
     /// the same client under the same lock.
     pub codex_client: Option<Arc<td_codex::CodexClient>>,
+    /// Torrent-download client for the background connection re-test. `None`
+    /// when `[download] enabled = false`; the health cron is then not
+    /// registered. Shared with `td-api::AppState` so the cron and the manual
+    /// `POST /download/test` drive the same client.
+    pub download_client: Option<Arc<dyn td_download::DownloadClient>>,
 }
 
 /// Owns the running scheduler. Drop or call [`Self::shutdown`] to stop.
@@ -231,6 +236,27 @@ impl Scheduler {
                 .await
                 .map_err(|e| anyhow!("registering codex sync job: {e}"))?;
             tracing::info!(cron = %normalized, "registered codex presence sync job");
+            registered += 1;
+        }
+
+        // Download-client health re-test. Registered only when the integration
+        // is enabled, the client was built, and a health_cron is set. The
+        // manual `POST /download/test` works regardless of the cron.
+        if cfg.download.enabled
+            && let Some(client) = ctx.download_client.clone()
+            && let Some(cron) = cfg
+                .download
+                .health_cron
+                .as_deref()
+                .filter(|s| !s.is_empty())
+        {
+            let normalized = normalize_cron(cron).context("normalising download health_cron")?;
+            let job = jobs::test_download::build(&normalized, client, ctx.db.clone())?;
+            inner
+                .add(job)
+                .await
+                .map_err(|e| anyhow!("registering download health job: {e}"))?;
+            tracing::info!(cron = %normalized, "registered download health job");
             registered += 1;
         }
 

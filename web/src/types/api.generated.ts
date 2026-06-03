@@ -103,10 +103,36 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Enablement probe for the admin UI; gates rendering of the send button. */
+        /**
+         * Connection info + health snapshot for the admin UI; gates rendering of the
+         *     send button and powers the Download page.
+         */
         get: operations["download_status"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/download/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run an on-demand connection test and return the refreshed status. A failed
+         *     probe is **not** an error: it returns `200` with `reachable: false` and the
+         *     reason in `lastError` (a successful *report* of an unreachable client),
+         *     distinct from `503` when the integration is disabled. The manual test always
+         *     appends a history row.
+         */
+        post: operations["download_test"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1202,10 +1228,35 @@ export interface components {
             /** Format: int32 */
             year?: number | null;
         };
-        /** @description Enablement snapshot for the admin UI. When disabled, `kind` is omitted. */
+        /**
+         * @description Connection info + live health for the admin Download page. Connection
+         *     fields come from the `[download]` config (the password is never exposed);
+         *     the health fields and history come from `download_status` /
+         *     `download_health_checks` / `download_sends`. When disabled, only `enabled`
+         *     is meaningful and the page renders a "configure me" notice.
+         */
         DownloadStatusDto: {
+            baseUrl?: string | null;
+            defaultLabel?: string | null;
+            defaultStart: boolean;
             enabled: boolean;
+            /**
+             * @description Whether an HTTP Basic username is configured (the credential itself is
+             *     never sent to the client).
+             */
+            hasCredentials: boolean;
+            healthCron?: string | null;
             kind?: string | null;
+            /** Format: int64 */
+            lastChangeAt?: number | null;
+            lastError?: string | null;
+            /** Format: int64 */
+            lastTestAt?: number | null;
+            preferTorrentFile: boolean;
+            /** @description Last probe result. `false` until the first probe records one. */
+            reachable: boolean;
+            recentChecks: components["schemas"]["HealthCheckDto"][];
+            recentSends: components["schemas"]["SendRecordDto"][];
         };
         ErrorKindBucket: {
             /** Format: int64 */
@@ -1253,6 +1304,14 @@ export interface components {
         };
         Health: {
             status: string;
+        };
+        /** @description One reachability-history entry. `trigger` is `launch` | `cron` | `manual`. */
+        HealthCheckDto: {
+            /** Format: int64 */
+            checkedAt: number;
+            error?: string | null;
+            reachable: boolean;
+            trigger: string;
         };
         IdMapMetrics: {
             /**
@@ -1865,6 +1924,16 @@ export interface components {
             /** Format: int64 */
             unresolvedCount: number;
         };
+        /** @description One send-attempt audit entry. `source` is `torrent` | `magnet`. */
+        SendRecordDto: {
+            error?: string | null;
+            label?: string | null;
+            releaseId: string;
+            /** Format: int64 */
+            sentAt: number;
+            source: string;
+            success: boolean;
+        };
         /**
          * @description Per-send overrides. Every field is optional; an empty body (`{}` or none)
          *     sends with the configured defaults, which is the one-click path.
@@ -2402,6 +2471,32 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["DownloadStatusDto"];
                 };
+            };
+        };
+    };
+    download_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadStatusDto"];
+                };
+            };
+            /** @description Download integration is disabled */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

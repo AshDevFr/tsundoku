@@ -366,6 +366,11 @@ pub struct DownloadConfig {
     pub prefer_torrent_file: bool,
     /// HTTP timeout per outbound request to the client, in seconds.
     pub timeout_seconds: u32,
+    /// Cron expression for a recurring background connection re-test. `None`
+    /// (the default) means no scheduled test runs — the launch probe and the
+    /// manual "Test connection" button still work. Off by default to avoid
+    /// surprise periodic traffic to the operator's box.
+    pub health_cron: Option<String>,
 }
 
 impl Default for DownloadConfig {
@@ -381,6 +386,7 @@ impl Default for DownloadConfig {
             default_start: true,
             prefer_torrent_file: true,
             timeout_seconds: 30,
+            health_cron: None,
         }
     }
 }

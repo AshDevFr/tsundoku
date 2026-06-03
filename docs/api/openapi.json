@@ -178,7 +178,7 @@
         "tags": [
           "download"
         ],
-        "summary": "Enablement probe for the admin UI; gates rendering of the send button.",
+        "summary": "Connection info + health snapshot for the admin UI; gates rendering of the\nsend button and powers the Download page.",
         "operationId": "download_status",
         "responses": {
           "200": {
@@ -190,6 +190,35 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/download/test": {
+      "post": {
+        "tags": [
+          "download"
+        ],
+        "summary": "Run an on-demand connection test and return the refreshed status. A failed\nprobe is **not** an error: it returns `200` with `reachable: false` and the\nreason in `lastError` (a successful *report* of an unreachable client),\ndistinct from `503` when the integration is disabled. The manual test always\nappends a history row.",
+        "operationId": "download_test",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadStatusDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Download integration is disabled"
           }
         },
         "security": [
@@ -2598,19 +2627,89 @@
       },
       "DownloadStatusDto": {
         "type": "object",
-        "description": "Enablement snapshot for the admin UI. When disabled, `kind` is omitted.",
+        "description": "Connection info + live health for the admin Download page. Connection\nfields come from the `[download]` config (the password is never exposed);\nthe health fields and history come from `download_status` /\n`download_health_checks` / `download_sends`. When disabled, only `enabled`\nis meaningful and the page renders a \"configure me\" notice.",
         "required": [
-          "enabled"
+          "enabled",
+          "hasCredentials",
+          "defaultStart",
+          "preferTorrentFile",
+          "reachable",
+          "recentChecks",
+          "recentSends"
         ],
         "properties": {
+          "baseUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "defaultLabel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "defaultStart": {
+            "type": "boolean"
+          },
           "enabled": {
             "type": "boolean"
+          },
+          "hasCredentials": {
+            "type": "boolean",
+            "description": "Whether an HTTP Basic username is configured (the credential itself is\nnever sent to the client)."
+          },
+          "healthCron": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "kind": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "lastChangeAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastTestAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "preferTorrentFile": {
+            "type": "boolean"
+          },
+          "reachable": {
+            "type": "boolean",
+            "description": "Last probe result. `false` until the first probe records one."
+          },
+          "recentChecks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HealthCheckDto"
+            }
+          },
+          "recentSends": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SendRecordDto"
+            }
           }
         }
       },
@@ -2738,6 +2837,33 @@
         ],
         "properties": {
           "status": {
+            "type": "string"
+          }
+        }
+      },
+      "HealthCheckDto": {
+        "type": "object",
+        "description": "One reachability-history entry. `trigger` is `launch` | `cron` | `manual`.",
+        "required": [
+          "checkedAt",
+          "reachable",
+          "trigger"
+        ],
+        "properties": {
+          "checkedAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reachable": {
+            "type": "boolean"
+          },
+          "trigger": {
             "type": "string"
           }
         }
@@ -4174,6 +4300,43 @@
           "unresolvedCount": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "SendRecordDto": {
+        "type": "object",
+        "description": "One send-attempt audit entry. `source` is `torrent` | `magnet`.",
+        "required": [
+          "releaseId",
+          "sentAt",
+          "source",
+          "success"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "releaseId": {
+            "type": "string"
+          },
+          "sentAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "source": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
           }
         }
       },

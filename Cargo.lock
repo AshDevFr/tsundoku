@@ -3966,6 +3966,7 @@ dependencies = [
  "td-codex",
  "td-config",
  "td-db",
+ "td-download",
  "td-metadata",
  "td-resolution",
  "td-source",

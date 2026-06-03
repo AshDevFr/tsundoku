@@ -72,6 +72,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         // auth, like `GET /codex/status`.
         .route("/releases/{id}/send-to-client", post(download::send))
         .route("/download/status", get(download::status))
+        .route("/download/test", post(download::test))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             auth::require_admin,

@@ -15,3 +15,4 @@ pub mod refresh_provider_cache;
 pub mod refresh_series_metadata;
 pub mod snapshot_review_queue;
 pub mod sync_codex;
+pub mod test_download;

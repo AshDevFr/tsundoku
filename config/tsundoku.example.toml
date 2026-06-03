@@ -231,3 +231,5 @@ poll_write_batch_size = 10
 # default_start       = true                    # false adds the torrent stopped.
 # prefer_torrent_file = true                    # false sends a magnet URL instead of the .torrent file.
 # timeout_seconds     = 30
+# health_cron         = "0 * * * *"             # optional: recurring connection re-test. Omit to disable
+#                                               # (the launch probe + manual "Test connection" still work).

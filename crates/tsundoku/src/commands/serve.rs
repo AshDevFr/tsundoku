@@ -55,6 +55,10 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
     // so the send endpoint shares the same limited client.
     let download_client = build_download_client(&cfg.download, limiter.clone());
 
+    // Probe the torrent client once at startup so the admin Download page shows
+    // reachable/unreachable immediately instead of "never tested". Non-fatal.
+    spawn_download_startup_probe(download_client.clone(), db.clone());
+
     // Probe Codex's public /info endpoint once at startup so the operator sees
     // the connected name/version (or a warning) immediately. Non-fatal: a
     // Codex that is down at boot must not block tsundoku from serving; the sync
@@ -108,6 +112,7 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
         mangaupdates_redirector: mu_redirector.clone(),
         job_events: job_events.clone(),
         codex_client: codex_client.clone(),
+        download_client: download_client.clone(),
     };
     let scheduler = Scheduler::build(&cfg, ctx).await?;
     scheduler.start().await?;
@@ -220,6 +225,45 @@ fn build_download_client(
             None
         }
     }
+}
+
+/// One-shot, off-the-runtime probe of the torrent client's reachability.
+/// Records the result into `download_status` (and logs it) so the admin
+/// Download page reflects connectivity immediately at boot instead of showing
+/// "never tested". `None` client (integration disabled) is a no-op. The probe
+/// records under the `launch` trigger, so it only appends history on a real
+/// reachability transition.
+fn spawn_download_startup_probe(
+    client: Option<Arc<dyn td_download::DownloadClient>>,
+    db: DatabaseConnection,
+) {
+    let Some(client) = client else { return };
+    tokio::spawn(async move {
+        let now = chrono::Utc::now().timestamp();
+        let (reachable, error) = match client.test_connection().await {
+            Ok(()) => (true, None),
+            Err(e) => (false, Some(e.to_string())),
+        };
+        if let Err(e) = td_db::repos::download_status_repo::record_check(
+            &db,
+            reachable,
+            error.as_deref(),
+            now,
+            td_db::repos::TRIGGER_LAUNCH,
+        )
+        .await
+        {
+            tracing::warn!(error = ?e, "failed to record download startup probe");
+        }
+        if reachable {
+            tracing::info!("download client reachable at startup");
+        } else {
+            tracing::warn!(
+                error = ?error,
+                "download client unreachable at startup; the health cron / manual test will retry"
+            );
+        }
+    });
 }
 
 /// One-shot, off-the-runtime probe of Codex's public `GET /api/v1/info`.

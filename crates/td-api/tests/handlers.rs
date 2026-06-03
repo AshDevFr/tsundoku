@@ -5267,3 +5267,138 @@ async fn send_to_client_requires_admin() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn download_test_503s_when_disabled() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/download/test")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn download_test_requires_admin() {
+    let db = fresh_db().await;
+    let app = build_app_with_download(
+        db,
+        open_auth(),
+        enabled_download_config(),
+        Some(unreachable_download_client()),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/download/test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn download_test_reports_unreachable_client_as_200() {
+    let db = fresh_db().await;
+    // The client points at a dead port, so the probe fails — but a failed
+    // *report* is still a 200 with reachable=false + the reason, distinct from
+    // the 503-disabled case.
+    let app = build_app_with_download(
+        db,
+        open_auth(),
+        enabled_download_config(),
+        Some(unreachable_download_client()),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/download/test")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["reachable"], false);
+    assert!(body["lastError"].is_string());
+    // The manual probe always records a history row.
+    let checks = body["recentChecks"].as_array().unwrap();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0]["trigger"], "manual");
+    assert_eq!(checks[0]["reachable"], false);
+}
+
+#[tokio::test]
+async fn send_to_client_records_failed_attempt_and_502s() {
+    let db = fresh_db().await;
+    // A release with a magnet so the send reaches the client (which is dead).
+    let mut r = sample_release("1", "feed", "Chainsaw Man v01");
+    r.magnet = Some("magnet:?xt=urn:btih:deadbeef".into());
+    let id = releases_repo::persist_discovered(&db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+    let app = build_app_with_download(
+        db,
+        open_auth(),
+        enabled_download_config(),
+        Some(unreachable_download_client()),
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/releases/{id}/send-to-client"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"preferMagnet":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+
+    // The failed attempt is recorded in the send audit.
+    let status = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/download/status")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(status).await;
+    let sends = body["recentSends"].as_array().unwrap();
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0]["success"], false);
+    assert_eq!(sends[0]["source"], "magnet");
+    assert_eq!(sends[0]["releaseId"], id);
+    assert!(sends[0]["error"].is_string());
+}

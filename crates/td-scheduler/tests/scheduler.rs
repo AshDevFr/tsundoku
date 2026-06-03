@@ -988,6 +988,7 @@ async fn scheduler_fires_source_and_provider_jobs_on_schedule() {
         mangaupdates_redirector: None,
         job_events: detached_events(),
         codex_client: None,
+        download_client: None,
     };
 
     let mut scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
@@ -1064,6 +1065,7 @@ async fn scheduler_skips_sources_without_cron_or_unknown_registry_entry() {
         mangaupdates_redirector: None,
         job_events: detached_events(),
         codex_client: None,
+        download_client: None,
     };
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
     // Only the unconditional review-queue snapshot job lands; source +
@@ -1116,6 +1118,7 @@ async fn scheduler_registers_series_refresh_job_when_cron_set() {
         mangaupdates_redirector: None,
         job_events: detached_events(),
         codex_client: None,
+        download_client: None,
     };
 
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();
@@ -1164,6 +1167,7 @@ async fn scheduler_skips_series_refresh_when_active_provider_unregistered() {
         mangaupdates_redirector: None,
         job_events: detached_events(),
         codex_client: None,
+        download_client: None,
     };
 
     let scheduler = Scheduler::build(&cfg, ctx).await.unwrap();

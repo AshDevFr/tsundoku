@@ -79,6 +79,24 @@ pub trait DownloadClient: Send + Sync {
     /// [`DownloadClient::add`]. The send handler calls this for the
     /// torrent-file path before handing the bytes back to `add`.
     async fn fetch_torrent(&self, url: &str) -> Result<Vec<u8>, DownloadError>;
+
+    /// Probe the client for reachability. When credentials are configured this
+    /// also validates them (a `401` is surfaced as a failure). `Ok(())` means
+    /// the client answered a simple request with `200`; any other status or a
+    /// transport error returns the reason so the admin sees *why* a probe
+    /// failed. Drives the launch / cron / manual connection tests.
+    async fn test_connection(&self) -> Result<(), DownloadError>;
+}
+
+/// Map a connection probe's HTTP status to a result: `200` is
+/// reachable-and-authorized, anything else is a failure carrying the code.
+/// Pure so the classification is unit-testable without a live server.
+fn classify_test_status(status: u16) -> Result<(), DownloadError> {
+    if status == StatusCode::OK.as_u16() {
+        Ok(())
+    } else {
+        Err(DownloadError::Unexpected(status))
+    }
 }
 
 /// One multipart field in the inspectable intermediate representation the pure
@@ -240,6 +258,21 @@ impl DownloadClient for RuTorrentClient {
             other => Err(DownloadError::Unexpected(other.as_u16())),
         }
     }
+
+    async fn test_connection(&self) -> Result<(), DownloadError> {
+        // GET the ruTorrent root. Behind an HTTP Basic proxy this also
+        // validates the credentials (a 401 means they're wrong); without auth
+        // it just proves reachability. Built off inner() for basic_auth like
+        // add() — a single request to the operator's own box, so bypassing the
+        // limiter is fine.
+        let url = format!("{}/", self.base_url);
+        let mut builder = self.http.inner().get(&url);
+        if let Some(user) = &self.username {
+            builder = builder.basic_auth(user, self.password.clone());
+        }
+        let resp = builder.send().await?;
+        classify_test_status(resp.status().as_u16())
+    }
 }
 
 #[cfg(test)]
@@ -358,5 +391,23 @@ mod tests {
     fn non_json_body_is_decode_error() {
         let err = parse_add_response(b"<html>nope</html>").unwrap_err();
         assert!(matches!(err, DownloadError::Decode(_)));
+    }
+
+    #[test]
+    fn classify_test_status_treats_200_as_reachable() {
+        assert!(classify_test_status(200).is_ok());
+    }
+
+    #[test]
+    fn classify_test_status_surfaces_non_200() {
+        // 401 (bad credentials) and 5xx (down) both report the code.
+        assert!(matches!(
+            classify_test_status(401),
+            Err(DownloadError::Unexpected(401))
+        ));
+        assert!(matches!(
+            classify_test_status(503),
+            Err(DownloadError::Unexpected(503))
+        ));
     }
 }

@@ -11,6 +11,7 @@ repository.workspace = true
 td-codex = { path = "../td-codex" }
 td-config = { path = "../td-config" }
 td-db = { path = "../td-db" }
+td-download = { path = "../td-download" }
 td-metadata = { path = "../td-metadata" }
 td-resolution = { path = "../td-resolution" }
 td-source = { path = "../td-source" }
