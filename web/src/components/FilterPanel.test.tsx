@@ -48,17 +48,30 @@ describe("FilterPanel — Codex filter visibility", () => {
     );
   });
 
-  it("offers the ignored option and emits codexStatus=ignored", async () => {
+  it("offers the ignored option and emits codexStatus=[ignored]", async () => {
     useAdminAuth.getState().setToken("test-admin-token");
     const onChange = vi.fn();
     renderPanel({}, onChange);
-    // The test id sits on the Select's input (role combobox); clicking it
+    // The test id sits on the MultiSelect's input (role combobox); clicking it
     // opens the dropdown (Mantine renders options in a portal).
     const control = await screen.findByTestId("filter-codex-status");
     fireEvent.click(control);
     fireEvent.click(await screen.findByText("Owned — tracking off"));
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ codexStatus: "ignored", page: 1 }),
+      expect.objectContaining({ codexStatus: ["ignored"], page: 1 }),
+    );
+  });
+
+  it("OR-combines multiple selections (missing + behind)", async () => {
+    useAdminAuth.getState().setToken("test-admin-token");
+    const onChange = vi.fn();
+    // Start with one selected so adding a second exercises the multi path.
+    renderPanel({ codexStatus: ["missing"] }, onChange);
+    const control = await screen.findByTestId("filter-codex-status");
+    fireEvent.click(control);
+    fireEvent.click(await screen.findByText("Owned — behind"));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ codexStatus: ["missing", "behind"], page: 1 }),
     );
   });
 });

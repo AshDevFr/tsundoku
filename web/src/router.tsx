@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { AdminShell } from "@/components/admin/AdminShell";
+import { CODEX_STATUS_VALUES } from "@/constants/series";
 import { AdminIdMapsPage } from "@/pages/admin/IdMaps";
 import { AdminMaintenancePage } from "@/pages/admin/Maintenance";
 import { AdminMetricsPage } from "@/pages/admin/Metrics";
@@ -77,14 +78,10 @@ function validateFilterSearch(raw: Record<string, unknown>): FilterSearch {
   const page = Number(raw.page);
   if (Number.isFinite(page) && page > 0) search.page = Math.floor(page);
   if (typeof raw.q === "string" && raw.q.trim()) search.q = raw.q;
-  if (
-    typeof raw.codexStatus === "string" &&
-    ["any", "missing", "complete", "behind", "present", "ignored"].includes(
-      raw.codexStatus,
-    )
-  ) {
-    search.codexStatus = raw.codexStatus;
-  }
+  const codexStatus = parseStringList(raw.codexStatus).filter((s) =>
+    CODEX_STATUS_VALUES.includes(s),
+  );
+  if (codexStatus.length > 0) search.codexStatus = codexStatus;
   return search;
 }
 

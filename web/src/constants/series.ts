@@ -17,3 +17,17 @@ export const STATUS_OPTIONS = [
   "cancelled",
   "unknown",
 ];
+
+// Admin-only Codex presence filter. Values match the backend `codexStatus`
+// param; the filter is multi-select and OR-combined. Shared by the filter
+// panel (option labels) and the route validator (accepted values).
+export const CODEX_STATUS_OPTIONS = [
+  { value: "any", label: "On Codex (any)" },
+  { value: "complete", label: "Owned — up to date" },
+  { value: "behind", label: "Owned — behind" },
+  { value: "present", label: "Owned — unverified" },
+  { value: "ignored", label: "Owned — tracking off" },
+  { value: "missing", label: "Not on Codex" },
+];
+
+export const CODEX_STATUS_VALUES = CODEX_STATUS_OPTIONS.map((o) => o.value);

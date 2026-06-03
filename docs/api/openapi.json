@@ -1523,7 +1523,7 @@
           {
             "name": "codexStatus",
             "in": "query",
-            "description": "Filter by Codex presence status: `any` (on Codex), `missing` (not on\nCodex), `complete`, `behind`, `present`, or `ignored` (completion\ntracking turned off via `ignore_completion`). **Admin-only and enforced\nserver-side**: for a non-admin request the param is ignored entirely,\nso it can't be used to probe library contents.",
+            "description": "Comma-separated Codex presence statuses, OR-combined: `any` (on Codex),\n`missing` (not on Codex), `complete`, `behind`, `present`, or `ignored`\n(completion tracking turned off via `ignore_completion`). A series is\nkept if it matches *any* listed status, so e.g. `missing,behind` returns\neverything not on Codex plus the owned-but-behind titles. **Admin-only\nand enforced server-side**: for a non-admin request the param is ignored\nentirely, so it can't be used to probe library contents.",
             "required": false,
             "schema": {
               "type": "string"

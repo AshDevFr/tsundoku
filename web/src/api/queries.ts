@@ -78,10 +78,11 @@ export interface SeriesFilters {
   /// Free-text search query. Whitespace-only is treated as absent so the
   /// server avoids the rerank pass for an effectively-empty query.
   q?: string;
-  /// Codex presence filter (`any` | `missing` | `complete` | `behind` |
-  /// `present` | `ignored`). Admin-only and enforced server-side; dropped for
-  /// non-admins.
-  codexStatus?: string;
+  /// Codex presence filter, OR-combined (`any` | `missing` | `complete` |
+  /// `behind` | `present` | `ignored`). Joined into a CSV before being sent —
+  /// the backend re-splits on the comma. Admin-only and enforced server-side;
+  /// dropped for non-admins.
+  codexStatus?: string[];
 }
 
 export function useSeriesList(filters: SeriesFilters) {
@@ -94,6 +95,9 @@ export function useSeriesList(filters: SeriesFilters) {
     ? filters.genres.join(",")
     : undefined;
   const tagsCsv = filters.tags?.length ? filters.tags.join(",") : undefined;
+  const codexStatusCsv = filters.codexStatus?.length
+    ? filters.codexStatus.join(",")
+    : undefined;
   const query = {
     page: filters.page ?? 1,
     pageSize: filters.pageSize ?? DEFAULT_PAGE_SIZE,
@@ -117,7 +121,7 @@ export function useSeriesList(filters: SeriesFilters) {
     q: trimmedQ || undefined,
     // Backend drops this for non-admins; send it regardless and let the
     // server enforce. Keeps the URL/cache key honest for admins.
-    codexStatus: filters.codexStatus || undefined,
+    codexStatus: codexStatusCsv,
   };
   return useQuery({
     queryKey: ["series-list", query, { admin: hasAdmin }],

@@ -4851,6 +4851,28 @@ async fn codex_status_filter_applies_for_admin() {
     let body = fetch("/api/v1/series?codexStatus=missing").await;
     assert_eq!(body["total"], 1);
     assert_eq!(body["items"][0]["id"], missing);
+
+    // Multi-select is OR-combined: missing,behind keeps the unlinked series
+    // plus the owned-but-behind one, but not the caught-up `complete`.
+    let body = fetch("/api/v1/series?codexStatus=missing,behind").await;
+    assert_eq!(body["total"], 2, "missing OR behind");
+    let ids: Vec<i64> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|it| it["id"].as_i64().unwrap())
+        .collect();
+    assert!(ids.contains(&(missing as i64)));
+    assert!(ids.contains(&(behind as i64)));
+    assert!(!ids.contains(&(complete as i64)));
+
+    // Two on-Codex sub-statuses OR together (no `missing`): behind + complete.
+    let body = fetch("/api/v1/series?codexStatus=behind,complete").await;
+    assert_eq!(body["total"], 2, "behind OR complete");
+
+    // `any` + `missing` together = every series, unconstrained.
+    let body = fetch("/api/v1/series?codexStatus=any,missing").await;
+    assert_eq!(body["total"], 3, "any OR missing = everything");
 }
 
 #[tokio::test]

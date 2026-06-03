@@ -3252,11 +3252,13 @@ export interface operations {
                  */
                 q?: string;
                 /**
-                 * @description Filter by Codex presence status: `any` (on Codex), `missing` (not on
-                 *     Codex), `complete`, `behind`, `present`, or `ignored` (completion
-                 *     tracking turned off via `ignore_completion`). **Admin-only and enforced
-                 *     server-side**: for a non-admin request the param is ignored entirely,
-                 *     so it can't be used to probe library contents.
+                 * @description Comma-separated Codex presence statuses, OR-combined: `any` (on Codex),
+                 *     `missing` (not on Codex), `complete`, `behind`, `present`, or `ignored`
+                 *     (completion tracking turned off via `ignore_completion`). A series is
+                 *     kept if it matches *any* listed status, so e.g. `missing,behind` returns
+                 *     everything not on Codex plus the owned-but-behind titles. **Admin-only
+                 *     and enforced server-side**: for a non-admin request the param is ignored
+                 *     entirely, so it can't be used to probe library contents.
                  */
                 codexStatus?: string;
             };

@@ -37,11 +37,12 @@ export interface FilterSearch {
   page?: number;
   /// Free-text search query. Whitespace-only treated as absent.
   q?: string;
-  /// Codex presence filter: `any` (on Codex), `missing` (not on Codex),
-  /// `complete`, `behind`, `present`, or `ignored` (completion tracking off).
-  /// Admin-only — the control is hidden for non-admins and the backend ignores
-  /// it without a valid admin token.
-  codexStatus?: string;
+  /// Codex presence filter, OR-combined: `any` (on Codex), `missing` (not on
+  /// Codex), `complete`, `behind`, `present`, or `ignored` (completion tracking
+  /// off). Selecting several keeps series matching any of them (e.g. `missing`
+  /// + `behind`). Admin-only — the control is hidden for non-admins and the
+  /// backend ignores it without a valid admin token.
+  codexStatus?: string[];
 }
 
 interface PresetState {

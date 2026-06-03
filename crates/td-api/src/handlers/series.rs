@@ -192,11 +192,13 @@ pub struct SeriesListQuery {
     /// score against canonical + alternate titles, with a boost for FTS5
     /// prefix matches. Whitespace-only is treated as absent.
     pub q: Option<String>,
-    /// Filter by Codex presence status: `any` (on Codex), `missing` (not on
-    /// Codex), `complete`, `behind`, `present`, or `ignored` (completion
-    /// tracking turned off via `ignore_completion`). **Admin-only and enforced
-    /// server-side**: for a non-admin request the param is ignored entirely,
-    /// so it can't be used to probe library contents.
+    /// Comma-separated Codex presence statuses, OR-combined: `any` (on Codex),
+    /// `missing` (not on Codex), `complete`, `behind`, `present`, or `ignored`
+    /// (completion tracking turned off via `ignore_completion`). A series is
+    /// kept if it matches *any* listed status, so e.g. `missing,behind` returns
+    /// everything not on Codex plus the owned-but-behind titles. **Admin-only
+    /// and enforced server-side**: for a non-admin request the param is ignored
+    /// entirely, so it can't be used to probe library contents.
     pub codex_status: Option<String>,
 }
 
@@ -374,9 +376,10 @@ async fn decorate_list_items(
         .collect())
 }
 
-/// Resolve the admin-only `codexStatus` query param to a series-id constraint,
-/// or `None` when no constraint should apply (not admin, param absent/empty, or
-/// an unrecognized value — treated leniently as "no filter"). The status
+/// Resolve the admin-only `codexStatus` query param (a comma-separated,
+/// OR-combined status list) to a series-id constraint, or `None` when no
+/// constraint should apply (not admin, param absent/empty, or only
+/// unrecognized values — treated leniently as "no filter"). The status
 /// comparison reuses [`compute_status`] so the filter and the per-row badge
 /// can never disagree.
 async fn codex_status_filter(
@@ -387,53 +390,76 @@ async fn codex_status_filter(
     if !is_admin {
         return Ok(None);
     }
-    let Some(status) = q
-        .codex_status
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    else {
+    // Multi-select: statuses are OR-combined. Recognized values only; anything
+    // unrecognized is dropped (lenient, mirrors how unknown sort fields fall
+    // back rather than erroring).
+    let statuses = parse_csv(q.codex_status.as_deref());
+    let want_any = statuses.iter().any(|s| s == "any");
+    let want_missing = statuses.iter().any(|s| s == "missing");
+    let sub_wants: Vec<CodexStatus> = statuses
+        .iter()
+        .filter_map(|s| match s.as_str() {
+            "complete" => Some(CodexStatus::Complete),
+            "behind" => Some(CodexStatus::Behind),
+            "present" => Some(CodexStatus::Present),
+            "ignored" => Some(CodexStatus::Ignored),
+            _ => None,
+        })
+        .collect();
+    if !want_any && !want_missing && sub_wants.is_empty() {
         return Ok(None);
-    };
+    }
+
     let links = codex_link_repo::list_all(&state.db)
         .await
         .map_err(anyhow_err)?;
     let linked_ids: Vec<i32> = links.iter().map(|l| l.series_id).collect();
-    match status {
-        "missing" => Ok(Some(CodexIdFilter::Exclude(linked_ids))),
-        "any" => Ok(Some(CodexIdFilter::Include(linked_ids))),
-        "complete" | "behind" | "present" | "ignored" => {
-            let want = match status {
-                "complete" => CodexStatus::Complete,
-                "behind" => CodexStatus::Behind,
-                "present" => CodexStatus::Present,
-                _ => CodexStatus::Ignored,
-            };
-            let highs = series_highs_by_ids(state, &linked_ids).await?;
-            let matching = links
-                .iter()
-                .filter(|l| {
-                    let (ign, hv, hc) = highs
-                        .get(&l.series_id)
-                        .copied()
-                        .unwrap_or((false, None, None));
-                    compute_status(ign, hv, hc, l.local_max_volume, l.local_max_chapter) == want
-                })
-                .map(|l| l.series_id)
-                .collect();
-            Ok(Some(CodexIdFilter::Include(matching)))
+
+    // Linked series the selection keeps. `any` already covers every linked
+    // series, so the per-status scan is moot when it's selected.
+    let included_linked: Vec<i32> = if want_any {
+        linked_ids.clone()
+    } else if sub_wants.is_empty() {
+        Vec::new()
+    } else {
+        let highs = series_highs_by_ids(state, &linked_ids).await?;
+        links
+            .iter()
+            .filter(|l| {
+                let (ign, hv, hc) = highs
+                    .get(&l.series_id)
+                    .copied()
+                    .unwrap_or((false, None, None));
+                let st = compute_status(ign, hv, hc, l.local_max_volume, l.local_max_chapter);
+                sub_wants.contains(&st)
+            })
+            .map(|l| l.series_id)
+            .collect()
+    };
+
+    if want_missing {
+        // Result is (unlinked) OR (included linked). With `any` also selected
+        // that's every series, so don't constrain at all.
+        if want_any {
+            return Ok(None);
         }
-        // Unknown value: don't constrain (lenient, mirrors how unknown sort
-        // fields fall back rather than erroring).
-        _ => Ok(None),
+        // Keep everything except the linked rows the selection didn't include.
+        let included: HashSet<i32> = included_linked.iter().copied().collect();
+        let excluded: Vec<i32> = linked_ids
+            .into_iter()
+            .filter(|id| !included.contains(id))
+            .collect();
+        Ok(Some(CodexIdFilter::Exclude(excluded)))
+    } else {
+        Ok(Some(CodexIdFilter::Include(included_linked)))
     }
 }
 
 /// A series-id constraint derived from the codex status filter.
 enum CodexIdFilter {
-    /// Keep only these ids (status match / `any`).
+    /// Keep only these ids (the OR-union of the selected on-Codex statuses).
     Include(Vec<i32>),
-    /// Keep everything except these ids (`missing`).
+    /// Keep everything except these ids (selection includes `missing`).
     Exclude(Vec<i32>),
 }
 

@@ -20,7 +20,11 @@ import { useDebouncedCallback, useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useMemo, useState } from "react";
 import { useGenres, useTags } from "@/api/queries";
-import { KIND_OPTIONS, STATUS_OPTIONS } from "@/constants/series";
+import {
+  CODEX_STATUS_OPTIONS,
+  KIND_OPTIONS,
+  STATUS_OPTIONS,
+} from "@/constants/series";
 import { useAdminAuth } from "@/stores/auth";
 import {
   type FilterSearch,
@@ -81,17 +85,6 @@ function triParse(v: string): boolean | undefined {
   return undefined;
 }
 
-// Codex presence filter options. Values match the backend `codexStatus`
-// param; `null` (the cleared Select) means no constraint.
-const CODEX_STATUS_OPTIONS = [
-  { value: "any", label: "On Codex (any)" },
-  { value: "complete", label: "Owned — up to date" },
-  { value: "behind", label: "Owned — behind" },
-  { value: "present", label: "Owned — unverified" },
-  { value: "ignored", label: "Owned — tracking off" },
-  { value: "missing", label: "Not on Codex" },
-];
-
 export function FilterPanel({ search, onChange }: FilterPanelProps) {
   // The Codex filter is admin-only; the backend ignores it without a valid
   // token, so there's no point showing it to anon sessions.
@@ -140,7 +133,7 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     typeof search.owned === "boolean" ||
     typeof search.hasReleases === "boolean" ||
     Boolean(search.metadataSource) ||
-    Boolean(search.codexStatus);
+    (search.codexStatus?.length ?? 0) > 0;
 
   const activeSort = search.sort ?? "last_release_at";
   const orderLabels = ORDER_LABELS_BY_SORT[activeSort] ?? DEFAULT_ORDER_LABELS;
@@ -304,12 +297,15 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
         />
 
         {isAdmin && (
-          <Select
+          <MultiSelect
             label="Codex"
-            placeholder="Any"
+            placeholder={search.codexStatus?.length ? undefined : "Any"}
+            description="Matches any selected status"
             data={CODEX_STATUS_OPTIONS}
-            value={search.codexStatus ?? null}
-            onChange={(v) => merge({ codexStatus: v ?? undefined })}
+            value={search.codexStatus ?? []}
+            onChange={(v) =>
+              merge({ codexStatus: v.length > 0 ? v : undefined })
+            }
             clearable
             data-testid="filter-codex-status"
           />
