@@ -33,6 +33,7 @@ const NAV: NavEntry[] = [
     to: "/admin/providers",
     matchPrefix: "/admin/providers",
   },
+  { label: "Download", to: "/admin/download" },
   { label: "Metrics", to: "/admin/metrics" },
   { label: "ID Maps", to: "/admin/id-maps" },
   { label: "Maintenance", to: "/admin/maintenance" },

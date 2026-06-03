@@ -15,6 +15,7 @@ import { AdminShell } from "@/components/admin/AdminShell";
 import { ADMIN_TEST_TOKEN } from "@/mocks/handlers";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { useAdminAuth } from "@/stores/auth";
+import { AdminDownloadPage } from "./Download";
 import { AdminIdMapsPage } from "./IdMaps";
 import { AdminMaintenancePage } from "./Maintenance";
 import { AdminMetricsPage } from "./Metrics";
@@ -61,6 +62,11 @@ function makeRouter(initial: string) {
     path: "providers/$id",
     component: AdminProviderDetailPage,
   });
+  const download = createRoute({
+    getParentRoute: () => layout,
+    path: "download",
+    component: AdminDownloadPage,
+  });
   const metrics = createRoute({
     getParentRoute: () => layout,
     path: "metrics",
@@ -93,6 +99,7 @@ function makeRouter(initial: string) {
         sourceDetail,
         providersList,
         providerDetail,
+        download,
         metrics,
         idMaps,
         maintenance,
@@ -378,6 +385,30 @@ describe("admin providers page", () => {
   });
 });
 
+describe("admin download page", () => {
+  beforeEach(() => useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN));
+  afterEach(() => useAdminAuth.getState().clear());
+
+  it("exposes a Download entry in the admin nav", async () => {
+    renderAt("/admin/download");
+    expect(
+      await screen.findByTestId("admin-nav-download", undefined, {
+        timeout: 3000,
+      }),
+    ).toHaveTextContent(/download/i);
+  });
+
+  it("renders the client card with connection info and reachable badge", async () => {
+    renderAt("/admin/download");
+    expect(
+      await screen.findByTestId("download-card", undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("download-reachable")).toHaveTextContent(
+      /reachable/i,
+    );
+  });
+});
+
 describe("admin metrics page", () => {
   beforeEach(() => useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN));
   afterEach(() => useAdminAuth.getState().clear());
@@ -461,6 +492,21 @@ describe("admin maintenance page", () => {
     await waitFor(() => {
       expect(
         screen.getByText(/12 cleared, 1 manual row\(s\) left alone/i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("tests the codex connection and toasts the unreachable result", async () => {
+    renderAt("/admin/maintenance");
+    const btn = await screen.findByTestId(
+      "maintenance-codex-test-button",
+      undefined,
+      { timeout: 3000 },
+    );
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Unreachable: connection refused/),
       ).toBeInTheDocument();
     });
   });

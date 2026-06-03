@@ -1752,6 +1752,7 @@ export const handlers = [
       lastSuccessAt: NOW,
       linkedCount: 2,
       fetchedCount: 18,
+      recentChecks: [{ checkedAt: NOW, reachable: true, trigger: "launch" }],
     });
   }),
   http.post("/api/v1/codex/refresh", ({ request }) => {
@@ -1759,12 +1760,75 @@ export const handlers = [
     if (denied) return denied;
     return HttpResponse.json({ triggered: true, skipped: false });
   }),
+  http.post("/api/v1/codex/test", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    // The mock client is "unreachable": a 200 report of reachable:false plus a
+    // recorded manual history row.
+    return HttpResponse.json({
+      enabled: true,
+      reachable: false,
+      authState: "unknown",
+      lastPreflightAt: NOW,
+      lastError: "connection refused",
+      recentChecks: [
+        {
+          checkedAt: NOW,
+          reachable: false,
+          trigger: "manual",
+          error: "connection refused",
+        },
+        { checkedAt: NOW - 100, reachable: true, trigger: "launch" },
+      ],
+    });
+  }),
 
   // Send to torrent client (admin-only).
   http.get("/api/v1/download/status", ({ request }) => {
     const denied = requireAdmin(request);
     if (denied) return denied;
-    return HttpResponse.json({ enabled: true, kind: "rutorrent" });
+    return HttpResponse.json({
+      enabled: true,
+      kind: "rutorrent",
+      baseUrl: "https://box.example.com/rutorrent",
+      hasCredentials: true,
+      defaultLabel: "manga",
+      defaultStart: true,
+      preferTorrentFile: true,
+      healthCron: "0 * * * *",
+      reachable: true,
+      lastTestAt: NOW,
+      lastChangeAt: NOW,
+      recentChecks: [{ checkedAt: NOW, reachable: true, trigger: "launch" }],
+      recentSends: [],
+    });
+  }),
+  http.post("/api/v1/download/test", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({
+      enabled: true,
+      kind: "rutorrent",
+      baseUrl: "https://box.example.com/rutorrent",
+      hasCredentials: true,
+      defaultLabel: "manga",
+      defaultStart: true,
+      preferTorrentFile: true,
+      healthCron: "0 * * * *",
+      reachable: false,
+      lastTestAt: NOW,
+      lastChangeAt: NOW,
+      lastError: "connection refused",
+      recentChecks: [
+        {
+          checkedAt: NOW,
+          reachable: false,
+          trigger: "manual",
+          error: "connection refused",
+        },
+      ],
+      recentSends: [],
+    });
   }),
   http.post("/api/v1/releases/:id/send-to-client", ({ request, params }) => {
     const denied = requireAdmin(request);

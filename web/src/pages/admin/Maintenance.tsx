@@ -24,9 +24,15 @@ import {
   useRecomputeSpans,
   useReenrichSource,
   useRefreshAllSeries,
+  useTestCodex,
 } from "@/api/mutations";
-import { type CodexStatusDto, useCodexStatus, useSources } from "@/api/queries";
-import { formatRelative } from "@/api/utils";
+import {
+  type CodexStatusDto,
+  type HealthCheckDto,
+  useCodexStatus,
+  useSources,
+} from "@/api/queries";
+import { formatAbsolute, formatRelative } from "@/api/utils";
 
 /// Resolution statuses a release can carry, mirrored from the backend's
 /// `VALID_STATUSES`. Used to populate the re-enrich status picker.
@@ -118,6 +124,7 @@ const AUTH_STATE_META: Record<string, { color: string; label: string }> = {
 function CodexConnectionCard() {
   const status = useCodexStatus();
   const refresh = useCodexRefresh();
+  const test = useTestCodex();
   const qc = useQueryClient();
   // The sweep runs async after the trigger returns, so invalidating in the
   // mutation's onSuccess refetches the *pre-sweep* row. Instead, refetch when
@@ -154,6 +161,25 @@ function CodexConnectionCard() {
     });
   };
 
+  const handleTest = () => {
+    test.mutate(undefined, {
+      onSuccess: (data) => {
+        notifications.show({
+          color: data?.reachable ? "teal" : "red",
+          message: data?.reachable
+            ? "Codex reachable"
+            : `Unreachable: ${data?.lastError ?? "unknown error"}`,
+        });
+      },
+      onError: (e) =>
+        notifications.show({
+          color: "red",
+          title: "Codex connection test failed",
+          message: (e as Error).message,
+        }),
+    });
+  };
+
   return (
     <Card withBorder radius="md" p="md" data-testid="maintenance-codex-card">
       <Stack gap="sm">
@@ -175,6 +201,15 @@ function CodexConnectionCard() {
 
         {status.data?.enabled && (
           <Group justify="flex-end">
+            <Button
+              size="xs"
+              variant="default"
+              onClick={handleTest}
+              loading={test.isPending}
+              data-testid="maintenance-codex-test-button"
+            >
+              Test connection
+            </Button>
             <Button
               size="xs"
               variant="light"
@@ -262,6 +297,48 @@ function CodexStatusBody({ status }: { status: CodexStatusDto }) {
           Last error: {status.lastError}
         </Text>
       )}
+      <CodexRecentChecks checks={status.recentChecks} />
+    </Stack>
+  );
+}
+
+/// Reachability transition history (newest first). Populated by the launch
+/// probe, the sync cron, and the manual Test button; empty until something
+/// flips.
+function CodexRecentChecks({ checks }: { checks: HealthCheckDto[] }) {
+  if (checks.length === 0) return null;
+  return (
+    <Stack gap={4} data-testid="codex-recent-checks">
+      <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+        Recent checks
+      </Text>
+      {checks.map((c) => (
+        <Group
+          key={`${c.checkedAt}-${c.trigger}`}
+          gap="xs"
+          wrap="wrap"
+          align="baseline"
+        >
+          <Badge
+            size="xs"
+            variant="light"
+            color={c.reachable ? "green" : "red"}
+          >
+            {c.reachable ? "up" : "down"}
+          </Badge>
+          <Text size="xs" c="dimmed">
+            {c.trigger}
+          </Text>
+          <Text size="xs" c="dimmed" title={formatAbsolute(c.checkedAt)}>
+            {formatRelative(c.checkedAt)}
+          </Text>
+          {c.error && (
+            <Text size="xs" c="red" lineClamp={1} title={c.error}>
+              {c.error}
+            </Text>
+          )}
+        </Group>
+      ))}
     </Stack>
   );
 }

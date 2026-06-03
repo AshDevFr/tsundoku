@@ -58,6 +58,44 @@ export function useCodexRefresh() {
   });
 }
 
+/// Run an on-demand Codex `/info` preflight. A failed probe still resolves
+/// (200 with `reachable: false`); invalidates the status row so the card and
+/// its history refresh.
+export function useTestCodex() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST("/api/v1/codex/test");
+      if (error)
+        throw new Error(
+          describeError(error, "failed to test codex connection"),
+        );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["codex-status"] });
+    },
+  });
+}
+
+/// Run an on-demand download-client connection test. A failed probe still
+/// resolves (200 with `reachable: false`); invalidates the status query so the
+/// Download page reflects the result and any new history row.
+export function useTestDownload() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST("/api/v1/download/test");
+      if (error)
+        throw new Error(describeError(error, "failed to test download client"));
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["download-status"] });
+    },
+  });
+}
+
 export function useLinkRelease() {
   const qc = useQueryClient();
   return useMutation({

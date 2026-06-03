@@ -4,7 +4,6 @@ import {
   Center,
   Group,
   Loader,
-  SimpleGrid,
   Stack,
   Text,
   Title,
@@ -80,11 +79,11 @@ export function AdminProvidersListPage() {
       )}
 
       {providers.data && providers.data.items.length > 0 && (
-        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+        <Stack gap="md">
           {providers.data.items.map((p) => (
             <ProviderCard key={p.id} provider={p} />
           ))}
-        </SimpleGrid>
+        </Stack>
       )}
     </Stack>
   );
