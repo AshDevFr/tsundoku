@@ -71,12 +71,28 @@ discovery source ships in v1. Metadata-provider-pluggable, but only
 the **MangaBaka** provider ships. The architecture is ready for
 additional sources and providers without core refactors.
 
+## Project status & support
+
+tsundoku is a solo side project. I built it for my own use and continue to
+develop it because I enjoy it. A few things that follow from that:
+
+- **No SLA.** I read everything but respond when I have time.
+- **Bug reports are welcome.** Use the issue template and include version,
+  deployment method, and relevant logs.
+- **Feature requests are welcome, but I will close ones that fall outside
+  the scope** (see [Status](#status) above).
+- **PRs are welcome** for bugs and small features. For larger changes,
+  please open an issue first so we can agree on direction before you write
+  code.
+- **I don't provide installation support.** The
+  [docs](https://tsundoku.4sh.dev/) cover deployment. If you can't get past
+  the docs, this project may not be a good fit yet.
+
 ## Contributing
 
-See [`CLAUDE.md`](CLAUDE.md) for the contributor-facing architecture
-overview and code conventions. The docs site has a non-contributor
-[architecture tour](https://tsundoku.4sh.dev/docs/architecture) for a
-gentler intro.
+The docs site has an
+[architecture tour](https://tsundoku.4sh.dev/docs/architecture) covering
+the overall design and the source/provider plugin model.
 
 Pre-commit hooks:
 
