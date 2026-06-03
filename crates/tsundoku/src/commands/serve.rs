@@ -51,6 +51,10 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
     // endpoint so they all hit Codex through the same limited client.
     let codex_client = build_codex_client(&cfg.codex, limiter.clone());
 
+    // Build the torrent-download client once (when the integration is enabled)
+    // so the send endpoint shares the same limited client.
+    let download_client = build_download_client(&cfg.download, limiter.clone());
+
     // Probe Codex's public /info endpoint once at startup so the operator sees
     // the connected name/version (or a warning) immediately. Non-fatal: a
     // Codex that is down at boot must not block tsundoku from serving; the sync
@@ -136,6 +140,8 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
         cover_cache_dir: Some(cfg.storage.paths().cover_cache_dir),
         codex: Arc::new(cfg.codex.clone()),
         codex_client,
+        download: Arc::new(cfg.download.clone()),
+        download_client,
     };
     let app = td_api::router(state, &cfg);
 
@@ -173,6 +179,44 @@ fn build_codex_client(
         Ok(c) => Some(Arc::new(c)),
         Err(e) => {
             tracing::warn!(error = %e, "failed to build codex client; codex disabled");
+            None
+        }
+    }
+}
+
+/// Build the shared torrent-download client when the integration is enabled.
+/// Returns `None` when disabled, when `base_url` is missing (config validation
+/// normally prevents this), when `kind` is unsupported, or when the reqwest
+/// client fails to build (logged). v1 supports only `kind = "rutorrent"`.
+fn build_download_client(
+    download: &td_config::DownloadConfig,
+    limiter: Arc<td_http::HttpLimiter>,
+) -> Option<Arc<dyn td_download::DownloadClient>> {
+    if !download.enabled {
+        return None;
+    }
+    let Some(base_url) = download.normalized_base_url() else {
+        tracing::warn!("download.enabled is true but base_url is missing; download disabled");
+        return None;
+    };
+    if download.kind != "rutorrent" {
+        tracing::warn!(
+            kind = %download.kind,
+            "unsupported download.kind (only \"rutorrent\" is supported); download disabled"
+        );
+        return None;
+    }
+    let timeout = std::time::Duration::from_secs(download.timeout_seconds as u64);
+    match td_download::RuTorrentClient::new(
+        base_url,
+        download.username.clone(),
+        download.password.clone(),
+        timeout,
+        limiter,
+    ) {
+        Ok(c) => Some(Arc::new(c) as Arc<dyn td_download::DownloadClient>),
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to build rutorrent client; download disabled");
             None
         }
     }

@@ -71,6 +71,8 @@ fn sample_release(id: &str, series_id: Option<i32>) -> releases::ActiveModel {
         resolved_at: Set(None),
         search_queries: Set(None),
         cleanup_rules_applied: Set(None),
+        sent_to_client_at: Set(None),
+        sent_to_client_label: Set(None),
     }
 }
 

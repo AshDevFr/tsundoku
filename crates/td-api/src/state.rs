@@ -9,8 +9,10 @@ use std::sync::Arc;
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 use td_config::{
-    AuthConfig, CodexConfig, IngestionConfig, MetadataConfig, ProvidersConfig, SourceConfig,
+    AuthConfig, CodexConfig, DownloadConfig, IngestionConfig, MetadataConfig, ProvidersConfig,
+    SourceConfig,
 };
+use td_download::DownloadClient;
 use td_metadata::MetadataRegistry;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_resolution::query_builder::QueryBuilder;
@@ -113,6 +115,13 @@ pub struct AppState {
     /// with the scheduler so the manual trigger and the cron drive the same
     /// client under the same lock.
     pub codex_client: Option<Arc<td_codex::CodexClient>>,
+    /// Snapshot of the `[download]` config. Drives the `GET /download/status`
+    /// endpoint's `enabled`/`kind` and the send handler's per-send defaults.
+    pub download: Arc<DownloadConfig>,
+    /// Torrent client for the `POST /releases/{id}/send-to-client` action.
+    /// `None` when the integration is disabled; the endpoint then responds 503
+    /// `Misconfigured`.
+    pub download_client: Option<Arc<dyn DownloadClient>>,
 }
 
 impl AppState {

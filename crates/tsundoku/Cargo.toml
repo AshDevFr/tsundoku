@@ -22,6 +22,7 @@ td-api = { path = "../td-api" }
 td-codex = { path = "../td-codex" }
 td-config = { path = "../td-config" }
 td-db = { path = "../td-db" }
+td-download = { path = "../td-download" }
 td-http = { path = "../td-http" }
 td-metadata = { path = "../td-metadata" }
 td-metadata-mangabaka = { path = "../td-metadata-mangabaka" }

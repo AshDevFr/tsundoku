@@ -38,6 +38,7 @@ pub struct AppConfig {
     pub sources: Vec<SourceConfig>,
     pub ingestion: IngestionConfig,
     pub codex: CodexConfig,
+    pub download: DownloadConfig,
 }
 
 impl AppConfig {
@@ -47,6 +48,7 @@ impl AppConfig {
     /// the first request or cron tick.
     pub fn validate(&self) -> anyhow::Result<()> {
         self.codex.validate()?;
+        self.download.validate()?;
         Ok(())
     }
 }
@@ -318,6 +320,86 @@ impl CodexConfig {
     /// The configured base URL with any trailing slash trimmed, ready for
     /// joining `/api/v1/...` paths and building deep links. Returns `None`
     /// when unset.
+    pub fn normalized_base_url(&self) -> Option<String> {
+        self.base_url
+            .as_deref()
+            .map(|u| u.trim_end_matches('/').to_string())
+            .filter(|u| !u.is_empty())
+    }
+}
+
+/// Torrent-client integration, populated from `[download]`. Powers the
+/// admin-only "send to torrent client" action. Disabled by default; when off
+/// the block may be absent entirely, the send/status endpoints report
+/// disabled, and no outbound calls are made.
+///
+/// `username`/`password` are the torrent client's own HTTP Basic credentials
+/// (e.g. the reverse proxy in front of ruTorrent) — unrelated to tsundoku's own
+/// `auth.api_key` / `auth.admin_token`. Both may be omitted for an
+/// unauthenticated instance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DownloadConfig {
+    /// Master switch. When false, the send button is hidden, the endpoints
+    /// report disabled, and no client is built.
+    pub enabled: bool,
+    /// Which client implementation to use. v1 ships only `"rutorrent"`.
+    pub kind: String,
+    /// Client base URL, e.g. `https://box.example.com/rutorrent`. Required when
+    /// `enabled` is true. Trailing slashes are tolerated.
+    pub base_url: Option<String>,
+    /// HTTP Basic username, or `None` for an unauthenticated instance.
+    pub username: Option<String>,
+    /// HTTP Basic password, or `None`.
+    pub password: Option<String>,
+    /// Label applied to a sent torrent when the per-send request does not
+    /// override it. `None` lets the client apply its own default.
+    pub default_label: Option<String>,
+    /// Download directory applied when the per-send request does not override
+    /// it. `None` uses the client default.
+    pub default_dir: Option<String>,
+    /// Whether a sent torrent starts immediately (`true`) or is added stopped
+    /// (`false`) by default. Overridable per send.
+    pub default_start: bool,
+    /// Prefer fetching the `.torrent` file and uploading its bytes (`true`)
+    /// over handing the client a magnet URL (`false`). Overridable per send.
+    pub prefer_torrent_file: bool,
+    /// HTTP timeout per outbound request to the client, in seconds.
+    pub timeout_seconds: u32,
+}
+
+impl Default for DownloadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            kind: "rutorrent".into(),
+            base_url: None,
+            username: None,
+            password: None,
+            default_label: None,
+            default_dir: None,
+            default_start: true,
+            prefer_torrent_file: true,
+            timeout_seconds: 30,
+        }
+    }
+}
+
+impl DownloadConfig {
+    /// Fail-fast: an enabled integration with no `base_url` can never reach a
+    /// client. Surface it at startup, mirroring [`CodexConfig::validate`].
+    fn validate(&self) -> anyhow::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.base_url.as_deref().unwrap_or("").trim().is_empty() {
+            bail!("download.enabled is true but download.base_url is unset or empty");
+        }
+        Ok(())
+    }
+
+    /// The configured base URL with any trailing slash trimmed. Returns `None`
+    /// when unset or empty.
     pub fn normalized_base_url(&self) -> Option<String> {
         self.base_url
             .as_deref()
@@ -1374,6 +1456,90 @@ base_url = "https://codex.example.com"
         // validation must not trip on the missing base_url/api_key.
         let cfg = load(&PathBuf::from("does-not-exist.toml")).unwrap();
         assert!(!cfg.codex.enabled);
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn download_defaults_are_disabled_with_rutorrent_defaults() {
+        let cfg = load(&PathBuf::from("does-not-exist.toml")).unwrap();
+        assert!(!cfg.download.enabled);
+        assert_eq!(cfg.download.kind, "rutorrent");
+        assert!(cfg.download.base_url.is_none());
+        assert!(cfg.download.default_start);
+        assert!(cfg.download.prefer_torrent_file);
+        assert_eq!(cfg.download.timeout_seconds, 30);
+    }
+
+    #[test]
+    fn download_block_parses() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[download]
+enabled = true
+base_url = "https://box.example.com/rutorrent/"
+username = "rt"
+password = "secret"
+default_label = "manga"
+default_dir = "/downloads/manga"
+default_start = false
+prefer_torrent_file = false
+timeout_seconds = 20
+            "#
+        )
+        .unwrap();
+        let cfg = load(&path).unwrap();
+        assert!(cfg.download.enabled);
+        assert_eq!(cfg.download.kind, "rutorrent");
+        // Trailing slash is trimmed by the accessor used to build URLs.
+        assert_eq!(
+            cfg.download.normalized_base_url().as_deref(),
+            Some("https://box.example.com/rutorrent")
+        );
+        assert_eq!(cfg.download.username.as_deref(), Some("rt"));
+        assert_eq!(cfg.download.password.as_deref(), Some("secret"));
+        assert_eq!(cfg.download.default_label.as_deref(), Some("manga"));
+        assert_eq!(
+            cfg.download.default_dir.as_deref(),
+            Some("/downloads/manga")
+        );
+        assert!(!cfg.download.default_start);
+        assert!(!cfg.download.prefer_torrent_file);
+        assert_eq!(cfg.download.timeout_seconds, 20);
+    }
+
+    #[test]
+    fn download_enabled_without_base_url_fails_to_load() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"
+[download]
+enabled = true
+            "#
+        )
+        .unwrap();
+        let err = load(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("download.base_url")
+                || err
+                    .source()
+                    .is_some_and(|s| s.to_string().contains("download.base_url")),
+            "expected base_url validation error, got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn download_disabled_with_absent_block_is_ok() {
+        let cfg = load(&PathBuf::from("does-not-exist.toml")).unwrap();
+        assert!(!cfg.download.enabled);
         assert!(cfg.validate().is_ok());
     }
 

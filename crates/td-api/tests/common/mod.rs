@@ -201,6 +201,8 @@ pub fn build_app_with_events(
         cover_cache_dir: None,
         codex: Arc::new(td_config::CodexConfig::default()),
         codex_client: None,
+        download: Arc::new(td_config::DownloadConfig::default()),
+        download_client: None,
     };
     (td_api::router(state, &cfg), events_handle)
 }
@@ -240,6 +242,8 @@ pub fn build_app_with_cover_cache(
         cover_cache_dir: Some(cover_cache_dir),
         codex: Arc::new(td_config::CodexConfig::default()),
         codex_client: None,
+        download: Arc::new(td_config::DownloadConfig::default()),
+        download_client: None,
     };
     td_api::router(state, &cfg)
 }
@@ -282,6 +286,8 @@ pub fn build_app_with_codex(
         cover_cache_dir: None,
         codex: Arc::new(codex),
         codex_client,
+        download: Arc::new(td_config::DownloadConfig::default()),
+        download_client: None,
     };
     td_api::router(state, &cfg)
 }

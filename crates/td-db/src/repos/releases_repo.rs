@@ -187,6 +187,8 @@ fn to_active_model(
         resolved_at: Set(None),
         search_queries: Set(None),
         cleanup_rules_applied: Set(None),
+        sent_to_client_at: Set(None),
+        sent_to_client_label: Set(None),
     })
 }
 
@@ -296,6 +298,25 @@ pub async fn set_resolution(
         resolution_confidence: Set(confidence),
         resolution_status: Set(status.to_string()),
         last_resolve_attempt_at: Set(Some(attempted_at)),
+        ..Default::default()
+    };
+    releases::Entity::update(model).exec(db).await?;
+    Ok(())
+}
+
+/// Record that a release was pushed to the operator's torrent client: stamp
+/// `sent_to_client_at` (epoch seconds) and the `label` that was used (the
+/// resolved per-send label, which may be `None`). Drives the "Sent" badge.
+pub async fn mark_sent_to_client(
+    db: &DatabaseConnection,
+    id: &str,
+    at: i64,
+    label: Option<String>,
+) -> Result<()> {
+    let model = releases::ActiveModel {
+        id: Set(id.to_string()),
+        sent_to_client_at: Set(Some(at)),
+        sent_to_client_label: Set(label),
         ..Default::default()
     };
     releases::Entity::update(model).exec(db).await?;
@@ -710,5 +731,31 @@ mod tests {
         // Second run is a no-op: spans already stored, series already correct.
         let second = recompute_all_spans(&db).await.unwrap();
         assert_eq!(second, SpanRecompute::default());
+    }
+
+    #[tokio::test]
+    async fn mark_sent_to_client_stamps_time_and_label() {
+        let db = fresh_db().await;
+        let id = persist_discovered(&db, &sample("feed"), 1).await.unwrap();
+
+        // Fresh rows are unsent.
+        let before = find_by_id(&db, &id).await.unwrap().unwrap();
+        assert!(before.sent_to_client_at.is_none());
+        assert!(before.sent_to_client_label.is_none());
+
+        mark_sent_to_client(&db, &id, 1_700_000_500, Some("manga".into()))
+            .await
+            .unwrap();
+        let after = find_by_id(&db, &id).await.unwrap().unwrap();
+        assert_eq!(after.sent_to_client_at, Some(1_700_000_500));
+        assert_eq!(after.sent_to_client_label.as_deref(), Some("manga"));
+
+        // A label-less send still stamps the timestamp and clears the label.
+        mark_sent_to_client(&db, &id, 1_700_000_600, None)
+            .await
+            .unwrap();
+        let relabeled = find_by_id(&db, &id).await.unwrap().unwrap();
+        assert_eq!(relabeled.sent_to_client_at, Some(1_700_000_600));
+        assert!(relabeled.sent_to_client_label.is_none());
     }
 }

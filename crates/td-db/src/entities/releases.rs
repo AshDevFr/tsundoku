@@ -49,6 +49,12 @@ pub struct Model {
     /// Surfaced as badge chips on the review card so the operator can
     /// audit what surgery happened.
     pub cleanup_rules_applied: Option<String>,
+    /// Epoch seconds the release was pushed to the operator's torrent client,
+    /// or `None` if never sent. Anchors the "Sent" badge.
+    pub sent_to_client_at: Option<i64>,
+    /// Label applied when the release was sent to the torrent client, or
+    /// `None`. Records what was sent alongside `sent_to_client_at`.
+    pub sent_to_client_label: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

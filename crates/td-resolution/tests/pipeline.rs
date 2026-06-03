@@ -164,6 +164,8 @@ async fn insert_release(
         resolved_at: Set(None),
         search_queries: Set(None),
         cleanup_rules_applied: Set(None),
+        sent_to_client_at: Set(None),
+        sent_to_client_label: Set(None),
     };
     releases::Entity::insert(row).exec(db).await.unwrap();
     for f in formats {
