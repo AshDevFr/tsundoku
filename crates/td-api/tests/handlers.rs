@@ -4921,6 +4921,92 @@ async fn codex_status_ignored_short_circuits_and_filters() {
 }
 
 #[tokio::test]
+async fn set_ignore_completion_toggles_codex_status_via_endpoint() {
+    let db = fresh_db().await;
+    // Provider-backed series that would otherwise read Behind (owns vol 5,
+    // vol 12 surfaced). The PATCH manual-edit path would 409 this row; the
+    // ignore-completion endpoint must accept it.
+    let sid = seed_series_with_highs(&db, "Omnibus", Some(12.0), None).await;
+    link_auto(&db, sid, "u-omnibus", Some(5.0)).await;
+
+    let app = build_app(
+        db.clone(),
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let put = |ignore: bool| {
+        let app = app.clone();
+        async move {
+            let body = serde_json::json!({ "ignore": ignore });
+            app.oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/v1/series/{sid}/ignore-completion"))
+                    .header(header::AUTHORIZATION, "Bearer write-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    // Turn tracking off -> status becomes "ignored", still owned.
+    let resp = put(true).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["codex"]["status"], "ignored");
+    assert_eq!(body["owned"], true);
+    assert!(
+        series::Entity::find_by_id(sid)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap()
+            .ignore_completion
+    );
+
+    // Turn it back on -> the real comparison resurfaces (Behind).
+    let resp = put(false).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["codex"]["status"], "behind");
+}
+
+#[tokio::test]
+async fn set_ignore_completion_returns_404_for_missing_series() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/series/9999/ignore-completion")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"ignore":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn codex_synced_at_present_for_admin_when_enabled() {
     use td_db::repos::codex_status_repo;
     let db = fresh_db().await;

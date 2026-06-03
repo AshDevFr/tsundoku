@@ -6,7 +6,7 @@
 
 use axum::Router;
 use axum::middleware;
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use td_config::AppConfig;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -37,6 +37,10 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route(
             "/series/{id}/refresh-metadata",
             post(series::refresh_metadata),
+        )
+        .route(
+            "/series/{id}/ignore-completion",
+            put(series::set_ignore_completion),
         )
         .route("/releases/{id}/link", post(releases::link))
         .route("/releases/{id}/reject", post(releases::reject))

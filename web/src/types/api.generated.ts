@@ -783,6 +783,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/series/{id}/ignore-completion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Toggle a series' `ignore_completion` flag. When set, the series' Codex
+         *     status is forced to `ignored` so the perpetually-false "Behind" signal is
+         *     muted — meant for series read in omnibus, where source single-volume
+         *     numbering is permanently ahead of the owned omnibus numbering.
+         * @description Unlike the manual-edit `PATCH`, this works on **any** series (provider-backed
+         *     or manual): the flag is operator-owned and a metadata refresh never touches
+         *     it, so there is nothing to clobber. The series stays owned; only its tracked
+         *     status changes.
+         */
+        put: operations["set_ignore_completion"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series/{id}/refresh-metadata": {
         parameters: {
             query?: never;
@@ -1925,6 +1951,14 @@ export interface components {
             pageSize: number;
             /** Format: int64 */
             total: number;
+        };
+        /** @description Body for `PUT /api/v1/series/{id}/ignore-completion`. */
+        SetIgnoreCompletionRequest: {
+            /**
+             * @description `true` to mute Codex completion tracking for this series (its Codex
+             *     status becomes `ignored`), `false` to resume tracking.
+             */
+            ignore: boolean;
         };
         /**
          * @description Operator-facing snapshot of the per-source config (the bits visible in
@@ -3320,6 +3354,39 @@ export interface operations {
         responses: {
             /** @description Link removed (or none existed) */
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    set_ignore_completion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Internal series id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetIgnoreCompletionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description No series with that id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

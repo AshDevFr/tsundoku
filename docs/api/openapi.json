@@ -1766,6 +1766,58 @@
         ]
       }
     },
+    "/api/v1/series/{id}/ignore-completion": {
+      "put": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Toggle a series' `ignore_completion` flag. When set, the series' Codex\nstatus is forced to `ignored` so the perpetually-false \"Behind\" signal is\nmuted — meant for series read in omnibus, where source single-volume\nnumbering is permanently ahead of the owned omnibus numbering.",
+        "description": "Unlike the manual-edit `PATCH`, this works on **any** series (provider-backed\nor manual): the flag is operator-owned and a metadata refresh never touches\nit, so there is nothing to clobber. The series stays owned; only its tracked\nstatus changes.",
+        "operationId": "set_ignore_completion",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Internal series id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetIgnoreCompletionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No series with that id"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/series/{id}/refresh-metadata": {
       "post": {
         "tags": [
@@ -4331,6 +4383,19 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "SetIgnoreCompletionRequest": {
+        "type": "object",
+        "description": "Body for `PUT /api/v1/series/{id}/ignore-completion`.",
+        "required": [
+          "ignore"
+        ],
+        "properties": {
+          "ignore": {
+            "type": "boolean",
+            "description": "`true` to mute Codex completion tracking for this series (its Codex\nstatus becomes `ignored`), `false` to resume tracking."
           }
         }
       },

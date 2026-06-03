@@ -1047,6 +1047,85 @@ pub async fn update(
     )))
 }
 
+/// Body for `PUT /api/v1/series/{id}/ignore-completion`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetIgnoreCompletionRequest {
+    /// `true` to mute Codex completion tracking for this series (its Codex
+    /// status becomes `ignored`), `false` to resume tracking.
+    pub ignore: bool,
+}
+
+/// Toggle a series' `ignore_completion` flag. When set, the series' Codex
+/// status is forced to `ignored` so the perpetually-false "Behind" signal is
+/// muted — meant for series read in omnibus, where source single-volume
+/// numbering is permanently ahead of the owned omnibus numbering.
+///
+/// Unlike the manual-edit `PATCH`, this works on **any** series (provider-backed
+/// or manual): the flag is operator-owned and a metadata refresh never touches
+/// it, so there is nothing to clobber. The series stays owned; only its tracked
+/// status changes.
+#[utoipa::path(
+    put,
+    path = "/api/v1/series/{id}/ignore-completion",
+    tag = "series",
+    params(("id" = i32, Path, description = "Internal series id")),
+    request_body = SetIgnoreCompletionRequest,
+    responses(
+        (status = 200, body = SeriesDetail),
+        (status = 404, description = "No series with that id")
+    ),
+    security(("admin" = []))
+)]
+pub async fn set_ignore_completion(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    Json(req): Json<SetIgnoreCompletionRequest>,
+) -> ApiResult<Json<SeriesDetail>> {
+    let row = match series_repo::set_ignore_completion(&state.db, id, req.ignore)
+        .await
+        .map_err(anyhow_err)?
+    {
+        series_repo::SetIgnoreCompletionOutcome::Updated(row) => *row,
+        series_repo::SetIgnoreCompletionOutcome::NotFound => {
+            return Err(ApiError::NotFound(format!("series {id}")));
+        }
+    };
+
+    // Re-hydrate via the same helpers as the read path so the response shape
+    // is identical to GET.
+    let mappings = series_external_ids_repo::list_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    let tags_for_series = tagging_repo::list_tags_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    let genres_for_series = tagging_repo::list_genres_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    // Admin-gated by the router, so surface the Codex overlay like the read
+    // path does — now reflecting the just-written flag.
+    let codex = codex_link_repo::get(&state.db, id)
+        .await
+        .map_err(anyhow_err)?
+        .map(|l| {
+            build_codex_info(
+                &l,
+                row.ignore_completion,
+                row.highest_volume,
+                row.highest_chapter,
+                state.codex.normalized_base_url().as_deref(),
+            )
+        });
+    Ok(Json(model_to_detail(
+        row,
+        mappings,
+        genres_for_series,
+        tags_for_series,
+        codex,
+    )))
+}
+
 /// Re-fetch metadata for a series from the active provider and re-persist.
 #[utoipa::path(
     post,

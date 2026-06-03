@@ -138,6 +138,40 @@ pub async fn update_manual_fields(
     Ok(UpdateManualOutcome::Updated(Box::new(updated)))
 }
 
+/// Result of [`set_ignore_completion`]. The caller maps these to HTTP statuses:
+/// `Updated` → 200, `NotFound` → 404.
+#[derive(Debug)]
+pub enum SetIgnoreCompletionOutcome {
+    /// The flag was written; the boxed model reflects the new value.
+    Updated(Box<Model>),
+    /// No series row with this id.
+    NotFound,
+}
+
+/// Set the operator `ignore_completion` flag on *any* series, provider-backed
+/// or manual.
+///
+/// Unlike [`update_manual_fields`], this is intentionally allowed on
+/// provider-backed rows: the flag is operator-owned and the metadata refresh
+/// leaves it alone (the refresh UPDATE writes `ignore_completion` as `NotSet`),
+/// so there is nothing for a provider re-fetch to clobber. Only the one column
+/// is written; every provider/descriptive field is left as-is.
+pub async fn set_ignore_completion(
+    db: &DatabaseConnection,
+    id: i32,
+    ignore: bool,
+) -> Result<SetIgnoreCompletionOutcome> {
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set};
+
+    let Some(row) = series::Entity::find_by_id(id).one(db).await? else {
+        return Ok(SetIgnoreCompletionOutcome::NotFound);
+    };
+    let mut active: series::ActiveModel = row.into();
+    active.ignore_completion = Set(ignore);
+    let updated = active.update(db).await?;
+    Ok(SetIgnoreCompletionOutcome::Updated(Box::new(updated)))
+}
+
 pub async fn find_by_id(db: &DatabaseConnection, id: i32) -> Result<Option<Model>> {
     Ok(series::Entity::find_by_id(id).one(db).await?)
 }
@@ -440,6 +474,45 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(outcome, UpdateManualOutcome::NotFound));
+    }
+
+    #[tokio::test]
+    async fn set_ignore_completion_toggles_on_and_off_for_any_source() {
+        let db = fresh().await;
+        // Allowed on a provider-backed row (unlike manual-field edits).
+        let id = seed(&db, "Provider Owned", "api", Some("hash")).await;
+
+        let model = match set_ignore_completion(&db, id, true).await.unwrap() {
+            SetIgnoreCompletionOutcome::Updated(m) => *m,
+            other => panic!("expected Updated, got {other:?}"),
+        };
+        assert!(model.ignore_completion, "returned model reflects the flag");
+        // Provider provenance is untouched.
+        assert_eq!(model.metadata_source, "api");
+        assert_eq!(model.metadata_hash.as_deref(), Some("hash"));
+
+        // Persisted, and the inverse toggle clears it.
+        assert!(
+            series::Entity::find_by_id(id)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap()
+                .ignore_completion
+        );
+        match set_ignore_completion(&db, id, false).await.unwrap() {
+            SetIgnoreCompletionOutcome::Updated(m) => assert!(!m.ignore_completion),
+            other => panic!("expected Updated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_ignore_completion_reports_not_found() {
+        let db = fresh().await;
+        assert!(matches!(
+            set_ignore_completion(&db, 9999, true).await.unwrap(),
+            SetIgnoreCompletionOutcome::NotFound
+        ));
     }
 
     #[tokio::test]
