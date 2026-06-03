@@ -7,11 +7,13 @@
 
 use anyhow::Result;
 use sea_orm::sea_query::OnConflict;
-use sea_orm::{DatabaseConnection, EntityTrait, Set};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, QueryOrder, QuerySelect, Set};
 
-use crate::entities::codex_status;
+use crate::entities::{codex_health_checks, codex_status};
 
 pub use codex_status::{ActiveModel, Column, Entity, Model};
+
+use super::TRIGGER_MANUAL;
 
 /// The fixed primary key of the singleton row.
 const ROW_ID: i32 = 1;
@@ -171,8 +173,59 @@ pub async fn set_success(
     Ok(())
 }
 
+/// Record a preflight outcome *and* maintain the reachability history. Wraps
+/// [`set_preflight`] / [`set_preflight_unreachable`] for the snapshot, then
+/// appends a `codex_health_checks` row when reachability transitions (or the
+/// very first probe) — plus always on a manual trigger. Returns whether
+/// reachability transitioned. Mirrors `download_status_repo::record_check`.
+pub async fn record_preflight(
+    db: &DatabaseConnection,
+    reachable: bool,
+    codex_name: Option<&str>,
+    codex_version: Option<&str>,
+    error: Option<&str>,
+    at: i64,
+    trigger: &str,
+) -> Result<bool> {
+    let previous = get(db).await?.map(|m| m.reachable);
+    let transitioned = previous != Some(reachable);
+
+    if reachable {
+        set_preflight(db, true, codex_name, codex_version, at).await?;
+    } else {
+        set_preflight_unreachable(db, error.unwrap_or("unreachable"), at).await?;
+    }
+
+    if transitioned || trigger == TRIGGER_MANUAL {
+        codex_health_checks::ActiveModel {
+            checked_at: Set(at),
+            reachable: Set(reachable),
+            error: Set(error.map(str::to_string)),
+            trigger: Set(trigger.to_string()),
+            ..Default::default()
+        }
+        .insert(db)
+        .await?;
+    }
+
+    Ok(transitioned)
+}
+
+/// The most recent reachability-history rows, newest first.
+pub async fn list_recent_checks(
+    db: &DatabaseConnection,
+    limit: u64,
+) -> Result<Vec<codex_health_checks::Model>> {
+    Ok(codex_health_checks::Entity::find()
+        .order_by_desc(codex_health_checks::Column::Id)
+        .limit(limit)
+        .all(db)
+        .await?)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::{TRIGGER_CRON, TRIGGER_LAUNCH, TRIGGER_MANUAL};
     use super::*;
     use migration::{Migrator, MigratorTrait};
     use sea_orm::Database;
@@ -250,5 +303,73 @@ mod tests {
         assert_eq!(row.auth_state, AUTH_OK, "auth verdict preserved");
         assert_eq!(row.last_success_at, Some(150), "last success preserved");
         assert_eq!(row.linked_count, Some(5));
+    }
+
+    #[tokio::test]
+    async fn record_preflight_keeps_history_on_transitions_and_manual() {
+        let db = fresh_db().await;
+
+        // First probe is a transition and updates the snapshot.
+        assert!(
+            record_preflight(
+                &db,
+                true,
+                Some("codex"),
+                Some("1.0.0"),
+                None,
+                100,
+                TRIGGER_LAUNCH
+            )
+            .await
+            .unwrap()
+        );
+        assert!(get(&db).await.unwrap().unwrap().reachable);
+        assert_eq!(list_recent_checks(&db, 10).await.unwrap().len(), 1);
+
+        // Steady-state cron probe: snapshot refreshes, no new history row.
+        assert!(
+            !record_preflight(
+                &db,
+                true,
+                Some("codex"),
+                Some("1.0.0"),
+                None,
+                200,
+                TRIGGER_CRON
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(list_recent_checks(&db, 10).await.unwrap().len(), 1);
+
+        // Manual probe always appends, even unchanged.
+        assert!(
+            !record_preflight(
+                &db,
+                true,
+                Some("codex"),
+                Some("1.0.0"),
+                None,
+                250,
+                TRIGGER_MANUAL
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(list_recent_checks(&db, 10).await.unwrap().len(), 2);
+
+        // A flip to unreachable appends and marks the snapshot down without
+        // disturbing the preserved auth/success fields.
+        assert!(
+            record_preflight(&db, false, None, None, Some("refused"), 300, TRIGGER_CRON)
+                .await
+                .unwrap()
+        );
+        let recent = list_recent_checks(&db, 10).await.unwrap();
+        assert_eq!(recent.len(), 3);
+        assert_eq!(recent[0].checked_at, 300);
+        assert!(!recent[0].reachable);
+        assert_eq!(recent[0].error.as_deref(), Some("refused"));
+        assert!(!get(&db).await.unwrap().unwrap().reachable);
     }
 }
