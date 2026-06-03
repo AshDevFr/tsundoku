@@ -282,12 +282,14 @@ fn spawn_codex_startup_probe(
         let now = chrono::Utc::now().timestamp();
         match client.info().await {
             Ok(info) => {
-                let _ = td_db::repos::codex_status_repo::set_preflight(
+                let _ = td_db::repos::codex_status_repo::record_preflight(
                     &db,
                     true,
                     Some(&info.name),
                     Some(&info.version),
+                    None,
                     now,
+                    td_db::repos::TRIGGER_LAUNCH,
                 )
                 .await;
                 tracing::info!(
@@ -298,10 +300,14 @@ fn spawn_codex_startup_probe(
                 );
             }
             Err(e) => {
-                let _ = td_db::repos::codex_status_repo::set_preflight_unreachable(
+                let _ = td_db::repos::codex_status_repo::record_preflight(
                     &db,
-                    &e.to_string(),
+                    false,
+                    None,
+                    None,
+                    Some(&e.to_string()),
                     now,
+                    td_db::repos::TRIGGER_LAUNCH,
                 )
                 .await;
                 tracing::warn!(

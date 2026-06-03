@@ -6,7 +6,7 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
-use td_db::entities::{download_health_checks, download_sends};
+use td_db::entities::{codex_health_checks, download_health_checks, download_sends};
 use td_db::repos::{TRIGGER_MANUAL, download_sends_repo, download_status_repo, releases_repo};
 use td_download::{AddRequest, AddSource, DownloadError};
 use utoipa::ToSchema;
@@ -43,6 +43,18 @@ pub struct HealthCheckDto {
 
 impl From<download_health_checks::Model> for HealthCheckDto {
     fn from(m: download_health_checks::Model) -> Self {
+        Self {
+            checked_at: m.checked_at,
+            reachable: m.reachable,
+            error: m.error,
+            trigger: m.trigger,
+        }
+    }
+}
+
+// Codex reuses the same DTO for its reachability history (identical shape).
+impl From<codex_health_checks::Model> for HealthCheckDto {
+    fn from(m: codex_health_checks::Model) -> Self {
         Self {
             checked_at: m.checked_at,
             reachable: m.reachable,

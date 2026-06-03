@@ -4438,6 +4438,100 @@ async fn codex_status_reflects_recorded_row_when_enabled() {
 }
 
 #[tokio::test]
+async fn codex_test_503s_when_disabled() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/codex/test")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn codex_test_requires_admin() {
+    let db = fresh_db().await;
+    let codex = td_config::CodexConfig {
+        enabled: true,
+        base_url: Some("https://codex.example.com".into()),
+        api_key: Some("k".into()),
+        ..Default::default()
+    };
+    let app = build_app_with_codex(
+        db,
+        open_auth(),
+        codex,
+        Some(unreachable_codex_client()),
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/codex/test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn codex_test_reports_unreachable_and_records_manual_history() {
+    let db = fresh_db().await;
+    let codex = td_config::CodexConfig {
+        enabled: true,
+        base_url: Some("https://codex.example.com".into()),
+        api_key: Some("k".into()),
+        ..Default::default()
+    };
+    // The client points at an unreachable endpoint, so the /info probe fails —
+    // a 200 report of reachable:false, with a manual history row recorded.
+    let app = build_app_with_codex(
+        db,
+        open_auth(),
+        codex,
+        Some(unreachable_codex_client()),
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/codex/test")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["reachable"], false);
+    let checks = body["recentChecks"].as_array().unwrap();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0]["trigger"], "manual");
+    assert_eq!(checks[0]["reachable"], false);
+}
+
+#[tokio::test]
 async fn codex_refresh_503s_when_disabled() {
     let db = fresh_db().await;
     // Default build: codex_client is None -> disabled.

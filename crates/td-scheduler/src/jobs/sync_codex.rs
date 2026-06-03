@@ -21,7 +21,7 @@ use td_codex::{
     CodexClient, CodexError, DEFAULT_SWEEP_PAGE_SIZE, ExternalIndexItem, normalize_source,
 };
 use td_db::repos::codex_link_repo::AutoLink;
-use td_db::repos::{codex_link_repo, codex_status_repo, series_external_ids_repo};
+use td_db::repos::{TRIGGER_CRON, codex_link_repo, codex_status_repo, series_external_ids_repo};
 use tokio::sync::broadcast;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
@@ -82,12 +82,16 @@ pub async fn run_tick(client: Arc<CodexClient>, db: DatabaseConnection) {
     // last_success_at stay intact so stale-but-valid data survives an outage.
     match client.info().await {
         Ok(info) => {
-            if let Err(e) = codex_status_repo::set_preflight(
+            // record_preflight maintains the reachability history (appends only
+            // on a transition); the scheduled sweep records under `cron`.
+            if let Err(e) = codex_status_repo::record_preflight(
                 &db,
                 true,
                 Some(&info.name),
                 Some(&info.version),
+                None,
                 now,
+                TRIGGER_CRON,
             )
             .await
             {
@@ -100,7 +104,16 @@ pub async fn run_tick(client: Arc<CodexClient>, db: DatabaseConnection) {
             );
         }
         Err(e) => {
-            let _ = codex_status_repo::set_preflight_unreachable(&db, &e.to_string(), now).await;
+            let _ = codex_status_repo::record_preflight(
+                &db,
+                false,
+                None,
+                None,
+                Some(&e.to_string()),
+                now,
+                TRIGGER_CRON,
+            )
+            .await;
             tracing::warn!(error = %e, "codex preflight failed; skipping sweep, preserving links");
             return;
         }

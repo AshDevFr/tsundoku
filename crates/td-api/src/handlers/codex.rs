@@ -5,13 +5,17 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
-use td_db::repos::{codex_link_repo, codex_status_repo, series_repo};
+use td_db::repos::{TRIGGER_MANUAL, codex_link_repo, codex_status_repo, series_repo};
 use td_scheduler::dispatch;
 use td_scheduler::jobs::sync_codex;
 use utoipa::ToSchema;
 
 use crate::errors::{ApiError, ApiResult};
+use crate::handlers::download::HealthCheckDto;
 use crate::state::{AppState, JobKind, JobResult};
+
+/// How many reachability-history rows to surface on the admin Codex card.
+const HISTORY_LIMIT: u64 = 20;
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +51,9 @@ pub struct CodexStatusDto {
     /// `linked_count`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fetched_count: Option<i64>,
+    /// Recent reachability transitions + manual tests, newest first. Empty when
+    /// disabled or before the first probe.
+    pub recent_checks: Vec<HealthCheckDto>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -108,18 +115,12 @@ pub async fn refresh(State(state): State<AppState>) -> ApiResult<Json<CodexRefre
     }))
 }
 
-/// Codex connection-health status for the admin UI.
-#[utoipa::path(
-    get,
-    path = "/api/v1/codex/status",
-    tag = "codex",
-    operation_id = "codex_status",
-    responses((status = 200, body = CodexStatusDto)),
-    security(("admin" = []))
-)]
-pub async fn status(State(state): State<AppState>) -> ApiResult<Json<CodexStatusDto>> {
+/// Assemble the status DTO from the persisted snapshot + reachability history.
+/// Shared by `status` (read) and `test` (read-after-probe). Returns the bare
+/// DTO; callers wrap it in `Json`.
+async fn build_status_dto(state: &AppState) -> ApiResult<CodexStatusDto> {
     if !state.codex.enabled {
-        return Ok(Json(CodexStatusDto {
+        return Ok(CodexStatusDto {
             enabled: false,
             reachable: false,
             codex_name: None,
@@ -130,12 +131,20 @@ pub async fn status(State(state): State<AppState>) -> ApiResult<Json<CodexStatus
             last_error: None,
             linked_count: None,
             fetched_count: None,
-        }));
+            recent_checks: Vec::new(),
+        });
     }
 
     let row = codex_status_repo::get(&state.db)
         .await
         .map_err(ApiError::Internal)?;
+    let recent_checks = codex_status_repo::list_recent_checks(&state.db, HISTORY_LIMIT)
+        .await
+        .map_err(ApiError::Internal)?
+        .into_iter()
+        .map(Into::into)
+        .collect();
+
     let dto = match row {
         Some(r) => CodexStatusDto {
             enabled: true,
@@ -148,6 +157,7 @@ pub async fn status(State(state): State<AppState>) -> ApiResult<Json<CodexStatus
             last_error: r.last_error,
             linked_count: r.linked_count,
             fetched_count: r.fetched_count,
+            recent_checks,
         },
         // Enabled but no sweep has run yet (e.g. fresh boot before the first
         // cron tick): report enabled + unknown rather than a misleading row.
@@ -162,9 +172,76 @@ pub async fn status(State(state): State<AppState>) -> ApiResult<Json<CodexStatus
             last_error: None,
             linked_count: None,
             fetched_count: None,
+            recent_checks,
         },
     };
-    Ok(Json(dto))
+    Ok(dto)
+}
+
+/// Codex connection-health status for the admin UI.
+#[utoipa::path(
+    get,
+    path = "/api/v1/codex/status",
+    tag = "codex",
+    operation_id = "codex_status",
+    responses((status = 200, body = CodexStatusDto)),
+    security(("admin" = []))
+)]
+pub async fn status(State(state): State<AppState>) -> ApiResult<Json<CodexStatusDto>> {
+    Ok(Json(build_status_dto(&state).await?))
+}
+
+/// Run an on-demand Codex `/info` preflight and return the refreshed status.
+/// Like the download test, a failed probe is **not** an error: it returns
+/// `200` with `reachable: false` and records a `manual` history row, distinct
+/// from `503` when the integration is disabled.
+#[utoipa::path(
+    post,
+    path = "/api/v1/codex/test",
+    tag = "codex",
+    operation_id = "codex_test",
+    responses(
+        (status = 200, body = CodexStatusDto),
+        (status = 503, description = "Codex integration is disabled")
+    ),
+    security(("admin" = []))
+)]
+pub async fn test(State(state): State<AppState>) -> ApiResult<Json<CodexStatusDto>> {
+    let client = state
+        .codex_client
+        .clone()
+        .ok_or_else(|| ApiError::Misconfigured("codex integration is disabled".into()))?;
+
+    let now = chrono::Utc::now().timestamp();
+    let outcome = match client.info().await {
+        Ok(info) => {
+            codex_status_repo::record_preflight(
+                &state.db,
+                true,
+                Some(&info.name),
+                Some(&info.version),
+                None,
+                now,
+                TRIGGER_MANUAL,
+            )
+            .await
+        }
+        Err(e) => {
+            codex_status_repo::record_preflight(
+                &state.db,
+                false,
+                None,
+                None,
+                Some(&e.to_string()),
+                now,
+                TRIGGER_MANUAL,
+            )
+            .await
+        }
+    };
+    outcome.map_err(ApiError::Internal)?;
+
+    Ok(Json(build_status_dto(&state).await?))
 }
 
 /// Hand-link a tsundoku series to a Codex series UUID. For series with no

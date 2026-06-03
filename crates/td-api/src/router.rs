@@ -65,6 +65,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         // library, which must never reach the public read tier.
         .route("/codex/refresh", post(codex::refresh))
         .route("/codex/status", get(codex::status))
+        .route("/codex/test", post(codex::test))
         .route("/series/{id}/codex-link", post(codex::link))
         .route("/series/{id}/codex-link", delete(codex::unlink))
         // Send to torrent client: admin-only. `GET /download/status` lives here

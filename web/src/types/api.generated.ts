@@ -41,6 +41,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/codex/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run an on-demand Codex `/info` preflight and return the refreshed status.
+         *     Like the download test, a failed probe is **not** an error: it returns
+         *     `200` with `reachable: false` and records a `manual` history row, distinct
+         *     from `503` when the integration is disabled.
+         */
+        post: operations["codex_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/covers/by-url": {
         parameters: {
             query?: never;
@@ -1213,6 +1235,11 @@ export interface components {
              */
             linkedCount?: number | null;
             reachable: boolean;
+            /**
+             * @description Recent reachability transitions + manual tests, newest first. Empty when
+             *     disabled or before the first probe.
+             */
+            recentChecks: components["schemas"]["HealthCheckDto"][];
         };
         /**
          * @description Body for creating a manual series. Only `canonicalTitle` is required;
@@ -2338,6 +2365,32 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CodexStatusDto"];
                 };
+            };
+        };
+    };
+    codex_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexStatusDto"];
+                };
+            };
+            /** @description Codex integration is disabled */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -69,6 +69,35 @@
         ]
       }
     },
+    "/api/v1/codex/test": {
+      "post": {
+        "tags": [
+          "codex"
+        ],
+        "summary": "Run an on-demand Codex `/info` preflight and return the refreshed status.\nLike the download test, a failed probe is **not** an error: it returns\n`200` with `reachable: false` and records a `manual` history row, distinct\nfrom `503` when the integration is disabled.",
+        "operationId": "codex_test",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodexStatusDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Codex integration is disabled"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/covers/by-url": {
       "get": {
         "tags": [
@@ -2525,7 +2554,8 @@
         "required": [
           "enabled",
           "reachable",
-          "authState"
+          "authState",
+          "recentChecks"
         ],
         "properties": {
           "authState": {
@@ -2585,6 +2615,13 @@
           },
           "reachable": {
             "type": "boolean"
+          },
+          "recentChecks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HealthCheckDto"
+            },
+            "description": "Recent reachability transitions + manual tests, newest first. Empty when\ndisabled or before the first probe."
           }
         }
       },

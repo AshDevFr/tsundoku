@@ -105,6 +105,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         covers::invalidate_cache,
         codex::refresh,
         codex::status,
+        codex::test,
         codex::link,
         codex::unlink,
         download::send,
