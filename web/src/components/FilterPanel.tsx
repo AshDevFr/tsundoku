@@ -114,10 +114,13 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     onChange({ ...search, ...patch, page: 1 });
 
   const commitQ = useDebouncedCallback((next: string) => {
-    const trimmed = next.trim();
-    const current = search.q?.trim() ?? "";
-    if (trimmed === current) return;
-    onChange({ ...search, q: trimmed || undefined, page: 1 });
+    // Don't trim here: trimming the committed value re-syncs `qDraft` back
+    // to a space-stripped string (via the effect above), so a trailing space
+    // typed between words is wiped and the next word collides. The backend
+    // trims `q` server-side, so the raw value round-trips harmlessly.
+    const current = search.q ?? "";
+    if (next === current) return;
+    onChange({ ...search, q: next || undefined, page: 1 });
   }, SEARCH_DEBOUNCE_MS);
 
   const clearAll = () =>
