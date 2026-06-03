@@ -1095,7 +1095,7 @@ export interface components {
          * @description Presence status for a series the operator owns on Codex.
          * @enum {string}
          */
-        CodexStatus: "complete" | "behind" | "present";
+        CodexStatus: "complete" | "behind" | "present" | "ignored";
         /**
          * @description Connection-health snapshot for the admin UI. When the integration is
          *     disabled, only `enabled: false` is meaningful; the rest are `None`.
@@ -3074,7 +3074,8 @@ export interface operations {
                 q?: string;
                 /**
                  * @description Filter by Codex presence status: `any` (on Codex), `missing` (not on
-                 *     Codex), `complete`, `behind`, or `present`. **Admin-only and enforced
+                 *     Codex), `complete`, `behind`, `present`, or `ignored` (completion
+                 *     tracking turned off via `ignore_completion`). **Admin-only and enforced
                  *     server-side**: for a non-admin request the param is ignored entirely,
                  *     so it can't be used to probe library contents.
                  */

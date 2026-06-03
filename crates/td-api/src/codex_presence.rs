@@ -9,6 +9,11 @@
 //! "Not on Codex" is represented structurally by the absence of `CodexInfo`
 //! (the `codex` field is `Option` with `skip_serializing_if`), not by a status
 //! variant — so there is no `Missing` here.
+//!
+//! A series whose operator set `ignore_completion` short-circuits to `Ignored`
+//! regardless of the maxima: the comparison is meaningless for series read in
+//! omnibus (source single-volume numbering is permanently ahead of owned
+//! omnibus numbering), so the "Behind" signal is muted on purpose.
 
 use serde::Serialize;
 use td_db::repos::codex_link_repo;
@@ -26,6 +31,10 @@ pub enum CodexStatus {
     /// Owned, but the relevant Codex maximum didn't parse, so we can't judge
     /// whether it's caught up.
     Present,
+    /// Owned, but the operator opted out of completion tracking
+    /// (`series.ignore_completion`). The volume/chapter comparison is
+    /// suppressed; the series reads as owned with tracking off.
+    Ignored,
 }
 
 /// How a link was established.
@@ -63,12 +72,20 @@ pub struct CodexInfo {
 /// dimension; `Behind` (actionable) wins over `Present` (can't fully judge)
 /// over `Complete`. A series with nothing discovered to compare against is
 /// `Complete` (we own it, nothing newer is known).
+///
+/// `ignore_completion` short-circuits to [`CodexStatus::Ignored`] before any
+/// comparison, so the per-row badge and the server-side `codexStatus` filter
+/// (both routed through here) can never disagree about an ignored series.
 pub fn compute_status(
+    ignore_completion: bool,
     highest_volume: Option<f64>,
     highest_chapter: Option<f64>,
     codex_max_volume: Option<f64>,
     codex_max_chapter: Option<f64>,
 ) -> CodexStatus {
+    if ignore_completion {
+        return CodexStatus::Ignored;
+    }
     let vol_tracked = highest_volume.is_some();
     let chap_tracked = highest_chapter.is_some();
 
@@ -94,11 +111,13 @@ pub fn compute_status(
 /// `<base_url>/series/{uuid}` (or a relative `/series/{uuid}` if unset).
 pub fn build_codex_info(
     link: &codex_link_repo::Model,
+    ignore_completion: bool,
     highest_volume: Option<f64>,
     highest_chapter: Option<f64>,
     base_url: Option<&str>,
 ) -> CodexInfo {
     let status = compute_status(
+        ignore_completion,
         highest_volume,
         highest_chapter,
         link.local_max_volume,
@@ -133,7 +152,7 @@ mod tests {
     fn complete_when_nothing_discovered_to_compare() {
         // No tracked dimension -> owned, nothing newer known.
         assert_eq!(
-            compute_status(None, None, Some(5.0), Some(10.0)),
+            compute_status(false, None, None, Some(5.0), Some(10.0)),
             CodexStatus::Complete
         );
     }
@@ -141,11 +160,11 @@ mod tests {
     #[test]
     fn complete_when_codex_caught_up_on_tracked_dims() {
         assert_eq!(
-            compute_status(Some(10.0), None, Some(10.0), None),
+            compute_status(false, Some(10.0), None, Some(10.0), None),
             CodexStatus::Complete
         );
         assert_eq!(
-            compute_status(Some(10.0), Some(100.0), Some(12.0), Some(100.0)),
+            compute_status(false, Some(10.0), Some(100.0), Some(12.0), Some(100.0)),
             CodexStatus::Complete
         );
     }
@@ -154,12 +173,12 @@ mod tests {
     fn behind_when_any_tracked_dim_is_below() {
         // Volume behind.
         assert_eq!(
-            compute_status(Some(12.0), None, Some(8.0), None),
+            compute_status(false, Some(12.0), None, Some(8.0), None),
             CodexStatus::Behind
         );
         // Chapter behind even though volume is caught up.
         assert_eq!(
-            compute_status(Some(10.0), Some(200.0), Some(10.0), Some(150.0)),
+            compute_status(false, Some(10.0), Some(200.0), Some(10.0), Some(150.0)),
             CodexStatus::Behind
         );
     }
@@ -168,7 +187,7 @@ mod tests {
     fn present_when_tracked_dim_is_uncomparable() {
         // We discovered volume 10 but Codex parsed no volume max.
         assert_eq!(
-            compute_status(Some(10.0), None, None, Some(300.0)),
+            compute_status(false, Some(10.0), None, None, Some(300.0)),
             CodexStatus::Present
         );
     }
@@ -178,7 +197,7 @@ mod tests {
         // Volume is uncomparable (Present-ish) but chapter is behind ->
         // Behind takes precedence as the actionable signal.
         assert_eq!(
-            compute_status(Some(10.0), Some(200.0), None, Some(150.0)),
+            compute_status(false, Some(10.0), Some(200.0), None, Some(150.0)),
             CodexStatus::Behind
         );
     }
@@ -188,8 +207,29 @@ mod tests {
         // Surfaced as volumes, owned only as chapters on Codex: the volume
         // dimension is uncomparable, but there's no behind dim -> Present.
         assert_eq!(
-            compute_status(Some(10.0), None, None, None),
+            compute_status(false, Some(10.0), None, None, None),
             CodexStatus::Present
+        );
+    }
+
+    #[test]
+    fn ignore_completion_short_circuits_to_ignored() {
+        // The flag forces Ignored regardless of the maxima, including the
+        // cases that would otherwise read Behind, Present, or Complete.
+        assert_eq!(
+            compute_status(true, Some(12.0), None, Some(8.0), None),
+            CodexStatus::Ignored,
+            "would be Behind without the flag"
+        );
+        assert_eq!(
+            compute_status(true, Some(10.0), None, None, Some(300.0)),
+            CodexStatus::Ignored,
+            "would be Present without the flag"
+        );
+        assert_eq!(
+            compute_status(true, None, None, Some(5.0), Some(10.0)),
+            CodexStatus::Ignored,
+            "would be Complete without the flag"
         );
     }
 }

@@ -1438,7 +1438,7 @@
           {
             "name": "codexStatus",
             "in": "query",
-            "description": "Filter by Codex presence status: `any` (on Codex), `missing` (not on\nCodex), `complete`, `behind`, or `present`. **Admin-only and enforced\nserver-side**: for a non-admin request the param is ignored entirely,\nso it can't be used to probe library contents.",
+            "description": "Filter by Codex presence status: `any` (on Codex), `missing` (not on\nCodex), `complete`, `behind`, `present`, or `ignored` (completion\ntracking turned off via `ignore_completion`). **Admin-only and enforced\nserver-side**: for a non-admin request the param is ignored entirely,\nso it can't be used to probe library contents.",
             "required": false,
             "schema": {
               "type": "string"
@@ -2349,7 +2349,8 @@
         "enum": [
           "complete",
           "behind",
-          "present"
+          "present",
+          "ignored"
         ]
       },
       "CodexStatusDto": {

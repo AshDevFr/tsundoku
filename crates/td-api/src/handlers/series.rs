@@ -193,7 +193,8 @@ pub struct SeriesListQuery {
     /// prefix matches. Whitespace-only is treated as absent.
     pub q: Option<String>,
     /// Filter by Codex presence status: `any` (on Codex), `missing` (not on
-    /// Codex), `complete`, `behind`, or `present`. **Admin-only and enforced
+    /// Codex), `complete`, `behind`, `present`, or `ignored` (completion
+    /// tracking turned off via `ignore_completion`). **Admin-only and enforced
     /// server-side**: for a non-admin request the param is ignored entirely,
     /// so it can't be used to probe library contents.
     pub codex_status: Option<String>,
@@ -360,7 +361,13 @@ async fn decorate_list_items(
             let tags = tags_map.get(&m.id).cloned().unwrap_or_default();
             let release_count = counts_map.get(&m.id).copied().unwrap_or(0);
             let codex = codex_map.get(&m.id).map(|l| {
-                build_codex_info(l, m.highest_volume, m.highest_chapter, base_url.as_deref())
+                build_codex_info(
+                    l,
+                    m.ignore_completion,
+                    m.highest_volume,
+                    m.highest_chapter,
+                    base_url.as_deref(),
+                )
             });
             model_to_list_item(m, genres, tags, release_count, codex)
         })
@@ -395,18 +402,22 @@ async fn codex_status_filter(
     match status {
         "missing" => Ok(Some(CodexIdFilter::Exclude(linked_ids))),
         "any" => Ok(Some(CodexIdFilter::Include(linked_ids))),
-        "complete" | "behind" | "present" => {
+        "complete" | "behind" | "present" | "ignored" => {
             let want = match status {
                 "complete" => CodexStatus::Complete,
                 "behind" => CodexStatus::Behind,
-                _ => CodexStatus::Present,
+                "present" => CodexStatus::Present,
+                _ => CodexStatus::Ignored,
             };
             let highs = series_highs_by_ids(state, &linked_ids).await?;
             let matching = links
                 .iter()
                 .filter(|l| {
-                    let (hv, hc) = highs.get(&l.series_id).copied().unwrap_or((None, None));
-                    compute_status(hv, hc, l.local_max_volume, l.local_max_chapter) == want
+                    let (ign, hv, hc) = highs
+                        .get(&l.series_id)
+                        .copied()
+                        .unwrap_or((false, None, None));
+                    compute_status(ign, hv, hc, l.local_max_volume, l.local_max_chapter) == want
                 })
                 .map(|l| l.series_id)
                 .collect();
@@ -438,28 +449,31 @@ fn apply_codex_id_filter(
     }
 }
 
-/// Map of `series_id -> (highest_volume, highest_chapter)` for the given ids.
-/// Used by the codex status filter to compute each linked series' status.
+/// Map of `series_id -> (ignore_completion, highest_volume, highest_chapter)`
+/// for the given ids. Used by the codex status filter to compute each linked
+/// series' status; the ignore flag is threaded through [`compute_status`] so
+/// the filter and the per-row badge agree on what counts as `Ignored`.
 async fn series_highs_by_ids(
     state: &AppState,
     ids: &[i32],
-) -> ApiResult<HashMap<i32, (Option<f64>, Option<f64>)>> {
+) -> ApiResult<HashMap<i32, (bool, Option<f64>, Option<f64>)>> {
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
     let rows = series::Entity::find()
         .select_only()
         .column(series::Column::Id)
+        .column(series::Column::IgnoreCompletion)
         .column(series::Column::HighestVolume)
         .column(series::Column::HighestChapter)
         .filter(series::Column::Id.is_in(ids.iter().copied()))
-        .into_tuple::<(i32, Option<f64>, Option<f64>)>()
+        .into_tuple::<(i32, bool, Option<f64>, Option<f64>)>()
         .all(&state.db)
         .await
         .map_err(anyhow_err)?;
     Ok(rows
         .into_iter()
-        .map(|(id, hv, hc)| (id, (hv, hc)))
+        .map(|(id, ign, hv, hc)| (id, (ign, hv, hc)))
         .collect())
 }
 
@@ -793,6 +807,7 @@ pub async fn get(
             .map(|l| {
                 build_codex_info(
                     &l,
+                    row.ignore_completion,
                     row.highest_volume,
                     row.highest_chapter,
                     state.codex.normalized_base_url().as_deref(),
@@ -1017,6 +1032,7 @@ pub async fn update(
         .map(|l| {
             build_codex_info(
                 &l,
+                row.ignore_completion,
                 row.highest_volume,
                 row.highest_chapter,
                 state.codex.normalized_base_url().as_deref(),
@@ -1112,6 +1128,7 @@ pub async fn refresh_metadata(
         .map(|l| {
             build_codex_info(
                 &l,
+                row.ignore_completion,
                 row.highest_volume,
                 row.highest_chapter,
                 state.codex.normalized_base_url().as_deref(),

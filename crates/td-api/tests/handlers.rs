@@ -4854,6 +4854,73 @@ async fn codex_status_filter_applies_for_admin() {
 }
 
 #[tokio::test]
+async fn codex_status_ignored_short_circuits_and_filters() {
+    let db = fresh_db().await;
+    // Would be Behind (owns vol 5, vol 12 surfaced) but the operator turned
+    // completion tracking off -> the status is Ignored, not Behind.
+    let ignored = seed_series_with_highs(&db, "Omnibus", Some(12.0), None).await;
+    link_auto(&db, ignored, "u-ignored", Some(5.0)).await;
+    series::Entity::update(series::ActiveModel {
+        id: Set(ignored),
+        ignore_completion: Set(true),
+        ..Default::default()
+    })
+    .exec(&db)
+    .await
+    .unwrap();
+    // A genuinely behind series with the flag off, same maxima.
+    let behind = seed_series_with_highs(&db, "Behind", Some(12.0), None).await;
+    link_auto(&db, behind, "u-behind", Some(5.0)).await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let fetch = |uri: &str| {
+        let app = app.clone();
+        let uri = uri.to_string();
+        async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header(header::AUTHORIZATION, "Bearer write-token")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            body_json(resp).await
+        }
+    };
+
+    // The ignored series still reads as owned, with status "ignored".
+    let body = fetch(&format!("/api/v1/series/{ignored}")).await;
+    assert_eq!(body["codex"]["status"], "ignored");
+    assert_eq!(body["owned"], true);
+
+    // codexStatus=ignored returns only the flagged series.
+    let body = fetch("/api/v1/series?codexStatus=ignored").await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["id"], ignored);
+
+    // codexStatus=behind excludes the ignored series despite identical maxima.
+    let body = fetch("/api/v1/series?codexStatus=behind").await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["id"], behind);
+
+    // Both are on Codex.
+    let body = fetch("/api/v1/series?codexStatus=any").await;
+    assert_eq!(body["total"], 2);
+}
+
+#[tokio::test]
 async fn codex_synced_at_present_for_admin_when_enabled() {
     use td_db::repos::codex_status_repo;
     let db = fresh_db().await;
