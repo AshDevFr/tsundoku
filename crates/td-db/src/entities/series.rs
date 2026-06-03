@@ -32,6 +32,13 @@ pub struct Model {
     /// counts; not used by the resolver.
     pub rating: Option<f64>,
     pub owned: i32,
+    /// Operator opt-out of Codex completion tracking. When set, the series'
+    /// Codex status is forced to `Ignored` regardless of discovered vs owned
+    /// maxima — used for series read in omnibus, where source (single-volume)
+    /// numbering is permanently ahead of owned (omnibus) numbering and the
+    /// "Behind" signal is structurally noise. Never written by metadata
+    /// refresh (the refresh UPDATE leaves operator-owned columns `NotSet`).
+    pub ignore_completion: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

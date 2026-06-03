@@ -159,6 +159,9 @@ pub async fn upsert_series_from_metadata(
                     highest_volume: NotSet,
                     highest_chapter: NotSet,
                     owned: NotSet,
+                    // Operator-owned flag: leave it alone so a provider
+                    // re-fetch never resets a manually-set ignore.
+                    ignore_completion: NotSet,
                 };
                 series::Entity::update(model).exec(&txn).await?;
             }
@@ -186,6 +189,7 @@ pub async fn upsert_series_from_metadata(
                 highest_volume: Set(None),
                 highest_chapter: Set(None),
                 owned: Set(0),
+                ignore_completion: Set(false),
             };
             let inserted = series::Entity::insert(model).exec(&txn).await?;
             (inserted.last_insert_id, false, false)
@@ -828,6 +832,55 @@ mod tests {
             .unwrap();
         assert_eq!(row.canonical_title, "Provider Title");
         assert_eq!(row.metadata_source, "api");
+    }
+
+    #[tokio::test]
+    async fn metadata_refresh_preserves_operator_ignore_completion_flag() {
+        let db = fresh_db().await;
+        let now = Utc::now();
+        let m = sample_metadata();
+        let first = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now, false)
+            .await
+            .unwrap();
+
+        // Operator sets the ignore-completion flag directly on the row.
+        series::Entity::update(series::ActiveModel {
+            id: Set(first.series_id),
+            ignore_completion: Set(true),
+            ..Default::default()
+        })
+        .exec(&db)
+        .await
+        .unwrap();
+
+        // A later provider refresh with changed content forces the UPDATE
+        // branch (new hash, no manual lock). The operator flag must survive
+        // because the refresh UPDATE leaves `ignore_completion` `NotSet`.
+        let refreshed = SeriesMetadata {
+            canonical_title: "Refreshed Title".into(),
+            content_hash: "refreshed-hash".into(),
+            ..m.clone()
+        };
+        let second =
+            upsert_series_from_metadata(&db, "mangabaka", &refreshed, 1_700_000_100, now, false)
+                .await
+                .unwrap();
+        assert_eq!(second.series_id, first.series_id);
+        assert!(!second.unchanged, "changed hash must hit the UPDATE branch");
+
+        let row = series::Entity::find_by_id(first.series_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row.canonical_title, "Refreshed Title",
+            "provider columns were refreshed"
+        );
+        assert!(
+            row.ignore_completion,
+            "operator ignore flag preserved across refresh"
+        );
     }
 
     #[tokio::test]
