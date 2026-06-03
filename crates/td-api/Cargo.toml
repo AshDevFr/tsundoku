@@ -49,6 +49,7 @@ mime_guess = { workspace = true, optional = true }
 
 [dev-dependencies]
 migration = { path = "../../migration" }
+td-download = { path = "../td-download" }
 td-http = { path = "../td-http" }
 tower = { workspace = true, features = ["util"] }
 http-body-util.workspace = true

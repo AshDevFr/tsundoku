@@ -14,6 +14,7 @@ use crate::handlers::codex::{
     CodexLinkRequest, CodexLinkResponse, CodexRefreshResponse, CodexStatusDto,
 };
 use crate::handlers::covers::InvalidateCoverCacheResponse;
+use crate::handlers::download::{DownloadStatusDto, SendToClientRequest};
 use crate::handlers::metrics::{
     ErrorKindBucket, ExternalIdMapCount, FetchLatencyDto, IdMapMetrics, MangaupdatesRedirectStats,
     ProviderMetricsBucket, ProviderMetricsDetail, ProviderMetricsSummary,
@@ -43,8 +44,8 @@ use crate::handlers::sources::{
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
 use crate::handlers::{
-    codex, covers, events, health, info, metrics, providers, releases, series, sources, stats,
-    tagging,
+    codex, covers, download, events, health, info, metrics, providers, releases, series, sources,
+    stats, tagging,
 };
 use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult};
 
@@ -104,6 +105,8 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         codex::status,
         codex::link,
         codex::unlink,
+        download::send,
+        download::status,
     ),
     components(schemas(
         ApiErrorBody,
@@ -186,6 +189,8 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         CodexInfo,
         CodexStatus,
         CodexLinkKind,
+        SendToClientRequest,
+        DownloadStatusDto,
     )),
     tags(
         (name = "system", description = "Health and aggregate counters"),
@@ -197,6 +202,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         (name = "metrics", description = "Per-source / per-provider historical run metrics"),
         (name = "covers", description = "Cover-image proxy and on-disk cache control"),
         (name = "codex", description = "Codex presence integration (admin-only)"),
+        (name = "download", description = "Send to torrent client (admin-only)"),
     ),
     modifiers(&BearerSecurity)
 )]

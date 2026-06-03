@@ -30,6 +30,9 @@ pub enum ApiError {
     #[error("service misconfigured: {0}")]
     Misconfigured(String),
 
+    #[error("upstream error: {0}")]
+    BadGateway(String),
+
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -43,6 +46,7 @@ impl ApiError {
             ApiError::Forbidden => StatusCode::FORBIDDEN,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::Misconfigured(_) => StatusCode::SERVICE_UNAVAILABLE,
+            ApiError::BadGateway(_) => StatusCode::BAD_GATEWAY,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -65,6 +69,7 @@ impl IntoResponse for ApiError {
             ApiError::Forbidden => ("forbidden", "credentials lack the required scope".into()),
             ApiError::Conflict(msg) => ("conflict", msg.clone()),
             ApiError::Misconfigured(msg) => ("misconfigured", msg.clone()),
+            ApiError::BadGateway(msg) => ("bad_gateway", msg.clone()),
             ApiError::Internal(e) => {
                 tracing::error!(error = ?e, "handler error");
                 ("internal", "internal server error".into())

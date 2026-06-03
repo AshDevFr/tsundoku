@@ -173,6 +173,32 @@
         }
       }
     },
+    "/api/v1/download/status": {
+      "get": {
+        "tags": [
+          "download"
+        ],
+        "summary": "Enablement probe for the admin UI; gates rendering of the send button.",
+        "operationId": "download_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadStatusDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/events/jobs": {
       "get": {
         "tags": [
@@ -1290,6 +1316,65 @@
           },
           "404": {
             "description": "Release not found"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/releases/{id}/send-to-client": {
+      "post": {
+        "tags": [
+          "download"
+        ],
+        "summary": "Push a discovered release into the configured torrent client. Returns the\nupdated [`ReleaseDto`] (with the `sentToClientAt` badge fields set) so the\nfrontend can update the card from the response without a refetch.",
+        "operationId": "send_to_client",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "release id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendToClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Release has neither a magnet nor a torrent URL"
+          },
+          "404": {
+            "description": "No release with that id"
+          },
+          "502": {
+            "description": "The torrent client rejected the add or was unreachable"
+          },
+          "503": {
+            "description": "Download integration is disabled"
           }
         },
         "security": [
@@ -2511,6 +2596,24 @@
           }
         }
       },
+      "DownloadStatusDto": {
+        "type": "object",
+        "description": "Enablement snapshot for the admin UI. When disabled, `kind` is omitted.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ErrorKindBucket": {
         "type": "object",
         "required": [
@@ -3714,6 +3817,21 @@
           "resolutionStatus": {
             "type": "string"
           },
+          "sentToClientAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch seconds the release was pushed to the torrent client, or omitted\nif it was never sent. Drives the \"Sent\" badge on the review/kept cards."
+          },
+          "sentToClientLabel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Label the release was sent to the torrent client with. Omitted when\nabsent (never sent, or sent without a label)."
+          },
           "seriesId": {
             "type": [
               "integer",
@@ -4056,6 +4174,33 @@
           "unresolvedCount": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "SendToClientRequest": {
+        "type": "object",
+        "description": "Per-send overrides. Every field is optional; an empty body (`{}` or none)\nsends with the configured defaults, which is the one-click path.",
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Label to apply for this send. Falls back to `download.default_label`."
+          },
+          "preferMagnet": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Send a magnet URL instead of uploading the `.torrent` file for this\nsend. Falls back to the inverse of `download.prefer_torrent_file`."
+          },
+          "start": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether to start the torrent immediately. Falls back to\n`download.default_start`."
           }
         }
       },
@@ -5010,6 +5155,10 @@
     {
       "name": "codex",
       "description": "Codex presence integration (admin-only)"
+    },
+    {
+      "name": "download",
+      "description": "Send to torrent client (admin-only)"
     }
   ]
 }

@@ -17,8 +17,8 @@ use crate::auth;
 use crate::docs::ApiDoc;
 use crate::embed::serve_static;
 use crate::handlers::{
-    codex, covers, events, health, info, metrics, providers, releases, series, sources, stats,
-    tagging,
+    codex, covers, download, events, health, info, metrics, providers, releases, series, sources,
+    stats, tagging,
 };
 use crate::state::AppState;
 
@@ -67,6 +67,11 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/codex/status", get(codex::status))
         .route("/series/{id}/codex-link", post(codex::link))
         .route("/series/{id}/codex-link", delete(codex::unlink))
+        // Send to torrent client: admin-only. `GET /download/status` lives here
+        // (not in the reads group) so the enablement probe stays behind admin
+        // auth, like `GET /codex/status`.
+        .route("/releases/{id}/send-to-client", post(download::send))
+        .route("/download/status", get(download::status))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             auth::require_admin,

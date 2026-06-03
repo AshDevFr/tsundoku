@@ -6,6 +6,7 @@
 
 pub mod codex;
 pub mod covers;
+pub mod download;
 pub mod events;
 pub mod health;
 pub mod info;

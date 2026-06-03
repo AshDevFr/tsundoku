@@ -307,6 +307,65 @@ pub fn unreachable_codex_client() -> Arc<td_codex::CodexClient> {
     )
 }
 
+/// Router variant for the send-to-client tests. `download` sets the
+/// `[download]` config snapshot (the `enabled`/`kind` the status endpoint
+/// reads and the per-send defaults the send handler applies); `download_client`
+/// is the optional client the send endpoint needs (`None` ⇒ 503).
+pub fn build_app_with_download(
+    db: DatabaseConnection,
+    auth: AuthConfig,
+    download: td_config::DownloadConfig,
+    download_client: Option<Arc<dyn td_download::DownloadClient>>,
+) -> Router {
+    let cfg = AppConfig {
+        auth: auth.clone(),
+        api: td_config::ApiConfig { docs: false },
+        ..AppConfig::default()
+    };
+    let (job_events, _) = tokio::sync::broadcast::channel(td_api::JOB_EVENT_BUFFER);
+    let metadata = metadata_registry_with(StubProvider {
+        id: "stub",
+        ..Default::default()
+    });
+    let sources = source_registry_with(vec![]);
+    let state = td_api::AppState {
+        db,
+        sources: Arc::new(sources),
+        metadata: Arc::new(metadata),
+        ingestion: IngestionConfig::default(),
+        auth: Arc::new(auth),
+        locks: Arc::new(JobLocks::default()),
+        sources_config: Arc::new(Vec::new()),
+        providers_config: Arc::new(ProvidersConfig::default()),
+        metadata_config: Arc::new(td_config::MetadataConfig::default()),
+        query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
+        mangaupdates_redirector: None,
+        job_events,
+        cover_cache_dir: None,
+        codex: Arc::new(td_config::CodexConfig::default()),
+        codex_client: None,
+        download: Arc::new(download),
+        download_client,
+    };
+    td_api::router(state, &cfg)
+}
+
+/// A `RuTorrentClient` pointed at an unreachable address. Gives the send
+/// endpoint a `Some(client)` so it gets past the 503 guard; the guard-path
+/// tests (404 / 400) return before any outbound request is made.
+pub fn unreachable_download_client() -> Arc<dyn td_download::DownloadClient> {
+    Arc::new(
+        td_download::RuTorrentClient::new(
+            "http://127.0.0.1:9",
+            None,
+            None,
+            std::time::Duration::from_millis(50),
+            td_http::HttpLimiter::no_limit(),
+        )
+        .unwrap(),
+    )
+}
+
 pub fn sample_release(id: &str, source_name: &str, title: &str) -> DiscoveredRelease {
     DiscoveredRelease {
         source_kind: "test".into(),

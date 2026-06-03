@@ -63,6 +63,14 @@ pub struct ReleaseDto {
     /// cited source. Omitted when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub information_url: Option<String>,
+    /// Epoch seconds the release was pushed to the torrent client, or omitted
+    /// if it was never sent. Drives the "Sent" badge on the review/kept cards.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sent_to_client_at: Option<i64>,
+    /// Label the release was sent to the torrent client with. Omitted when
+    /// absent (never sent, or sent without a label).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sent_to_client_label: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -1431,7 +1439,7 @@ async fn resolve_link_target(
     }
 }
 
-fn model_to_release(m: releases::Model, formats: Vec<String>) -> ReleaseDto {
+pub(crate) fn model_to_release(m: releases::Model, formats: Vec<String>) -> ReleaseDto {
     let files = m
         .files_json
         .as_deref()
@@ -1465,6 +1473,8 @@ fn model_to_release(m: releases::Model, formats: Vec<String>) -> ReleaseDto {
         extracted_links,
         comment_suggested_links,
         information_url: m.information_url,
+        sent_to_client_at: m.sent_to_client_at,
+        sent_to_client_label: m.sent_to_client_label,
     }
 }
 

@@ -96,6 +96,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/download/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Enablement probe for the admin UI; gates rendering of the send button. */
+        get: operations["download_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events/jobs": {
         parameters: {
             query?: never;
@@ -616,6 +633,27 @@ export interface paths {
          *     refresh, a config change, or a manual edit.
          */
         post: operations["retry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/releases/{id}/send-to-client": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push a discovered release into the configured torrent client. Returns the
+         *     updated [`ReleaseDto`] (with the `sentToClientAt` badge fields set) so the
+         *     frontend can update the card from the response without a refetch.
+         */
+        post: operations["send_to_client"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1164,6 +1202,11 @@ export interface components {
             /** Format: int32 */
             year?: number | null;
         };
+        /** @description Enablement snapshot for the admin UI. When disabled, `kind` is omitted. */
+        DownloadStatusDto: {
+            enabled: boolean;
+            kind?: string | null;
+        };
         ErrorKindBucket: {
             /** Format: int64 */
             count: number;
@@ -1665,6 +1708,17 @@ export interface components {
             resolutionConfidence?: number | null;
             resolutionPath?: string | null;
             resolutionStatus: string;
+            /**
+             * Format: int64
+             * @description Epoch seconds the release was pushed to the torrent client, or omitted
+             *     if it was never sent. Drives the "Sent" badge on the review/kept cards.
+             */
+            sentToClientAt?: number | null;
+            /**
+             * @description Label the release was sent to the torrent client with. Omitted when
+             *     absent (never sent, or sent without a label).
+             */
+            sentToClientLabel?: string | null;
             /** Format: int32 */
             seriesId?: number | null;
             /** Format: int64 */
@@ -1810,6 +1864,24 @@ export interface components {
             reviewPendingCount: number;
             /** Format: int64 */
             unresolvedCount: number;
+        };
+        /**
+         * @description Per-send overrides. Every field is optional; an empty body (`{}` or none)
+         *     sends with the configured defaults, which is the one-click path.
+         */
+        SendToClientRequest: {
+            /** @description Label to apply for this send. Falls back to `download.default_label`. */
+            label?: string | null;
+            /**
+             * @description Send a magnet URL instead of uploading the `.torrent` file for this
+             *     send. Falls back to the inverse of `download.prefer_torrent_file`.
+             */
+            preferMagnet?: boolean | null;
+            /**
+             * @description Whether to start the torrent immediately. Falls back to
+             *     `download.default_start`.
+             */
+            start?: boolean | null;
         };
         SeriesDetail: {
             alternateTitles: string[];
@@ -2311,6 +2383,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    download_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadStatusDto"];
+                };
             };
         };
     };
@@ -3046,6 +3137,60 @@ export interface operations {
             };
             /** @description Release not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    send_to_client: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description release id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendToClientRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseDto"];
+                };
+            };
+            /** @description Release has neither a magnet nor a torrent URL */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No release with that id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The torrent client rejected the add or was unreachable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Download integration is disabled */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -5055,3 +5055,193 @@ async fn codex_synced_at_present_for_admin_when_enabled() {
     let body = body_json(resp).await;
     assert!(body.get("codexSyncedAt").is_none());
 }
+
+// --- send to torrent client ------------------------------------------------
+
+fn enabled_download_config() -> td_config::DownloadConfig {
+    td_config::DownloadConfig {
+        enabled: true,
+        base_url: Some("http://127.0.0.1:9/rutorrent".into()),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn download_status_reports_disabled_by_default() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/download/status")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["enabled"], false);
+    assert!(body.get("kind").is_none());
+}
+
+#[tokio::test]
+async fn download_status_reports_enabled_with_kind() {
+    let db = fresh_db().await;
+    let app = build_app_with_download(db, open_auth(), enabled_download_config(), None);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/download/status")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["kind"], "rutorrent");
+}
+
+#[tokio::test]
+async fn download_status_requires_admin() {
+    let db = fresh_db().await;
+    let app = build_app_with_download(db, open_auth(), enabled_download_config(), None);
+    // No bearer: the enablement probe must not be reachable by the public read
+    // tier.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/download/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn send_to_client_503s_when_disabled() {
+    let db = fresh_db().await;
+    let r = sample_release("1", "feed", "Chainsaw Man v01");
+    let id = releases_repo::persist_discovered(&db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+    // Default config: download disabled, no client.
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/releases/{id}/send-to-client"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body_json(resp).await;
+    assert_eq!(body["error"], "misconfigured");
+}
+
+#[tokio::test]
+async fn send_to_client_404s_for_unknown_release() {
+    let db = fresh_db().await;
+    let app = build_app_with_download(
+        db,
+        open_auth(),
+        enabled_download_config(),
+        Some(unreachable_download_client()),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/releases/does-not-exist/send-to-client")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn send_to_client_400s_when_release_has_no_source() {
+    let db = fresh_db().await;
+    // sample_release has neither magnet nor torrent_url.
+    let r = sample_release("1", "feed", "Chainsaw Man v01");
+    let id = releases_repo::persist_discovered(&db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+    let app = build_app_with_download(
+        db,
+        open_auth(),
+        enabled_download_config(),
+        Some(unreachable_download_client()),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/releases/{id}/send-to-client"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp).await;
+    assert_eq!(body["error"], "bad_request");
+}
+
+#[tokio::test]
+async fn send_to_client_requires_admin() {
+    let db = fresh_db().await;
+    let app = build_app_with_download(
+        db,
+        open_auth(),
+        enabled_download_config(),
+        Some(unreachable_download_client()),
+    );
+    // No bearer: writes are admin-only.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/releases/whatever/send-to-client")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

@@ -70,7 +70,15 @@ pub struct AddRequest {
 /// A torrent client that can accept a new download.
 #[async_trait::async_trait]
 pub trait DownloadClient: Send + Sync {
+    /// Add a torrent (file bytes or magnet) to the client.
     async fn add(&self, req: AddRequest) -> Result<(), DownloadError>;
+
+    /// Fetch the raw `.torrent` bytes from `url`. Routed through the client's
+    /// rate limiter so a fetch from the discovery source (e.g. Nyaa) stays
+    /// polite — this is the counterpart to the deliberately-unlimited upload in
+    /// [`DownloadClient::add`]. The send handler calls this for the
+    /// torrent-file path before handing the bytes back to `add`.
+    async fn fetch_torrent(&self, url: &str) -> Result<Vec<u8>, DownloadError>;
 }
 
 /// One multipart field in the inspectable intermediate representation the pure
@@ -219,6 +227,16 @@ impl DownloadClient for RuTorrentClient {
         let resp = builder.send().await?;
         match resp.status() {
             StatusCode::OK => parse_add_response(resp.bytes().await?.as_ref()),
+            other => Err(DownloadError::Unexpected(other.as_u16())),
+        }
+    }
+
+    async fn fetch_torrent(&self, url: &str) -> Result<Vec<u8>, DownloadError> {
+        // Goes through the LimitedClient (not inner()), so the per-host limiter
+        // throttles the fetch from the discovery source.
+        let resp = self.http.get(url).send().await?;
+        match resp.status() {
+            StatusCode::OK => Ok(resp.bytes().await?.to_vec()),
             other => Err(DownloadError::Unexpected(other.as_u16())),
         }
     }
