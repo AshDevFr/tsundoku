@@ -7,6 +7,7 @@ import type { components } from "@/types/api.generated";
 export type AppInfo = components["schemas"]["AppInfo"];
 export type CodexStatusDto = components["schemas"]["CodexStatusDto"];
 export type CodexInfo = components["schemas"]["CodexInfo"];
+export type DownloadStatusDto = components["schemas"]["DownloadStatusDto"];
 export type SeriesListItem = components["schemas"]["SeriesListItem"];
 export type SeriesListPage = components["schemas"]["SeriesListPage"];
 export type SeriesDetail = components["schemas"]["SeriesDetail"];
@@ -157,6 +158,23 @@ export function useCodexStatus() {
     queryFn: async () => {
       const { data, error } = await api.GET("/api/v1/codex/status");
       if (error) throw new Error("failed to load codex status");
+      return data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+/// Enablement probe for the send-to-torrent-client action. Admin-only on the
+/// server (it sits in the writes group), so it's disabled here unless a token
+/// is present. Gates rendering of the send button.
+export function useDownloadStatus() {
+  const hasAdmin = useAdminAuth((s) => Boolean(s.token));
+  return useQuery({
+    queryKey: ["download-status", { admin: hasAdmin }],
+    enabled: hasAdmin,
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/download/status");
+      if (error) throw new Error("failed to load download status");
       return data;
     },
     staleTime: 30_000,

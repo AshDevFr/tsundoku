@@ -25,6 +25,7 @@ import {
   ReleaseDescription,
   ReleaseFiles,
 } from "@/components/ReleaseDetails";
+import { SendToClientButton, SentBadge } from "@/components/SendToClientButton";
 
 /// Browse view for releases the operator marked `standalone`: worthwhile
 /// one-shots (guidebooks, artbooks) that are deliberately not tracked as a
@@ -147,6 +148,7 @@ function KeptCard({ release }: { release: ReleaseDto }) {
             <Text size="xs" c="dimmed" title={formatAbsolute(release.postedAt)}>
               posted {formatRelative(release.postedAt)}
             </Text>
+            <SentBadge release={release} />
           </Group>
           <Group gap="sm" wrap="wrap">
             {release.magnet && (
@@ -180,18 +182,21 @@ function KeptCard({ release }: { release: ReleaseDto }) {
           <ReleaseDescription body={release.descriptionHtml} />
           <ReleaseFiles files={release.files} />
         </Stack>
-        <Tooltip label="Send this release back through the resolver (e.g. after a provider refresh).">
-          <Button
-            variant="subtle"
-            color="gray"
-            size="xs"
-            onClick={handleReResolve}
-            loading={retry.isPending}
-            data-testid={`re-resolve-${release.id}`}
-          >
-            Re-resolve
-          </Button>
-        </Tooltip>
+        <Group gap="xs" wrap="nowrap" align="flex-start">
+          <SendToClientButton release={release} />
+          <Tooltip label="Send this release back through the resolver (e.g. after a provider refresh).">
+            <Button
+              variant="subtle"
+              color="gray"
+              size="xs"
+              onClick={handleReResolve}
+              loading={retry.isPending}
+              data-testid={`re-resolve-${release.id}`}
+            >
+              Re-resolve
+            </Button>
+          </Tooltip>
+        </Group>
       </Group>
     </Paper>
   );

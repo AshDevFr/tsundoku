@@ -1759,4 +1759,33 @@ export const handlers = [
     if (denied) return denied;
     return HttpResponse.json({ triggered: true, skipped: false });
   }),
+
+  // Send to torrent client (admin-only).
+  http.get("/api/v1/download/status", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({ enabled: true, kind: "rutorrent" });
+  }),
+  http.post("/api/v1/releases/:id/send-to-client", ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const id = String(params.id);
+    // Reflect the send into whichever list holds the row (preserving each
+    // list's element shape) so a refetch shows the "Sent" badge.
+    const sent = { sentToClientAt: NOW, sentToClientLabel: "manga" };
+    const qi = queue.findIndex((r) => r.id === id);
+    if (qi >= 0) {
+      queue[qi] = { ...queue[qi], ...sent };
+      return HttpResponse.json(queue[qi]);
+    }
+    const ki = kept.findIndex((r) => r.id === id);
+    if (ki >= 0) {
+      kept[ki] = { ...kept[ki], ...sent };
+      return HttpResponse.json(kept[ki]);
+    }
+    return new HttpResponse(
+      JSON.stringify({ error: "not_found", message: `release ${id}` }),
+      { status: 404, headers: { "content-type": "application/json" } },
+    );
+  }),
 ];

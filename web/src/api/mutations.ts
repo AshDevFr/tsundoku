@@ -7,6 +7,7 @@ type CreateSeriesRequest = components["schemas"]["CreateSeriesRequest"];
 type UpdateSeriesRequest = components["schemas"]["UpdateSeriesRequest"];
 type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
 type BulkLinkRequest = components["schemas"]["BulkLinkRequest"];
+type SendToClientRequest = components["schemas"]["SendToClientRequest"];
 
 // Extract a useful error message from an openapi-fetch error payload, falling
 // back to a sentence the user can act on. The backend serializes errors as
@@ -67,6 +68,33 @@ export function useLinkRelease() {
       });
       if (error)
         throw new Error(describeError(error, "failed to link release"));
+      return data;
+    },
+    onSuccess: () => invalidateReleaseQueries(qc),
+  });
+}
+
+/// Push a discovered release into the configured torrent client. `body` is the
+/// optional per-send override (`{}` ⇒ config defaults, the one-click path).
+/// Invalidates the release views so the "Sent" badge appears without a refetch.
+export function useSendToClient() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: {
+      releaseId: string;
+      body: SendToClientRequest;
+    }) => {
+      const { data, error } = await api.POST(
+        "/api/v1/releases/{id}/send-to-client",
+        {
+          params: { path: { id: args.releaseId } },
+          body: args.body,
+        },
+      );
+      if (error)
+        throw new Error(
+          describeError(error, "failed to send to torrent client"),
+        );
       return data;
     },
     onSuccess: () => invalidateReleaseQueries(qc),

@@ -64,6 +64,7 @@ import {
   MetadataCounts,
   ProviderSearchPanel,
 } from "@/components/ReleaseLinking";
+import { SendToClientButton, SentBadge } from "@/components/SendToClientButton";
 import { REVIEW_PAGE_SIZE_OPTIONS, useUiPrefs } from "@/stores/uiPrefs";
 import type { components } from "@/types/api.generated";
 
@@ -1294,7 +1295,9 @@ function ReviewCard({
                   </Button>
                 </Tooltip>
               </Group>
-              <Group gap="xs">
+              <Group gap="xs" align="center">
+                <SentBadge release={item} />
+                <SendToClientButton release={item} />
                 <Button
                   variant="subtle"
                   color="gray"
