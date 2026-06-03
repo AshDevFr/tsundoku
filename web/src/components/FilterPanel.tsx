@@ -88,6 +88,7 @@ const CODEX_STATUS_OPTIONS = [
   { value: "complete", label: "Owned — up to date" },
   { value: "behind", label: "Owned — behind" },
   { value: "present", label: "Owned — unverified" },
+  { value: "ignored", label: "Owned — tracking off" },
   { value: "missing", label: "Not on Codex" },
 ];
 

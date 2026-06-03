@@ -40,6 +40,16 @@ const STATUS_META: Record<
     blurb:
       "Owned on Codex; no numbered releases to compare, so currency is unconfirmed",
   },
+  // Operator muted completion tracking for this series (e.g. read in omnibus,
+  // where source single-volume numbering is permanently ahead of the owned
+  // edition). Calmest state of all: owned and deliberately not judged, so it
+  // uses a neutral gray and never gets the attention border.
+  ignored: {
+    color: "gray",
+    variant: "outline",
+    label: "tracking off",
+    blurb: "Owned on Codex; completion tracking muted for this series",
+  },
 };
 
 /// CSS color for accenting a series tile's border, reserved for the one state

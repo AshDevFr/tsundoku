@@ -78,7 +78,8 @@ export interface SeriesFilters {
   /// server avoids the rerank pass for an effectively-empty query.
   q?: string;
   /// Codex presence filter (`any` | `missing` | `complete` | `behind` |
-  /// `present`). Admin-only and enforced server-side; ignored for non-admins.
+  /// `present` | `ignored`). Admin-only and enforced server-side; dropped for
+  /// non-admins.
   codexStatus?: string;
 }
 

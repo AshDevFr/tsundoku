@@ -79,7 +79,7 @@ function validateFilterSearch(raw: Record<string, unknown>): FilterSearch {
   if (typeof raw.q === "string" && raw.q.trim()) search.q = raw.q;
   if (
     typeof raw.codexStatus === "string" &&
-    ["any", "missing", "complete", "behind", "present"].includes(
+    ["any", "missing", "complete", "behind", "present", "ignored"].includes(
       raw.codexStatus,
     )
   ) {

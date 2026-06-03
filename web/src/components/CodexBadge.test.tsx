@@ -48,6 +48,13 @@ describe("CodexBadge", () => {
     );
   });
 
+  it("renders the ignored state as a distinct 'tracking off' badge", () => {
+    renderBadge(info({ status: "ignored" }));
+    expect(screen.getByTestId("codex-badge-ignored")).toHaveTextContent(
+      "tracking off",
+    );
+  });
+
   it("renders a real anchor to the deep link when asLink", () => {
     renderBadge(
       info({ deepLink: "https://codex.example.com/series/xyz" }),
@@ -68,6 +75,7 @@ describe("CodexBadge", () => {
     expect(codexBorderColor("behind")).toMatch(/^var\(--mantine-color-/);
     expect(codexBorderColor("complete")).toBeNull();
     expect(codexBorderColor("present")).toBeNull();
+    expect(codexBorderColor("ignored")).toBeNull();
   });
 
   it("opens the deep link via window.open when not a link (inside a card)", () => {

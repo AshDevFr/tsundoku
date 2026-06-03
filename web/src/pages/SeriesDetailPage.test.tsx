@@ -11,7 +11,11 @@ import {
 } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ADMIN_TEST_TOKEN, resetReviewQueue } from "@/mocks/handlers";
+import {
+  ADMIN_TEST_TOKEN,
+  resetReviewQueue,
+  resetSeries,
+} from "@/mocks/handlers";
 import { useAdminAuth } from "@/stores/auth";
 import { SeriesDetailPage } from "./SeriesDetailPage";
 
@@ -57,6 +61,7 @@ function renderSeriesDetail(id: number, initialEntry = `/series/${id}`) {
 describe("SeriesDetailPage", () => {
   beforeEach(() => {
     resetReviewQueue();
+    resetSeries();
     useAdminAuth.getState().clear();
   });
 
@@ -126,6 +131,34 @@ describe("SeriesDetailPage", () => {
     renderSeriesDetail(1);
     await screen.findByText("Chainsaw Man");
     expect(screen.queryByTestId("edit-series")).not.toBeInTheDocument();
+  });
+
+  it("hides the ignore-completion toggle without an admin token", async () => {
+    // Series 5 is owned on Codex, but the control is admin-only.
+    renderSeriesDetail(5);
+    await screen.findByText("Jujutsu Kaisen");
+    expect(
+      screen.queryByTestId("toggle-ignore-completion"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("toggles completion tracking on a provider-backed owned series", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    // Series 5 (Jujutsu Kaisen) is provider-backed and owned with status
+    // "behind" — the manual-edit PATCH would reject it, but this toggle works.
+    renderSeriesDetail(5);
+    await screen.findByTestId("codex-badge-behind");
+    const toggle = await screen.findByTestId("toggle-ignore-completion");
+    expect(toggle).toHaveTextContent("Ignore completion");
+
+    fireEvent.click(toggle);
+
+    // The mutation invalidates + refetches; the badge flips to "tracking off"
+    // and the button now offers to resume.
+    await screen.findByTestId("codex-badge-ignored");
+    expect(
+      await screen.findByTestId("toggle-ignore-completion"),
+    ).toHaveTextContent("Resume tracking");
   });
 
   it("edits a manual series and reflects the change in the detail view", async () => {

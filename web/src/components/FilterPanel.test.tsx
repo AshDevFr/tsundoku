@@ -47,6 +47,20 @@ describe("FilterPanel — Codex filter visibility", () => {
       expect(screen.getByTestId("filter-codex-status")).toBeInTheDocument(),
     );
   });
+
+  it("offers the ignored option and emits codexStatus=ignored", async () => {
+    useAdminAuth.getState().setToken("test-admin-token");
+    const onChange = vi.fn();
+    renderPanel({}, onChange);
+    // The test id sits on the Select's input (role combobox); clicking it
+    // opens the dropdown (Mantine renders options in a portal).
+    const control = await screen.findByTestId("filter-codex-status");
+    fireEvent.click(control);
+    fireEvent.click(await screen.findByText("Owned — tracking off"));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ codexStatus: "ignored", page: 1 }),
+    );
+  });
 });
 
 describe("FilterPanel — manual/auto source filter", () => {

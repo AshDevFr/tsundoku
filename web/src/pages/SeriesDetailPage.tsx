@@ -25,7 +25,10 @@ import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { useRefreshSeriesMetadata } from "@/api/mutations";
+import {
+  useRefreshSeriesMetadata,
+  useSetIgnoreCompletion,
+} from "@/api/mutations";
 import {
   type ReleaseDto,
   useSeriesDetail,
@@ -83,6 +86,7 @@ export function SeriesDetailPage() {
   const releases = useSeriesReleases(Number.isFinite(id) ? id : undefined);
   const isAdmin = useAdminAuth((s) => Boolean(s.token));
   const refresh = useRefreshSeriesMetadata();
+  const ignoreToggle = useSetIgnoreCompletion();
   const [tagsExpanded, setTagsExpanded] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
@@ -101,6 +105,28 @@ export function SeriesDetailPage() {
           message: (e as Error).message,
         }),
     });
+  };
+
+  const handleToggleIgnore = (ignore: boolean) => {
+    if (!Number.isFinite(id)) return;
+    ignoreToggle.mutate(
+      { id, ignore },
+      {
+        onSuccess: () =>
+          notifications.show({
+            color: "blue",
+            message: ignore
+              ? "Completion tracking muted for this series"
+              : "Completion tracking resumed",
+          }),
+        onError: (e) =>
+          notifications.show({
+            color: "red",
+            title: "Update failed",
+            message: (e as Error).message,
+          }),
+      },
+    );
   };
 
   if (detail.isLoading) {
@@ -132,6 +158,7 @@ export function SeriesDetailPage() {
 
   if (!detail.data) return null;
   const s = detail.data;
+  const codexIgnored = s.codex?.status === "ignored";
 
   const spanParts = [
     spanCount("vol", s.highestVolume, s.totalVolumes),
@@ -292,6 +319,22 @@ export function SeriesDetailPage() {
                       data-testid="refresh-series-metadata"
                     >
                       ↻ Refresh
+                    </Button>
+                  </Tooltip>
+                )}
+                {isAdmin && s.codex && (
+                  <Tooltip label="Mute the 'behind' signal for this series (e.g. read in omnibus). It stays owned; its completion just isn't tracked.">
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      color="gray"
+                      onClick={() => handleToggleIgnore(!codexIgnored)}
+                      loading={ignoreToggle.isPending}
+                      data-testid="toggle-ignore-completion"
+                    >
+                      {codexIgnored
+                        ? "◎ Resume tracking"
+                        : "⊘ Ignore completion"}
                     </Button>
                   </Tooltip>
                 )}

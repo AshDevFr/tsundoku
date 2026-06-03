@@ -129,6 +129,36 @@ export function useUpdateSeries() {
   });
 }
 
+/// Toggle a series' `ignore_completion` flag. When on, the series' Codex status
+/// is forced to `ignored`, muting the perpetually-false "behind" signal for
+/// series read in omnibus. Unlike [`useUpdateSeries`], the backend accepts
+/// provider-backed rows here, so this is offered for any owned series.
+/// Invalidates the detail + list caches so the badge and any `codexStatus`
+/// filter update without a reload.
+export function useSetIgnoreCompletion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { id: number; ignore: boolean }) => {
+      const { data, error } = await api.PUT(
+        "/api/v1/series/{id}/ignore-completion",
+        {
+          params: { path: { id: args.id } },
+          body: { ignore: args.ignore },
+        },
+      );
+      if (error)
+        throw new Error(
+          describeError(error, "failed to update completion tracking"),
+        );
+      return data;
+    },
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: ["series-detail", id] });
+      qc.invalidateQueries({ queryKey: ["series-list"] });
+    },
+  });
+}
+
 export function useKeepRelease() {
   const qc = useQueryClient();
   return useMutation({

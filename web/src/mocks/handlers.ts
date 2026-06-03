@@ -1206,6 +1206,51 @@ export const handlers = [
     return HttpResponse.json(body);
   }),
 
+  http.put(
+    "/api/v1/series/:id/ignore-completion",
+    async ({ request, params }) => {
+      const denied = requireAdmin(request);
+      if (denied) return denied;
+      const id = Number(params.id);
+      const found = SERIES.find((s) => s.id === id);
+      if (!found) return new HttpResponse(null, { status: 404 });
+      const body = (await request.json()) as { ignore: boolean };
+      // Mirror the backend's short-circuit: when ignored, the status becomes
+      // `ignored`; clearing it falls back to `behind` for this fixture.
+      // Replace the codex reference (don't mutate it in place) — `INITIAL_SERIES`
+      // shares the nested codex object, so an in-place edit would survive
+      // `resetSeries()` and leak across tests.
+      if (found.codex) {
+        found.codex = {
+          ...found.codex,
+          status: body.ignore ? "ignored" : "behind",
+        };
+      }
+      const detail: SeriesDetail = {
+        id: found.id,
+        canonicalTitle: found.canonicalTitle,
+        alternateTitles: found.alternateTitles,
+        coverUrl: found.coverUrl,
+        kind: found.kind,
+        status: found.status,
+        year: found.year,
+        description: found.description,
+        owned: found.owned,
+        genres: found.genres,
+        tags: found.tags,
+        externalIds: [],
+        firstSeenAt: found.firstSeenAt,
+        lastReleaseAt: found.lastReleaseAt,
+        metadataFetchedAt: NOW,
+        metadataSource: found.metadataSource,
+        highestVolume: null,
+        highestChapter: null,
+        codex: found.codex ?? null,
+      };
+      return HttpResponse.json(detail);
+    },
+  ),
+
   http.get("/api/v1/series", ({ request }) => {
     const url = new URL(request.url);
     const kind = url.searchParams.get("kind");
