@@ -2644,6 +2644,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -3854,6 +3855,20 @@ dependencies = [
  "serde_json",
  "td-config",
  "td-source",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "td-download"
+version = "1.9.0"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "td-http",
+ "thiserror",
  "tokio",
  "tracing",
 ]
