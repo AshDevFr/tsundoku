@@ -145,8 +145,8 @@ async fn build_status_dto(state: &AppState) -> ApiResult<DownloadStatusDto> {
     Ok(DownloadStatusDto {
         enabled: cfg.enabled,
         kind: cfg.enabled.then(|| cfg.kind.clone()),
-        base_url: cfg.normalized_base_url(),
-        has_credentials: cfg.username.is_some(),
+        base_url: cfg.rutorrent.normalized_base_url(),
+        has_credentials: cfg.rutorrent.username.is_some(),
         default_label: cfg.default_label.clone(),
         default_start: cfg.default_start,
         prefer_torrent_file: cfg.prefer_torrent_file,

@@ -333,10 +333,10 @@ impl CodexConfig {
 /// the block may be absent entirely, the send/status endpoints report
 /// disabled, and no outbound calls are made.
 ///
-/// `username`/`password` are the torrent client's own HTTP Basic credentials
-/// (e.g. the reverse proxy in front of ruTorrent) — unrelated to tsundoku's own
-/// `auth.api_key` / `auth.admin_token`. Both may be omitted for an
-/// unauthenticated instance.
+/// Shared (client-agnostic) settings live at `[download]`; the connection
+/// details for the selected `kind` nest under their own table, e.g.
+/// `[download.rutorrent]`. A second client (qBittorrent, …) would add a
+/// `[download.qbittorrent]` block alongside.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DownloadConfig {
@@ -345,13 +345,6 @@ pub struct DownloadConfig {
     pub enabled: bool,
     /// Which client implementation to use. v1 ships only `"rutorrent"`.
     pub kind: String,
-    /// Client base URL, e.g. `https://box.example.com/rutorrent`. Required when
-    /// `enabled` is true. Trailing slashes are tolerated.
-    pub base_url: Option<String>,
-    /// HTTP Basic username, or `None` for an unauthenticated instance.
-    pub username: Option<String>,
-    /// HTTP Basic password, or `None`.
-    pub password: Option<String>,
     /// Label applied to a sent torrent when the per-send request does not
     /// override it. `None` lets the client apply its own default.
     pub default_label: Option<String>,
@@ -371,6 +364,40 @@ pub struct DownloadConfig {
     /// manual "Test connection" button still work. Off by default to avoid
     /// surprise periodic traffic to the operator's box.
     pub health_cron: Option<String>,
+    /// ruTorrent connection settings (`[download.rutorrent]`), used when
+    /// `kind = "rutorrent"`.
+    pub rutorrent: RuTorrentConfig,
+}
+
+/// `transport` value: ruTorrent's web-UI `addtorrent.php` form (the default).
+pub const TRANSPORT_WEBUI: &str = "webui";
+/// `transport` value: rTorrent XML-RPC over the httprpc plugin / an `RPC2`
+/// mount. Add-only for now; the door to download lifecycle later.
+pub const TRANSPORT_XMLRPC: &str = "xmlrpc";
+
+/// ruTorrent connection settings, populated from `[download.rutorrent]`.
+///
+/// `username`/`password` are the torrent client's own HTTP Basic/Digest
+/// credentials (e.g. the reverse proxy in front of ruTorrent) — unrelated to
+/// tsundoku's own `auth.api_key` / `auth.admin_token`. Both may be omitted for
+/// an unauthenticated instance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RuTorrentConfig {
+    /// Client base URL, e.g. `https://box.example.com/rutorrent`. Required when
+    /// the integration is enabled. Trailing slashes are tolerated.
+    pub base_url: Option<String>,
+    /// HTTP auth username (Basic or Digest is auto-negotiated), or `None`.
+    pub username: Option<String>,
+    /// HTTP auth password, or `None`.
+    pub password: Option<String>,
+    /// How to talk to ruTorrent: `"webui"` (default — POST the `.torrent` to
+    /// `addtorrent.php`) or `"xmlrpc"` (rTorrent XML-RPC via `url_path`).
+    pub transport: String,
+    /// XML-RPC endpoint path relative to `base_url`, used only when
+    /// `transport = "xmlrpc"` (e.g. `"plugins/httprpc/action.php"` or `"RPC2"`).
+    /// Ignored for the web-UI transport.
+    pub url_path: Option<String>,
 }
 
 impl Default for DownloadConfig {
@@ -378,15 +405,25 @@ impl Default for DownloadConfig {
         Self {
             enabled: false,
             kind: "rutorrent".into(),
-            base_url: None,
-            username: None,
-            password: None,
             default_label: None,
             default_dir: None,
             default_start: true,
             prefer_torrent_file: true,
             timeout_seconds: 30,
             health_cron: None,
+            rutorrent: RuTorrentConfig::default(),
+        }
+    }
+}
+
+impl Default for RuTorrentConfig {
+    fn default() -> Self {
+        Self {
+            base_url: None,
+            username: None,
+            password: None,
+            transport: TRANSPORT_WEBUI.into(),
+            url_path: None,
         }
     }
 }
@@ -398,12 +435,21 @@ impl DownloadConfig {
         if !self.enabled {
             return Ok(());
         }
-        if self.base_url.as_deref().unwrap_or("").trim().is_empty() {
-            bail!("download.enabled is true but download.base_url is unset or empty");
+        if self
+            .rutorrent
+            .base_url
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+        {
+            bail!("download.enabled is true but download.rutorrent.base_url is unset or empty");
         }
         Ok(())
     }
+}
 
+impl RuTorrentConfig {
     /// The configured base URL with any trailing slash trimmed. Returns `None`
     /// when unset or empty.
     pub fn normalized_base_url(&self) -> Option<String> {
@@ -411,6 +457,11 @@ impl DownloadConfig {
             .as_deref()
             .map(|u| u.trim_end_matches('/').to_string())
             .filter(|u| !u.is_empty())
+    }
+
+    /// True when the XML-RPC transport is selected.
+    pub fn is_xmlrpc(&self) -> bool {
+        self.transport == TRANSPORT_XMLRPC
     }
 }
 
@@ -1470,7 +1521,8 @@ base_url = "https://codex.example.com"
         let cfg = load(&PathBuf::from("does-not-exist.toml")).unwrap();
         assert!(!cfg.download.enabled);
         assert_eq!(cfg.download.kind, "rutorrent");
-        assert!(cfg.download.base_url.is_none());
+        assert!(cfg.download.rutorrent.base_url.is_none());
+        assert_eq!(cfg.download.rutorrent.transport, "webui");
         assert!(cfg.download.default_start);
         assert!(cfg.download.prefer_torrent_file);
         assert_eq!(cfg.download.timeout_seconds, 30);
@@ -1487,14 +1539,16 @@ base_url = "https://codex.example.com"
             r#"
 [download]
 enabled = true
-base_url = "https://box.example.com/rutorrent/"
-username = "rt"
-password = "secret"
 default_label = "manga"
 default_dir = "/downloads/manga"
 default_start = false
 prefer_torrent_file = false
 timeout_seconds = 20
+
+[download.rutorrent]
+base_url = "https://box.example.com/rutorrent/"
+username = "rt"
+password = "secret"
             "#
         )
         .unwrap();
@@ -1503,11 +1557,13 @@ timeout_seconds = 20
         assert_eq!(cfg.download.kind, "rutorrent");
         // Trailing slash is trimmed by the accessor used to build URLs.
         assert_eq!(
-            cfg.download.normalized_base_url().as_deref(),
+            cfg.download.rutorrent.normalized_base_url().as_deref(),
             Some("https://box.example.com/rutorrent")
         );
-        assert_eq!(cfg.download.username.as_deref(), Some("rt"));
-        assert_eq!(cfg.download.password.as_deref(), Some("secret"));
+        assert_eq!(cfg.download.rutorrent.username.as_deref(), Some("rt"));
+        assert_eq!(cfg.download.rutorrent.password.as_deref(), Some("secret"));
+        // Transport defaults to the web-UI form.
+        assert_eq!(cfg.download.rutorrent.transport, "webui");
         assert_eq!(cfg.download.default_label.as_deref(), Some("manga"));
         assert_eq!(
             cfg.download.default_dir.as_deref(),
@@ -1534,10 +1590,10 @@ enabled = true
         .unwrap();
         let err = load(&path).unwrap_err();
         assert!(
-            err.to_string().contains("download.base_url")
+            err.to_string().contains("download.rutorrent.base_url")
                 || err
                     .source()
-                    .is_some_and(|s| s.to_string().contains("download.base_url")),
+                    .is_some_and(|s| s.to_string().contains("download.rutorrent.base_url")),
             "expected base_url validation error, got: {err:#}"
         );
     }

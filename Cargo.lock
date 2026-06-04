@@ -3878,6 +3878,7 @@ name = "td-download"
 version = "1.9.0"
 dependencies = [
  "async-trait",
+ "base64",
  "digest_auth",
  "reqwest",
  "serde",

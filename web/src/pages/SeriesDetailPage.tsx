@@ -52,6 +52,7 @@ import {
   LinkExistingPanel,
   ProviderSearchPanel,
 } from "@/components/ReleaseLinking";
+import { SendToClientButton, SentBadge } from "@/components/SendToClientButton";
 import { seriesDetailRoute } from "@/router";
 import { useAdminAuth } from "@/stores/auth";
 
@@ -523,6 +524,7 @@ function ReleaseRow({ release }: { release: ReleaseDto }) {
                 {release.resolutionPath}
               </Badge>
             )}
+            <SentBadge release={release} />
           </Group>
         </Stack>
         <Group gap={8} wrap="nowrap" align="center">
@@ -576,6 +578,7 @@ function ReleaseRow({ release }: { release: ReleaseDto }) {
               </Button>
             </Tooltip>
           )}
+          <SendToClientButton release={release} />
         </Group>
       </Group>
 

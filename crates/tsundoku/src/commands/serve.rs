@@ -200,8 +200,11 @@ fn build_download_client(
     if !download.enabled {
         return None;
     }
-    let Some(base_url) = download.normalized_base_url() else {
-        tracing::warn!("download.enabled is true but base_url is missing; download disabled");
+    let rt = &download.rutorrent;
+    let Some(base_url) = rt.normalized_base_url() else {
+        tracing::warn!(
+            "download.enabled is true but download.rutorrent.base_url is missing; download disabled"
+        );
         return None;
     };
     if download.kind != "rutorrent" {
@@ -212,16 +215,30 @@ fn build_download_client(
         return None;
     }
     let timeout = std::time::Duration::from_secs(download.timeout_seconds as u64);
-    match td_download::RuTorrentClient::new(
-        base_url,
-        download.username.clone(),
-        download.password.clone(),
-        timeout,
-        limiter,
-    ) {
-        Ok(c) => Some(Arc::new(c) as Arc<dyn td_download::DownloadClient>),
+    let built = if rt.is_xmlrpc() {
+        td_download::RtorrentXmlRpcClient::new(
+            base_url,
+            rt.url_path.clone(),
+            rt.username.clone(),
+            rt.password.clone(),
+            timeout,
+            limiter,
+        )
+        .map(|c| Arc::new(c) as Arc<dyn td_download::DownloadClient>)
+    } else {
+        td_download::RuTorrentClient::new(
+            base_url,
+            rt.username.clone(),
+            rt.password.clone(),
+            timeout,
+            limiter,
+        )
+        .map(|c| Arc::new(c) as Arc<dyn td_download::DownloadClient>)
+    };
+    match built {
+        Ok(c) => Some(c),
         Err(e) => {
-            tracing::warn!(error = %e, "failed to build rutorrent client; download disabled");
+            tracing::warn!(error = %e, "failed to build download client; download disabled");
             None
         }
     }

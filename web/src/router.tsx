@@ -8,6 +8,7 @@ import {
 import { AppShell } from "@/components/AppShell";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { CODEX_STATUS_VALUES } from "@/constants/series";
+import { AdminCodexPage } from "@/pages/admin/Codex";
 import { AdminDownloadPage } from "@/pages/admin/Download";
 import { AdminIdMapsPage } from "@/pages/admin/IdMaps";
 import { AdminMaintenancePage } from "@/pages/admin/Maintenance";
@@ -160,6 +161,12 @@ export const adminDownloadRoute = createRoute({
   component: AdminDownloadPage,
 });
 
+export const adminCodexRoute = createRoute({
+  getParentRoute: () => adminLayoutRoute,
+  path: "codex",
+  component: AdminCodexPage,
+});
+
 export const adminMetricsRoute = createRoute({
   getParentRoute: () => adminLayoutRoute,
   path: "metrics",
@@ -190,6 +197,7 @@ const routeTree = rootRoute.addChildren([
     adminProvidersListRoute,
     adminProviderDetailRoute,
     adminDownloadRoute,
+    adminCodexRoute,
     adminMetricsRoute,
     adminIdMapsRoute,
     adminMaintenanceRoute,

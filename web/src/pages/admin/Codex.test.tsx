@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codexVersionOutdated } from "./Maintenance";
+import { codexVersionOutdated } from "./Codex";
 
 describe("codexVersionOutdated", () => {
   it("flags versions below 1.32.0", () => {

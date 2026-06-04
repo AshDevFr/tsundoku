@@ -5177,7 +5177,10 @@ async fn codex_synced_at_present_for_admin_when_enabled() {
 fn enabled_download_config() -> td_config::DownloadConfig {
     td_config::DownloadConfig {
         enabled: true,
-        base_url: Some("http://127.0.0.1:9/rutorrent".into()),
+        rutorrent: td_config::RuTorrentConfig {
+            base_url: Some("http://127.0.0.1:9/rutorrent".into()),
+            ..Default::default()
+        },
         ..Default::default()
     }
 }

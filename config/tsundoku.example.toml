@@ -208,24 +208,21 @@ poll_write_batch_size = 10
 # Adds an admin-only "send to torrent client" button to discovered releases.
 # v1 targets ruTorrent. Disabled by default; the whole block may be omitted.
 #
-# username/password are the TORRENT CLIENT'S own HTTP Basic credentials (e.g.
-# the reverse proxy in front of ruTorrent) — unrelated to tsundoku's own [auth]
-# api_key / admin_token. Omit both for an unauthenticated instance.
+# Shared (client-agnostic) settings live at [download]; the connection details
+# for the chosen `kind` nest under their own table — [download.rutorrent] here.
+# A second client would add e.g. [download.qbittorrent].
 #
 # By default a release is sent as a .torrent file (the bytes are fetched from
 # the release's torrent_url through the rate limiter); set prefer_torrent_file
 # = false to hand ruTorrent a magnet URL instead. Both label/start/source are
 # overridable per send from the UI.
 #
-# When enabled = true, base_url is REQUIRED — tsundoku refuses to start
-# otherwise.
+# When enabled = true, [download.rutorrent].base_url is REQUIRED — tsundoku
+# refuses to start otherwise.
 #
 # [download]
 # enabled             = true
 # kind                = "rutorrent"             # only "rutorrent" in v1.
-# base_url            = "https://box.example.com/rutorrent"
-# username            = "rutorrent-user"        # omit if the instance is unauthenticated.
-# password            = "rutorrent-pass"
 # default_label       = "manga"                 # omit to let the client apply its own default.
 # default_dir         = "/downloads/manga"      # omit to use the client default download dir.
 # default_start       = true                    # false adds the torrent stopped.
@@ -233,3 +230,10 @@ poll_write_batch_size = 10
 # timeout_seconds     = 30
 # health_cron         = "0 * * * *"             # optional: recurring connection re-test. Omit to disable
 #                                               # (the launch probe + manual "Test connection" still work).
+#
+# [download.rutorrent]
+# base_url            = "https://box.example.com/rutorrent"
+# username            = "rutorrent-user"        # the CLIENT'S own HTTP Basic/Digest credential (auto-negotiated),
+# password            = "rutorrent-pass"        #   unrelated to tsundoku's [auth]. Omit both if unauthenticated.
+# transport           = "webui"                 # "webui" posts to addtorrent.php (default); "xmlrpc" uses rTorrent XML-RPC.
+# url_path            = "plugins/httprpc/action.php"  # only for transport = "xmlrpc" (or "RPC2" for a bare rTorrent mount).

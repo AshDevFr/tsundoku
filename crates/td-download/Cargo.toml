@@ -18,6 +18,8 @@ async-trait.workspace = true
 # ruTorrent behind a seedbox proxy commonly demands HTTP Digest auth, not
 # Basic; reqwest only does Basic, so we compute the Digest response ourselves.
 digest_auth = "0.3"
+# rTorrent XML-RPC's load.raw_start carries the .torrent as base64.
+base64 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

@@ -194,20 +194,18 @@ fn parse_add_response(bytes: &[u8]) -> Result<(), DownloadError> {
     }
 }
 
-/// ruTorrent client. Construct once and reuse; the underlying
-/// [`LimitedClient`] shares the process-wide host limiter.
-pub struct RuTorrentClient {
+/// Shared HTTP layer for the ruTorrent-family clients: a rate-limited reqwest
+/// client plus Basic/Digest auth negotiation against a base URL. Both the
+/// web-UI and XML-RPC clients hold one.
+struct AuthedHttp {
     http: LimitedClient,
     base_url: String,
     username: Option<String>,
     password: Option<String>,
 }
 
-impl RuTorrentClient {
-    /// `base_url` is the ruTorrent root (e.g. `https://box/rutorrent`); the
-    /// trailing slash is trimmed. `username`/`password` are the HTTP Basic
-    /// credentials, both `None` for an unauthenticated instance.
-    pub fn new(
+impl AuthedHttp {
+    fn new(
         base_url: impl Into<String>,
         username: Option<String>,
         password: Option<String>,
@@ -227,16 +225,19 @@ impl RuTorrentClient {
     }
 
     /// Send a request to `{base_url}{suffix}` handling either HTTP Basic or
-    /// Digest auth. `build` adds the method-specific bits (multipart body for a
-    /// POST, nothing for a GET) and is called per attempt, because a 401 Digest
-    /// challenge forces a resend and multipart bodies can't be cloned.
+    /// Digest auth. `build` adds the method-specific bits (a multipart or XML
+    /// body for a POST, nothing for a GET) and is called per attempt, because a
+    /// 401 Digest challenge forces a resend and multipart bodies can't be
+    /// cloned.
     ///
     /// The first attempt carries preemptive Basic auth — one round-trip for
     /// Basic (or unauthenticated) servers. On a `401` whose `WWW-Authenticate`
     /// is `Digest` (common for ruTorrent behind a seedbox proxy, which `reqwest`
     /// can't do natively), it computes the Digest response and retries once. A
     /// `401` with a Basic challenge means the credentials are simply wrong, so
-    /// it's returned as-is.
+    /// it's returned as-is. The single unthrottled request to the operator's own
+    /// box (built off `inner()`) is deliberate — the rate limiter governs the
+    /// upstream `.torrent` fetch, not the client we own.
     async fn send_authed<F>(
         &self,
         method: Method,
@@ -303,6 +304,41 @@ impl RuTorrentClient {
         let retry = build(client.request(method, &url)).header(AUTHORIZATION, header);
         Ok(retry.send().await?)
     }
+
+    /// Fetch `url` through the rate limiter. Used for the `.torrent` fetch from
+    /// the discovery source (e.g. Nyaa) — not authed, since that host is not the
+    /// client we own.
+    async fn fetch_via_limiter(&self, url: &str) -> Result<Vec<u8>, DownloadError> {
+        let resp = self.http.get(url).send().await?;
+        match resp.status() {
+            StatusCode::OK => Ok(resp.bytes().await?.to_vec()),
+            other => Err(DownloadError::Unexpected(other.as_u16())),
+        }
+    }
+}
+
+/// ruTorrent web-UI client: POSTs the `.torrent` (or a magnet URL) to
+/// `addtorrent.php`. Construct once and reuse.
+pub struct RuTorrentClient {
+    http: AuthedHttp,
+}
+
+impl RuTorrentClient {
+    /// `base_url` is the ruTorrent root (e.g. `https://box/rutorrent`); the
+    /// trailing slash is trimmed. `username`/`password` are the HTTP auth
+    /// credentials (Basic or Digest, auto-negotiated), both `None` for an
+    /// unauthenticated instance.
+    pub fn new(
+        base_url: impl Into<String>,
+        username: Option<String>,
+        password: Option<String>,
+        timeout: Duration,
+        limiter: Arc<HttpLimiter>,
+    ) -> Result<Self, DownloadError> {
+        Ok(Self {
+            http: AuthedHttp::new(base_url, username, password, timeout, limiter)?,
+        })
+    }
 }
 
 /// Map a `reqwest::Method` to the `digest_auth` equivalent. Only the verbs the
@@ -322,13 +358,8 @@ impl DownloadClient for RuTorrentClient {
         // The assembled fields are cloned per attempt because a 401 Digest
         // challenge forces a resend and `multipart::Form` isn't cloneable.
         let fields = build_add_fields(&req);
-
-        // send_authed builds the POST off the raw reqwest::Client via inner().
-        // This is the one path that bypasses the per-host rate limiter: the
-        // .torrent bytes were already fetched through the limiter upstream, and
-        // the ruTorrent host is the operator's own box, so a single unthrottled
-        // POST (plus at most one digest retry) to it is fine.
         let resp = self
+            .http
             .send_authed(Method::POST, "/php/addtorrent.php", |rb| {
                 rb.multipart(fields_to_form(fields.clone()))
             })
@@ -340,24 +371,157 @@ impl DownloadClient for RuTorrentClient {
     }
 
     async fn fetch_torrent(&self, url: &str) -> Result<Vec<u8>, DownloadError> {
-        // Goes through the LimitedClient (not inner()), so the per-host limiter
-        // throttles the fetch from the discovery source.
-        let resp = self.http.get(url).send().await?;
-        match resp.status() {
-            StatusCode::OK => Ok(resp.bytes().await?.to_vec()),
-            other => Err(DownloadError::Unexpected(other.as_u16())),
-        }
+        self.http.fetch_via_limiter(url).await
     }
 
     async fn test_connection(&self) -> Result<(), DownloadError> {
-        // GET the ruTorrent root through the Basic-or-Digest path. A 200 proves
-        // reachability *and* that the credentials are accepted; a 401 means
-        // they're wrong (after a digest retry, if the server asked for digest).
-        // Built off inner() like add() — a request to the operator's own box,
-        // so bypassing the limiter is fine.
-        let resp = self.send_authed(Method::GET, "/", |rb| rb).await?;
+        // GET the ruTorrent root. A 200 proves reachability *and* that the
+        // credentials are accepted; a 401 means they're wrong (after a digest
+        // retry, if the server asked for digest).
+        let resp = self.http.send_authed(Method::GET, "/", |rb| rb).await?;
         classify_test_status(resp.status().as_u16())
     }
+}
+
+/// rTorrent XML-RPC client (ruTorrent's `httprpc` plugin or a bare `RPC2`
+/// mount). What Prowlarr/Sonarr/Radarr use. Add-only for now — the same wire is
+/// the door to download lifecycle (progress, removal) later.
+pub struct RtorrentXmlRpcClient {
+    http: AuthedHttp,
+    /// XML-RPC endpoint path relative to `base_url`, leading-slash normalized
+    /// (e.g. `/plugins/httprpc/action.php` or `/RPC2`).
+    endpoint: String,
+}
+
+impl RtorrentXmlRpcClient {
+    /// `url_path` is the XML-RPC endpoint relative to `base_url`; defaults to
+    /// `RPC2` (the conventional bare-rTorrent mount) when omitted.
+    pub fn new(
+        base_url: impl Into<String>,
+        url_path: Option<String>,
+        username: Option<String>,
+        password: Option<String>,
+        timeout: Duration,
+        limiter: Arc<HttpLimiter>,
+    ) -> Result<Self, DownloadError> {
+        let path = url_path.unwrap_or_else(|| "RPC2".to_string());
+        Ok(Self {
+            http: AuthedHttp::new(base_url, username, password, timeout, limiter)?,
+            endpoint: format!("/{}", path.trim_matches('/')),
+        })
+    }
+
+    /// Issue one XML-RPC `methodCall`. Returns the raw response body on success;
+    /// a transport/HTTP failure or an XML-RPC `<fault>` is an error.
+    async fn call(&self, method_name: &str, params: String) -> Result<String, DownloadError> {
+        let body = format!(
+            r#"<?xml version="1.0"?><methodCall><methodName>{method_name}</methodName><params>{params}</params></methodCall>"#
+        );
+        let resp = self
+            .http
+            .send_authed(Method::POST, &self.endpoint, |rb| {
+                rb.header(reqwest::header::CONTENT_TYPE, "text/xml")
+                    .body(body.clone())
+            })
+            .await?;
+        let status = resp.status();
+        if status != StatusCode::OK {
+            return Err(DownloadError::Unexpected(status.as_u16()));
+        }
+        let text = resp.text().await?;
+        match parse_xmlrpc_fault(&text) {
+            Some(msg) => Err(DownloadError::Rejected(msg)),
+            None => Ok(text),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl DownloadClient for RtorrentXmlRpcClient {
+    async fn add(&self, req: AddRequest) -> Result<(), DownloadError> {
+        // load.* takes an empty target, the source, then a variadic list of
+        // commands run on the new download. Map start/source to the right verb.
+        let mut params = xml_string_param("");
+        let method_name = match (&req.source, req.start) {
+            (AddSource::Torrent { bytes, .. }, true) => {
+                params.push_str(&xml_base64_param(bytes));
+                "load.raw_start"
+            }
+            (AddSource::Torrent { bytes, .. }, false) => {
+                params.push_str(&xml_base64_param(bytes));
+                "load.raw"
+            }
+            (AddSource::Magnet(url), true) => {
+                params.push_str(&xml_string_param(url));
+                "load.start"
+            }
+            (AddSource::Magnet(url), false) => {
+                params.push_str(&xml_string_param(url));
+                "load.normal"
+            }
+        };
+        if let Some(label) = req.label.as_deref().filter(|l| !l.is_empty()) {
+            params.push_str(&xml_string_param(&format!("d.custom1.set={label}")));
+        }
+        if let Some(dir) = req.dir.as_deref().filter(|d| !d.is_empty()) {
+            params.push_str(&xml_string_param(&format!("d.directory.set={dir}")));
+        }
+        self.call(method_name, params).await.map(|_| ())
+    }
+
+    async fn fetch_torrent(&self, url: &str) -> Result<Vec<u8>, DownloadError> {
+        self.http.fetch_via_limiter(url).await
+    }
+
+    async fn test_connection(&self) -> Result<(), DownloadError> {
+        // A non-fault 200 to system.client_version proves reachability + auth.
+        self.call("system.client_version", String::new())
+            .await
+            .map(|_| ())
+    }
+}
+
+/// XML-escape a string for placement inside a `<string>` element.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// `<param><value><string>…</string></value></param>` for a string argument.
+fn xml_string_param(s: &str) -> String {
+    format!(
+        "<param><value><string>{}</string></value></param>",
+        xml_escape(s)
+    )
+}
+
+/// `<param><value><base64>…</base64></value></param>` for raw `.torrent` bytes.
+fn xml_base64_param(bytes: &[u8]) -> String {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("<param><value><base64>{b64}</base64></value></param>")
+}
+
+/// Extract an XML-RPC `<fault>`'s `faultString`, or `None` when the response is
+/// a normal `methodResponse`. rTorrent answers with either a fault or a plain
+/// response, so the presence of `<fault` is the reliable error signal; the
+/// message is best-effort.
+fn parse_xmlrpc_fault(xml: &str) -> Option<String> {
+    if !xml.contains("<fault") {
+        return None;
+    }
+    let msg = xml
+        .split("faultString")
+        .nth(1)
+        .and_then(|rest| rest.split("<string>").nth(1))
+        .and_then(|rest| rest.split("</string>").next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "rTorrent XML-RPC fault".to_string());
+    Some(msg)
 }
 
 #[cfg(test)]
@@ -502,6 +666,38 @@ mod tests {
         assert_eq!(digest_method(&Method::POST), digest_auth::HttpMethod::POST);
     }
 
+    #[test]
+    fn xml_escape_handles_special_chars() {
+        assert_eq!(
+            xml_escape("a&b<c>d\"e'f"),
+            "a&amp;b&lt;c&gt;d&quot;e&apos;f"
+        );
+    }
+
+    #[test]
+    fn xml_base64_param_encodes_bytes() {
+        // "hi" -> base64 "aGk=".
+        assert_eq!(
+            xml_base64_param(b"hi"),
+            "<param><value><base64>aGk=</base64></value></param>"
+        );
+    }
+
+    #[test]
+    fn parse_xmlrpc_fault_ignores_a_normal_response() {
+        let ok = r#"<?xml version="1.0"?><methodResponse><params><param><value><string>0.9.8</string></value></param></params></methodResponse>"#;
+        assert!(parse_xmlrpc_fault(ok).is_none());
+    }
+
+    #[test]
+    fn parse_xmlrpc_fault_extracts_the_fault_string() {
+        let fault = r#"<?xml version="1.0"?><methodResponse><fault><value><struct><member><name>faultCode</name><value><i4>-501</i4></value></member><member><name>faultString</name><value><string>Could not create download</string></value></member></struct></value></fault></methodResponse>"#;
+        assert_eq!(
+            parse_xmlrpc_fault(fault).as_deref(),
+            Some("Could not create download")
+        );
+    }
+
     /// End-to-end probe against a real ruTorrent. No-op unless
     /// `TD_TEST_RUTORRENT_URL` is set, so it's inert in CI; run locally with
     /// the seedbox URL + credentials to confirm the Basic/Digest negotiation:
@@ -524,5 +720,31 @@ mod tests {
             .test_connection()
             .await
             .expect("connection test should succeed against the configured ruTorrent");
+    }
+
+    /// End-to-end XML-RPC probe. No-op unless both `TD_TEST_RUTORRENT_URL` and
+    /// `TD_TEST_RUTORRENT_XMLRPC_PATH` are set. Confirms `system.client_version`
+    /// over the httprpc/RPC2 endpoint (with Basic/Digest negotiation).
+    #[tokio::test]
+    async fn live_xmlrpc_connection() {
+        let (Ok(base), Ok(path)) = (
+            std::env::var("TD_TEST_RUTORRENT_URL"),
+            std::env::var("TD_TEST_RUTORRENT_XMLRPC_PATH"),
+        ) else {
+            return;
+        };
+        let client = RtorrentXmlRpcClient::new(
+            base,
+            Some(path),
+            std::env::var("TD_TEST_RUTORRENT_USER").ok(),
+            std::env::var("TD_TEST_RUTORRENT_PASS").ok(),
+            Duration::from_secs(15),
+            HttpLimiter::no_limit(),
+        )
+        .unwrap();
+        client
+            .test_connection()
+            .await
+            .expect("XML-RPC system.client_version should succeed");
     }
 }

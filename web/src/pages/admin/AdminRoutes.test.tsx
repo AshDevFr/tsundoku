@@ -15,6 +15,7 @@ import { AdminShell } from "@/components/admin/AdminShell";
 import { ADMIN_TEST_TOKEN } from "@/mocks/handlers";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { useAdminAuth } from "@/stores/auth";
+import { AdminCodexPage } from "./Codex";
 import { AdminDownloadPage } from "./Download";
 import { AdminIdMapsPage } from "./IdMaps";
 import { AdminMaintenancePage } from "./Maintenance";
@@ -67,6 +68,11 @@ function makeRouter(initial: string) {
     path: "download",
     component: AdminDownloadPage,
   });
+  const codex = createRoute({
+    getParentRoute: () => layout,
+    path: "codex",
+    component: AdminCodexPage,
+  });
   const metrics = createRoute({
     getParentRoute: () => layout,
     path: "metrics",
@@ -100,6 +106,7 @@ function makeRouter(initial: string) {
         providersList,
         providerDetail,
         download,
+        codex,
         metrics,
         idMaps,
         maintenance,
@@ -409,6 +416,34 @@ describe("admin download page", () => {
   });
 });
 
+describe("admin codex page", () => {
+  beforeEach(() => useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN));
+  afterEach(() => useAdminAuth.getState().clear());
+
+  it("exposes a Codex entry in the admin nav and renders the card", async () => {
+    renderAt("/admin/codex");
+    expect(
+      await screen.findByTestId("admin-nav-codex", undefined, {
+        timeout: 3000,
+      }),
+    ).toHaveTextContent(/codex/i);
+    expect(await screen.findByTestId("codex-card")).toBeInTheDocument();
+  });
+
+  it("tests the codex connection and toasts the unreachable result", async () => {
+    renderAt("/admin/codex");
+    const btn = await screen.findByTestId("codex-test-button", undefined, {
+      timeout: 3000,
+    });
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Unreachable: connection refused/),
+      ).toBeInTheDocument();
+    });
+  });
+});
+
 describe("admin metrics page", () => {
   beforeEach(() => useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN));
   afterEach(() => useAdminAuth.getState().clear());
@@ -492,21 +527,6 @@ describe("admin maintenance page", () => {
     await waitFor(() => {
       expect(
         screen.getByText(/12 cleared, 1 manual row\(s\) left alone/i),
-      ).toBeInTheDocument();
-    });
-  });
-
-  it("tests the codex connection and toasts the unreachable result", async () => {
-    renderAt("/admin/maintenance");
-    const btn = await screen.findByTestId(
-      "maintenance-codex-test-button",
-      undefined,
-      { timeout: 3000 },
-    );
-    fireEvent.click(btn);
-    await waitFor(() => {
-      expect(
-        screen.getByText(/Unreachable: connection refused/),
       ).toBeInTheDocument();
     });
   });
