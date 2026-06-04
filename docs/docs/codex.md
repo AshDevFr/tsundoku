@@ -1,6 +1,6 @@
 ---
 title: Codex integration
-sidebar_position: 9
+sidebar_position: 10
 ---
 
 # Codex integration
@@ -95,8 +95,9 @@ unfiltered feed, so it can't be used to probe your library.
 
 ## Connection status
 
-The admin [maintenance page](./admin-maintenance.md) shows a **Codex
-integration** card with the live connection health:
+The admin **Codex** page (`/admin/codex`) shows the live connection health:
+
+![Codex integration page](/img/screenshots/admin/codex.png)
 
 - **Reachable / Unreachable** — whether the last preflight reached Codex.
 - **Auth state** — `Connected`, or one of two distinct failures:
@@ -104,8 +105,11 @@ integration** card with the live connection health:
   - **API key lacks series:read (403)** — the key authenticates but the Codex
     account doesn't have the `series:read` scope. Grant it on the Codex side.
 - **Linked series**, **last sync**, and the **last error** message.
-- A **Refresh now** button to trigger a sweep immediately instead of waiting
-  for the cron.
+- A **Test connection** button to probe Codex on demand, and a **Refresh now**
+  button to trigger a sweep immediately instead of waiting for the cron.
+- A **Recent checks** reachability history (up/down transitions) alongside a
+  **Recent syncs** sweep history (per-sweep outcome, linked/fetched counts, or
+  the error that failed it).
 
 Badges stay hidden until the first successful sweep, so a freshly-enabled
 integration doesn't briefly show everything as "not owned."

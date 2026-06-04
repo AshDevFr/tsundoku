@@ -131,6 +131,31 @@ SHA-1 sidecar that gates re-extraction, and a recent-runs table.
 → Active vs registered, the offline-dump lifecycle, and the API
 fallback toggle: [Providers](./providers.md).
 
+### Download client
+
+The optional send-to-client integration pushes a discovered release
+straight into your torrent client (ruTorrent in v1). This read-only
+page surfaces the configured connection, live reachability with an
+on-demand **Test connection**, and the recent check / send audit —
+every send attempt, success or failure, is recorded here.
+
+![Download client page](/img/screenshots/admin/download.png)
+
+→ Enabling the integration, what gets sent, and the send audit:
+[Download client](./download.md).
+
+### Codex
+
+Connection health for the optional Codex presence sync: reachability,
+auth state, linked-series count, and the per-sweep history. **Test
+connection** probes Codex on demand; **Refresh now** triggers a
+presence sweep so the ownership badges on the feed refresh immediately.
+
+![Codex integration page](/img/screenshots/admin/codex.png)
+
+→ Ownership badges, the sync sweep, and filtering by ownership:
+[Codex integration](./codex.md).
+
 ### Metrics
 
 Time-series charts for source poll volume, resolver throughput,

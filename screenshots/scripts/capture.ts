@@ -114,14 +114,14 @@ async function main(): Promise<void> {
   }
 }
 
-/// Navigate to the maintenance page and click the Codex "Refresh now"
-/// button, then wait for the sweep to finish. No-ops (with a log line) when
-/// the Codex integration is disabled, since the button isn't rendered then.
+/// Navigate to the Codex page and click the "Refresh now" button, then wait
+/// for the sweep to finish. No-ops (with a log line) when the Codex
+/// integration is disabled, since the button isn't rendered then.
 async function triggerCodexSync(
   page: Page,
   context: BrowserContext,
 ): Promise<void> {
-  console.log("\n🔗 Triggering Codex sync from the maintenance page");
+  console.log("\n🔗 Triggering Codex sync from the Codex page");
   console.log("-".repeat(40));
 
   const before = await getCodexStatus(context.request);
@@ -130,10 +130,10 @@ async function triggerCodexSync(
     return;
   }
 
-  await page.goto("/admin/maintenance");
+  await page.goto("/admin/codex");
   await waitForPageReady(page);
 
-  const refreshButton = '[data-testid="maintenance-codex-refresh-button"]';
+  const refreshButton = '[data-testid="codex-refresh-button"]';
   try {
     await waitForElement(page, refreshButton);
     await page.click(refreshButton);
@@ -165,6 +165,8 @@ async function loadScenarios(): Promise<ScenarioModule[]> {
     { name: "Admin Kept", path: "./scenarios/admin-kept.js" },
     { name: "Admin Sources", path: "./scenarios/admin-sources.js" },
     { name: "Admin Providers", path: "./scenarios/admin-providers.js" },
+    { name: "Admin Download", path: "./scenarios/admin-download.js" },
+    { name: "Admin Codex", path: "./scenarios/admin-codex.js" },
     { name: "Admin Metrics", path: "./scenarios/admin-metrics.js" },
     { name: "Admin ID Maps", path: "./scenarios/admin-id-maps.js" },
     { name: "Admin Maintenance", path: "./scenarios/admin-maintenance.js" },
