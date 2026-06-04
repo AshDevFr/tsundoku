@@ -248,7 +248,9 @@ impl Resolver {
         let now = Utc::now();
         let attempted_at = now.timestamp();
         let links = parse_external_links(release.extracted_links_json.as_deref());
-        let normalized_pairs = self.normalize_external_links(&links).await;
+        let normalized_pairs = self
+            .normalize_external_links(release.information_url.as_deref(), &links)
+            .await;
         let formats = releases_repo::list_formats(&self.db, &release.id).await?;
         let active = self.registry.active().clone();
         let active_id = self.registry.active_id().to_string();
@@ -386,26 +388,49 @@ impl Resolver {
         Ok(outcome)
     }
 
-    /// Resolve any synthetic `mangaupdates-legacy` entries into modern
-    /// MangaUpdates IDs using the cache (and the redirect resolver on
-    /// cache miss). Entries that tombstone — or that miss with no
-    /// redirector configured — are dropped from the returned list.
+    /// Build the ordered `(provider, id, url)` pairs the resolution chain
+    /// walks, from two link sources: the uploader's "Information" field
+    /// (`information_url`) and the description-body links
+    /// (`extracted_links_json`). The Information field is the dedicated
+    /// series pointer on a Nyaa post, so it's prepended — tried first by
+    /// both the known-id and foreign-id steps — and runs through the exact
+    /// same path as body links.
+    ///
+    /// Any synthetic `mangaupdates-legacy` entry is translated to a modern
+    /// MangaUpdates ID via the cache (and the redirect resolver on cache
+    /// miss). Entries that tombstone — or that miss with no redirector
+    /// configured — are dropped. Duplicates across the two sources collapse
+    /// to the first occurrence, so the same series isn't looked up twice.
     async fn normalize_external_links(
         &self,
+        information_url: Option<&str>,
         links: &ExternalLinks,
     ) -> Vec<(&'static str, String, Option<String>)> {
-        let mut out = Vec::with_capacity(4);
-        for (provider, id, url) in foreign_id::pairs(links) {
-            if provider == foreign_id::MANGAUPDATES_LEGACY {
-                if let Some(modern) = self.translate_legacy_mu(&id).await {
-                    out.push(("mangaupdates", modern, url));
+        let mut raw: Vec<(&'static str, String, Option<String>)> = Vec::with_capacity(5);
+        if let Some(info) = information_url
+            && let Some((provider, id)) = foreign_id::detect(info)
+        {
+            raw.push((provider, id, Some(info.to_string())));
+        }
+        raw.extend(foreign_id::pairs(links));
+
+        let mut out: Vec<(&'static str, String, Option<String>)> = Vec::with_capacity(raw.len());
+        for (provider, id, url) in raw {
+            let pair = if provider == foreign_id::MANGAUPDATES_LEGACY {
+                match self.translate_legacy_mu(&id).await {
+                    Some(modern) => ("mangaupdates", modern, url),
+                    // Tombstoned or transient: silently drop. A transient
+                    // failure leaves the cache untouched so the next poll
+                    // tries again.
+                    None => continue,
                 }
-                // Tombstoned or transient: silently drop. A transient
-                // failure leaves the cache untouched so the next poll
-                // tries again.
+            } else {
+                (provider, id, url)
+            };
+            if out.iter().any(|(p, i, _)| *p == pair.0 && *i == pair.1) {
                 continue;
             }
-            out.push((provider, id, url));
+            out.push(pair);
         }
         out
     }

@@ -134,6 +134,19 @@ async fn insert_release(
     extracted_links_json: Option<&str>,
     formats: &[&str],
 ) {
+    insert_release_full(db, id, title, extracted_links_json, None, formats).await;
+}
+
+/// Like [`insert_release`] but also sets the uploader's "Information" field
+/// (`information_url`) — the dedicated series pointer on a Nyaa post.
+async fn insert_release_full(
+    db: &DatabaseConnection,
+    id: &str,
+    title: &str,
+    extracted_links_json: Option<&str>,
+    information_url: Option<&str>,
+    formats: &[&str],
+) {
     let row = releases::ActiveModel {
         id: Set(id.into()),
         source_kind: Set("nyaa".into()),
@@ -150,7 +163,7 @@ async fn insert_release(
         description_html: Set(None),
         extracted_links_json: Set(extracted_links_json.map(str::to_string)),
         comment_suggested_links_json: Set(None),
-        information_url: Set(None),
+        information_url: Set(information_url.map(str::to_string)),
         posted_at: Set(1_700_000_000),
         observed_at: Set(1_700_000_100),
         series_id: Set(None),
@@ -420,6 +433,107 @@ async fn direct_active_provider_link_resolves_via_get_not_fuzzy() {
         .await
         .unwrap();
     assert_eq!(map.len(), 1);
+}
+
+#[tokio::test]
+async fn information_url_resolves_via_known_external_id_when_no_body_links() {
+    // The uploader's "Information" field carries the series link while the
+    // description body has none (empty extracted_links_json). A MangaUpdates
+    // Information link whose id is already cataloged must resolve at step 1.
+    let db = fresh_db().await;
+    db.execute_unprepared(
+        "INSERT INTO series (id, canonical_title, metadata_source, metadata_fetched_at,\
+         first_seen_at, last_release_at, owned) VALUES (1, 'Magilumiere', 'api', 0, 0, 0, 0)",
+    )
+    .await
+    .unwrap();
+    db.execute_unprepared(
+        "INSERT INTO series_external_ids (provider, external_id, series_id, fetched_at) \
+         VALUES ('mangaupdates', 'd5jvvlu', 1, 0)",
+    )
+    .await
+    .unwrap();
+
+    insert_release_full(
+        &db,
+        "r-info-known",
+        "Kabushiki Gaisha MagiLumiere 001-077.5",
+        None, // no body links
+        Some("https://www.mangaupdates.com/series/d5jvvlu/kabushiki-gaisha-magilumiere"),
+        &["cbz"],
+    )
+    .await;
+
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let registry = build_registry(provider.clone());
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-info-known").await.unwrap();
+
+    assert_eq!(out.path, Some(ResolutionPath::KnownExternalId));
+    assert_eq!(out.series_id, Some(1));
+    assert_eq!(out.confidence, Some(1.0));
+    // Step 1 short-circuited on the Information link; no provider calls.
+    assert!(provider.calls().is_empty(), "got {:?}", provider.calls());
+}
+
+#[tokio::test]
+async fn information_url_resolves_active_provider_link_via_get_not_fuzzy() {
+    // Hana-Kimi shape: the description body has no links, the Information
+    // field points straight at the active provider's own series page
+    // (mangabaka.org/{id}), and the title would fuzzy-match a wrong but
+    // same-named series. The Information link must drive a direct get().
+    let db = fresh_db().await;
+    let provider = Arc::new(FakeProvider::new("mangabaka"));
+    provider.register_get(sample_metadata());
+    // A plausible-but-wrong fuzzy candidate exists for the title.
+    provider.register_search(
+        "Hana-Kimi",
+        vec![SearchHit {
+            external_id: "99999".into(),
+            title: "The Art of Hana-Kimi".into(),
+            year: None,
+            cover_url: None,
+            kind: Some(SeriesKind::Manga),
+            score: None,
+        }],
+    );
+    let mut b = MetadataRegistry::builder();
+    b.register(provider.clone()).unwrap();
+    b.set_active("mangabaka");
+    let registry = Arc::new(b.build().unwrap());
+
+    insert_release_full(
+        &db,
+        "r-info-direct",
+        "Hana-Kimi",
+        None,
+        Some("https://mangabaka.org/12345"),
+        &["cbz"],
+    )
+    .await;
+
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-info-direct").await.unwrap();
+
+    assert_eq!(out.path, Some(ResolutionPath::ForeignIdLookup));
+    assert!(out.series_id.is_some());
+    assert_eq!(out.confidence, Some(1.0));
+    let calls = provider.calls();
+    assert!(
+        calls.iter().any(|c| c == "get(12345)"),
+        "expected get(12345); got {calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c.starts_with("search(")),
+        "fuzzy search should not run when the Information link resolves; got {calls:?}"
+    );
+
+    let stored = releases::Entity::find_by_id("r-info-direct".to_string())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.resolution_status, "resolved");
 }
 
 #[tokio::test]
