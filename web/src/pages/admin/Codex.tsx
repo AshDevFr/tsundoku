@@ -2,9 +2,12 @@ import {
   Alert,
   Badge,
   Button,
+  Divider,
   Group,
   Loader,
   Paper,
+  ScrollArea,
+  SimpleGrid,
   Stack,
   Text,
   Title,
@@ -17,6 +20,7 @@ import { useCodexRefresh, useTestCodex } from "@/api/mutations";
 import {
   type CodexStatusDto,
   type HealthCheckDto,
+  type SyncRunDto,
   useCodexStatus,
 } from "@/api/queries";
 import { formatAbsolute, formatRelative } from "@/api/utils";
@@ -185,67 +189,171 @@ function CodexStatusBody({ status }: { status: CodexStatusDto }) {
     );
   }
   const auth = AUTH_STATE_META[status.authState] ?? AUTH_STATE_META.unknown;
+  const hasChecks = status.recentChecks.length > 0;
+  const hasSyncs = status.recentSyncRuns.length > 0;
   return (
-    <Stack gap={6} data-testid="codex-status-body">
-      <Group gap="xs" wrap="wrap">
-        <Badge
-          color={status.reachable ? "green" : "red"}
-          variant="light"
-          data-testid="codex-reachable-badge"
-        >
-          {status.reachable ? "Reachable" : "Unreachable"}
-        </Badge>
-        <Badge
-          color={auth.color}
-          variant="light"
-          data-testid="codex-auth-badge"
-        >
-          {auth.label}
-        </Badge>
-        {status.codexName && (
-          <Text size="sm" c="dimmed">
-            {status.codexName}
-            {status.codexVersion ? ` v${status.codexVersion}` : ""}
+    <Stack gap="md" data-testid="codex-status-body">
+      <Stack gap={6}>
+        <Group gap="xs" wrap="wrap">
+          <Badge
+            color={status.reachable ? "green" : "red"}
+            variant="light"
+            data-testid="codex-reachable-badge"
+          >
+            {status.reachable ? "Reachable" : "Unreachable"}
+          </Badge>
+          <Badge
+            color={auth.color}
+            variant="light"
+            data-testid="codex-auth-badge"
+          >
+            {auth.label}
+          </Badge>
+          {status.codexName && (
+            <Text size="sm" c="dimmed">
+              {status.codexName}
+              {status.codexVersion ? ` v${status.codexVersion}` : ""}
+            </Text>
+          )}
+        </Group>
+        {codexVersionOutdated(status.codexVersion) && (
+          <Alert
+            color="yellow"
+            variant="light"
+            data-testid="codex-version-warning"
+          >
+            Codex v{status.codexVersion} is older than v{MIN_CODEX_VERSION},
+            which adds the series index the presence sync needs. Upgrade Codex
+            if syncs keep failing.
+          </Alert>
+        )}
+        <Group gap="lg" wrap="wrap">
+          <Text size="sm">
+            <Text span fw={600}>
+              Series:
+            </Text>{" "}
+            {typeof status.linkedCount === "number" ? status.linkedCount : "—"}
+            {" linked"}
+            {typeof status.fetchedCount === "number"
+              ? ` of ${status.fetchedCount} on Codex`
+              : ""}
+          </Text>
+          <Text size="sm">
+            <Text span fw={600}>
+              Last sync:
+            </Text>{" "}
+            {typeof status.lastSuccessAt === "number"
+              ? formatRelative(status.lastSuccessAt)
+              : "never"}
+          </Text>
+        </Group>
+        {status.lastError && (
+          <Text size="xs" c="red" data-testid="codex-last-error">
+            Last error: {status.lastError}
           </Text>
         )}
-      </Group>
-      {codexVersionOutdated(status.codexVersion) && (
-        <Alert
-          color="yellow"
-          variant="light"
-          data-testid="codex-version-warning"
-        >
-          Codex v{status.codexVersion} is older than v{MIN_CODEX_VERSION}, which
-          adds the series index the presence sync needs. Upgrade Codex if syncs
-          keep failing.
-        </Alert>
+      </Stack>
+      {(hasChecks || hasSyncs) && <Divider />}
+      {(hasChecks || hasSyncs) && (
+        // Each row is sparse, so the two histories sit side by side on wide
+        // screens (collapsing to one column on narrow ones) at a fixed height
+        // so they stay aligned instead of one stretching past the other.
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md" verticalSpacing="sm">
+          <CodexRecentChecks checks={status.recentChecks} />
+          <CodexRecentSyncRuns runs={status.recentSyncRuns} />
+        </SimpleGrid>
       )}
-      <Group gap="lg" wrap="wrap">
-        <Text size="sm">
-          <Text span fw={600}>
-            Series:
-          </Text>{" "}
-          {typeof status.linkedCount === "number" ? status.linkedCount : "—"}
-          {" linked"}
-          {typeof status.fetchedCount === "number"
-            ? ` of ${status.fetchedCount} on Codex`
-            : ""}
-        </Text>
-        <Text size="sm">
-          <Text span fw={600}>
-            Last sync:
-          </Text>{" "}
-          {typeof status.lastSuccessAt === "number"
-            ? formatRelative(status.lastSuccessAt)
-            : "never"}
-        </Text>
-      </Group>
-      {status.lastError && (
-        <Text size="xs" c="red" data-testid="codex-last-error">
-          Last error: {status.lastError}
-        </Text>
-      )}
-      <CodexRecentChecks checks={status.recentChecks} />
+    </Stack>
+  );
+}
+
+/// Cap each history list so a long audit trail scrolls inside the card instead
+/// of pushing the page down. Two-line rows, so ~4 fit before it scrolls.
+const HISTORY_MAX_HEIGHT = 168;
+
+/// Per-sweep `outcome` → badge color, short badge text, and the bold one-line
+/// summary on each row. Only `success` is green; the three failure modes are
+/// visually distinct from a reachability "down" so the operator can tell a
+/// sweep failure from an outage.
+const OUTCOME_META: Record<
+  string,
+  { color: string; badge: string; title: string }
+> = {
+  success: { color: "teal", badge: "ok", title: "Sync complete" },
+  preflight_failed: {
+    color: "orange",
+    badge: "unreachable",
+    title: "Codex unreachable",
+  },
+  auth_failed: { color: "red", badge: "auth", title: "Auth rejected" },
+  error: { color: "red", badge: "error", title: "Sync failed" },
+};
+
+/// Per-sweep refresh history (newest first): one row per cron or manual sweep,
+/// showing what it produced (linked/fetched counts) or why it failed. Distinct
+/// from the reachability history above, which only logs up/down transitions.
+function CodexRecentSyncRuns({ runs }: { runs: SyncRunDto[] }) {
+  if (runs.length === 0) return null;
+  return (
+    <Stack gap="xs" data-testid="codex-recent-sync-runs">
+      <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+        Recent syncs
+      </Text>
+      <ScrollArea h={HISTORY_MAX_HEIGHT} type="hover" offsetScrollbars="y">
+        <Stack gap="sm" pr="sm">
+          {runs.map((r) => {
+            const meta = OUTCOME_META[r.outcome] ?? OUTCOME_META.error;
+            const hasCounts =
+              typeof r.linkedCount === "number" &&
+              typeof r.fetchedCount === "number";
+            return (
+              <Stack key={r.id} gap={2}>
+                <Group gap="xs" wrap="nowrap" align="center">
+                  <Badge
+                    size="xs"
+                    variant="light"
+                    color={meta.color}
+                    style={{ flexShrink: 0 }}
+                  >
+                    {meta.badge}
+                  </Badge>
+                  <Text
+                    size="xs"
+                    fw={500}
+                    lineClamp={1}
+                    style={{ flex: 1, minWidth: 0 }}
+                  >
+                    {meta.title}
+                  </Text>
+                  <Text
+                    size="xs"
+                    c="dimmed"
+                    style={{ flexShrink: 0 }}
+                    title={formatAbsolute(r.ranAt)}
+                  >
+                    {formatRelative(r.ranAt)}
+                  </Text>
+                </Group>
+                <Group gap="xs" wrap="wrap" align="baseline" pl={4}>
+                  <Text size="xs" c="dimmed">
+                    via {r.trigger}
+                  </Text>
+                  {r.outcome === "success" && hasCounts && (
+                    <Text size="xs" c="dimmed">
+                      · {r.linkedCount} of {r.fetchedCount} linked
+                    </Text>
+                  )}
+                  {r.error && (
+                    <Text size="xs" c="red" lineClamp={1} title={r.error}>
+                      · {r.error}
+                    </Text>
+                  )}
+                </Group>
+              </Stack>
+            );
+          })}
+        </Stack>
+      </ScrollArea>
     </Stack>
   );
 }
@@ -256,37 +364,54 @@ function CodexStatusBody({ status }: { status: CodexStatusDto }) {
 function CodexRecentChecks({ checks }: { checks: HealthCheckDto[] }) {
   if (checks.length === 0) return null;
   return (
-    <Stack gap={4} data-testid="codex-recent-checks">
+    <Stack gap="xs" data-testid="codex-recent-checks">
       <Text size="xs" fw={600} c="dimmed" tt="uppercase">
         Recent checks
       </Text>
-      {checks.map((c) => (
-        <Group
-          key={`${c.checkedAt}-${c.trigger}`}
-          gap="xs"
-          wrap="wrap"
-          align="baseline"
-        >
-          <Badge
-            size="xs"
-            variant="light"
-            color={c.reachable ? "green" : "red"}
-          >
-            {c.reachable ? "up" : "down"}
-          </Badge>
-          <Text size="xs" c="dimmed">
-            {c.trigger}
-          </Text>
-          <Text size="xs" c="dimmed" title={formatAbsolute(c.checkedAt)}>
-            {formatRelative(c.checkedAt)}
-          </Text>
-          {c.error && (
-            <Text size="xs" c="red" lineClamp={1} title={c.error}>
-              {c.error}
-            </Text>
-          )}
-        </Group>
-      ))}
+      <ScrollArea h={HISTORY_MAX_HEIGHT} type="hover" offsetScrollbars="y">
+        <Stack gap="sm" pr="sm">
+          {checks.map((c) => (
+            <Stack key={c.id} gap={2}>
+              <Group gap="xs" wrap="nowrap" align="center">
+                <Badge
+                  size="xs"
+                  variant="light"
+                  color={c.reachable ? "green" : "red"}
+                  style={{ flexShrink: 0 }}
+                >
+                  {c.reachable ? "up" : "down"}
+                </Badge>
+                <Text
+                  size="xs"
+                  fw={500}
+                  lineClamp={1}
+                  style={{ flex: 1, minWidth: 0 }}
+                >
+                  {c.reachable ? "Reachable" : "Unreachable"}
+                </Text>
+                <Text
+                  size="xs"
+                  c="dimmed"
+                  style={{ flexShrink: 0 }}
+                  title={formatAbsolute(c.checkedAt)}
+                >
+                  {formatRelative(c.checkedAt)}
+                </Text>
+              </Group>
+              <Group gap="xs" wrap="wrap" align="baseline" pl={4}>
+                <Text size="xs" c="dimmed">
+                  via {c.trigger}
+                </Text>
+                {c.error && (
+                  <Text size="xs" c="red" lineClamp={1} title={c.error}>
+                    · {c.error}
+                  </Text>
+                )}
+              </Group>
+            </Stack>
+          ))}
+        </Stack>
+      </ScrollArea>
     </Stack>
   );
 }

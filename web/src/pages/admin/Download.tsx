@@ -3,14 +3,17 @@ import {
   Badge,
   Button,
   Center,
+  Divider,
   Group,
   Loader,
   Paper,
+  ScrollArea,
   Stack,
   Text,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { Link } from "@tanstack/react-router";
 import { useTestDownload } from "@/api/mutations";
 import {
   type DownloadStatusDto,
@@ -20,6 +23,11 @@ import {
 } from "@/api/queries";
 import { formatAbsolute, formatRelative } from "@/api/utils";
 import { ConfigRow } from "@/components/admin/atoms";
+
+/// Cap the check/send history lists so a long audit trail scrolls inside the
+/// card instead of pushing the page down. Two-line rows, so ~4 fit before it
+/// scrolls.
+const HISTORY_MAX_HEIGHT = 168;
 
 /// Admin page for the send-to-torrent-client integration: connection info,
 /// live reachability with an on-demand test, and the recent check / send
@@ -144,7 +152,13 @@ function DownloadCard({ status }: { status: DownloadStatusDto }) {
           />
         </Stack>
 
+        {(status.recentChecks.length > 0 || status.recentSends.length > 0) && (
+          <Divider />
+        )}
         <RecentChecks checks={status.recentChecks} />
+        {status.recentChecks.length > 0 && status.recentSends.length > 0 && (
+          <Divider />
+        )}
         <RecentSends sends={status.recentSends} />
       </Stack>
     </Paper>
@@ -197,37 +211,58 @@ function HealthLine({ status }: { status: DownloadStatusDto }) {
 function RecentChecks({ checks }: { checks: HealthCheckDto[] }) {
   if (checks.length === 0) return null;
   return (
-    <Stack gap={4}>
+    <Stack gap="xs">
       <Text size="xs" fw={600} c="dimmed" tt="uppercase">
         Recent checks
       </Text>
-      {checks.map((c) => (
-        <Group
-          key={`${c.checkedAt}-${c.trigger}`}
-          gap="xs"
-          wrap="wrap"
-          align="baseline"
-        >
-          <Badge
-            size="xs"
-            variant="light"
-            color={c.reachable ? "green" : "red"}
-          >
-            {c.reachable ? "up" : "down"}
-          </Badge>
-          <Text size="xs" c="dimmed">
-            {c.trigger}
-          </Text>
-          <Text size="xs" c="dimmed" title={formatAbsolute(c.checkedAt)}>
-            {formatRelative(c.checkedAt)}
-          </Text>
-          {c.error && (
-            <Text size="xs" c="red" lineClamp={1} title={c.error}>
-              {c.error}
-            </Text>
-          )}
-        </Group>
-      ))}
+      <ScrollArea.Autosize
+        mah={HISTORY_MAX_HEIGHT}
+        type="hover"
+        offsetScrollbars="y"
+      >
+        <Stack gap="sm" pr="sm">
+          {checks.map((c) => (
+            <Stack key={c.id} gap={2}>
+              <Group gap="xs" wrap="nowrap" align="center">
+                <Badge
+                  size="xs"
+                  variant="light"
+                  color={c.reachable ? "green" : "red"}
+                  style={{ flexShrink: 0 }}
+                >
+                  {c.reachable ? "up" : "down"}
+                </Badge>
+                <Text
+                  size="xs"
+                  fw={500}
+                  lineClamp={1}
+                  style={{ flex: 1, minWidth: 0 }}
+                >
+                  {c.reachable ? "Reachable" : "Unreachable"}
+                </Text>
+                <Text
+                  size="xs"
+                  c="dimmed"
+                  style={{ flexShrink: 0 }}
+                  title={formatAbsolute(c.checkedAt)}
+                >
+                  {formatRelative(c.checkedAt)}
+                </Text>
+              </Group>
+              <Group gap="xs" wrap="wrap" align="baseline" pl={4}>
+                <Text size="xs" c="dimmed">
+                  via {c.trigger}
+                </Text>
+                {c.error && (
+                  <Text size="xs" c="red" lineClamp={1} title={c.error}>
+                    · {c.error}
+                  </Text>
+                )}
+              </Group>
+            </Stack>
+          ))}
+        </Stack>
+      </ScrollArea.Autosize>
     </Stack>
   );
 }
@@ -235,38 +270,80 @@ function RecentChecks({ checks }: { checks: HealthCheckDto[] }) {
 function RecentSends({ sends }: { sends: SendRecordDto[] }) {
   if (sends.length === 0) return null;
   return (
-    <Stack gap={4}>
+    <Stack gap="xs">
       <Text size="xs" fw={600} c="dimmed" tt="uppercase">
         Recent sends
       </Text>
-      {sends.map((s) => (
-        <Group
-          key={`${s.releaseId}-${s.sentAt}`}
-          gap="xs"
-          wrap="wrap"
-          align="baseline"
-        >
-          <Badge size="xs" variant="light" color={s.success ? "teal" : "red"}>
-            {s.success ? "sent" : "failed"}
-          </Badge>
-          <Text size="xs" c="dimmed">
-            {s.source}
-          </Text>
-          {s.label && (
-            <Text size="xs" c="dimmed">
-              {s.label}
-            </Text>
-          )}
-          <Text size="xs" c="dimmed" title={formatAbsolute(s.sentAt)}>
-            {formatRelative(s.sentAt)}
-          </Text>
-          {s.error && (
-            <Text size="xs" c="red" lineClamp={1} title={s.error}>
-              {s.error}
-            </Text>
-          )}
-        </Group>
-      ))}
+      <ScrollArea.Autosize
+        mah={HISTORY_MAX_HEIGHT}
+        type="hover"
+        offsetScrollbars="y"
+      >
+        <Stack gap="sm" pr="sm">
+          {sends.map((s) => (
+            <Stack key={s.id} gap={2}>
+              <Group gap="xs" wrap="nowrap" align="center">
+                <Badge
+                  size="xs"
+                  variant="light"
+                  color={s.success ? "teal" : "red"}
+                  style={{ flexShrink: 0 }}
+                >
+                  {s.success ? "sent" : "failed"}
+                </Badge>
+                {typeof s.seriesId === "number" ? (
+                  // Link directly (not Anchor component={Link}) so TanStack's
+                  // typed params infer; the inner Text carries the link color
+                  // and clamp.
+                  <Link
+                    to="/series/$id"
+                    params={{ id: String(s.seriesId) }}
+                    title={s.releaseTitle ?? s.releaseId}
+                    style={{ flex: 1, minWidth: 0, textDecoration: "none" }}
+                  >
+                    <Text size="xs" fw={500} lineClamp={1} c="blue.4">
+                      {s.releaseTitle ?? s.releaseId}
+                    </Text>
+                  </Link>
+                ) : (
+                  <Text
+                    size="xs"
+                    fw={500}
+                    lineClamp={1}
+                    style={{ flex: 1, minWidth: 0 }}
+                    title={s.releaseTitle ?? s.releaseId}
+                  >
+                    {s.releaseTitle ?? s.releaseId}
+                  </Text>
+                )}
+                <Text
+                  size="xs"
+                  c="dimmed"
+                  style={{ flexShrink: 0 }}
+                  title={formatAbsolute(s.sentAt)}
+                >
+                  {formatRelative(s.sentAt)}
+                </Text>
+              </Group>
+              <Group gap="xs" wrap="wrap" align="baseline" pl={4}>
+                <Text size="xs" c="dimmed">
+                  via {s.source}
+                </Text>
+                {s.label && (
+                  <Text size="xs" c="dimmed">
+                    · label: {s.label}
+                  </Text>
+                )}
+                {s.error && (
+                  <Text size="xs" c="red" lineClamp={1} title={s.error}>
+                    · {s.error}
+                  </Text>
+                )}
+              </Group>
+            </Stack>
+          ))}
+        </Stack>
+      </ScrollArea.Autosize>
     </Stack>
   );
 }

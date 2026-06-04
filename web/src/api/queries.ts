@@ -10,6 +10,7 @@ export type CodexInfo = components["schemas"]["CodexInfo"];
 export type DownloadStatusDto = components["schemas"]["DownloadStatusDto"];
 export type HealthCheckDto = components["schemas"]["HealthCheckDto"];
 export type SendRecordDto = components["schemas"]["SendRecordDto"];
+export type SyncRunDto = components["schemas"]["SyncRunDto"];
 export type SeriesListItem = components["schemas"]["SeriesListItem"];
 export type SeriesListPage = components["schemas"]["SeriesListPage"];
 export type SeriesDetail = components["schemas"]["SeriesDetail"];

@@ -1240,6 +1240,11 @@ export interface components {
              *     disabled or before the first probe.
              */
             recentChecks: components["schemas"]["HealthCheckDto"][];
+            /**
+             * @description Recent sweep attempts (cron + manual), newest first, with the counts each
+             *     produced or why it failed. Empty when disabled or before the first sweep.
+             */
+            recentSyncRuns: components["schemas"]["SyncRunDto"][];
         };
         /**
          * @description Body for creating a manual series. Only `canonicalTitle` is required;
@@ -1337,6 +1342,11 @@ export interface components {
             /** Format: int64 */
             checkedAt: number;
             error?: string | null;
+            /**
+             * Format: int64
+             * @description Row id, unique within the table — a stable React key for the UI list.
+             */
+            id: number;
             reachable: boolean;
             trigger: string;
         };
@@ -1954,10 +1964,26 @@ export interface components {
         /** @description One send-attempt audit entry. `source` is `torrent` | `magnet`. */
         SendRecordDto: {
             error?: string | null;
+            /**
+             * Format: int64
+             * @description Row id, unique within the table — a stable React key for the UI list.
+             */
+            id: number;
             label?: string | null;
             releaseId: string;
+            /**
+             * @description The release's title, so the log names what was sent instead of an
+             *     opaque id. `None` only if the release row was removed.
+             */
+            releaseTitle?: string | null;
             /** Format: int64 */
             sentAt: number;
+            /**
+             * Format: int32
+             * @description The resolved series id, so the UI can link the row to the series page.
+             *     `None` when the release is unresolved (or the release row was removed).
+             */
+            seriesId?: number | null;
             source: string;
             success: boolean;
         };
@@ -2256,6 +2282,28 @@ export interface components {
             series: number;
             /** Format: int64 */
             totalReleases: number;
+        };
+        /**
+         * @description One sweep-attempt audit entry for the Codex refresh history. `outcome` is
+         *     `success` | `preflight_failed` | `auth_failed` | `error`; the counts are set
+         *     only on `success`, `error` only otherwise.
+         */
+        SyncRunDto: {
+            error?: string | null;
+            /** Format: int64 */
+            fetchedCount?: number | null;
+            /**
+             * Format: int64
+             * @description Row id, unique within the table — a stable React key for the UI list.
+             */
+            id: number;
+            /** Format: int64 */
+            linkedCount?: number | null;
+            outcome: string;
+            /** Format: int64 */
+            ranAt: number;
+            /** @description `cron` | `manual`. */
+            trigger: string;
         };
         TagList: {
             items: components["schemas"]["TagUsageDto"][];

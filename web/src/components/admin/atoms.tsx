@@ -1,4 +1,4 @@
-import { Anchor, Badge, Card, Group, Stack, Text } from "@mantine/core";
+import { Anchor, Badge, Group, Stack, Text } from "@mantine/core";
 import type { ReactNode } from "react";
 
 /// Single-line label/value row used across the source + provider config
@@ -18,8 +18,8 @@ export function ConfigRow({
         size="xs"
         c="dimmed"
         ff="monospace"
-        miw={120}
-        style={{ flexShrink: 0 }}
+        w={150}
+        style={{ flexShrink: 0, whiteSpace: "nowrap" }}
       >
         {label}
       </Text>
@@ -28,9 +28,7 @@ export function ConfigRow({
           {value}
         </Text>
       ) : (
-        <Card padding={0} radius={0} bg="transparent" style={{ minWidth: 0 }}>
-          {value}
-        </Card>
+        value
       )}
     </Group>
   );

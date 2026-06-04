@@ -1516,8 +1516,8 @@ base_url = "https://codex.example.com"
             r#"
 [download]
 enabled = true
-default_label = "manga"
-default_dir = "/downloads/manga"
+default_label = "tsundoku"
+default_dir = "/downloads/tsundoku"
 default_start = false
 prefer_torrent_file = false
 timeout_seconds = 20
@@ -1539,10 +1539,10 @@ password = "secret"
         );
         assert_eq!(cfg.download.rutorrent.username.as_deref(), Some("rt"));
         assert_eq!(cfg.download.rutorrent.password.as_deref(), Some("secret"));
-        assert_eq!(cfg.download.default_label.as_deref(), Some("manga"));
+        assert_eq!(cfg.download.default_label.as_deref(), Some("tsundoku"));
         assert_eq!(
             cfg.download.default_dir.as_deref(),
-            Some("/downloads/manga")
+            Some("/downloads/tsundoku")
         );
         assert!(!cfg.download.default_start);
         assert!(!cfg.download.prefer_torrent_file);

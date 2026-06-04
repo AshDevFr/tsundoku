@@ -6,7 +6,7 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
-use td_db::entities::{codex_health_checks, download_health_checks, download_sends};
+use td_db::entities::{codex_health_checks, download_health_checks};
 use td_db::repos::{TRIGGER_MANUAL, download_sends_repo, download_status_repo, releases_repo};
 use td_download::{AddRequest, AddSource, DownloadError};
 use utoipa::ToSchema;
@@ -34,6 +34,8 @@ pub struct SendToClientRequest {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthCheckDto {
+    /// Row id, unique within the table — a stable React key for the UI list.
+    pub id: i64,
     pub checked_at: i64,
     pub reachable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,6 +46,7 @@ pub struct HealthCheckDto {
 impl From<download_health_checks::Model> for HealthCheckDto {
     fn from(m: download_health_checks::Model) -> Self {
         Self {
+            id: m.id,
             checked_at: m.checked_at,
             reachable: m.reachable,
             error: m.error,
@@ -56,6 +59,7 @@ impl From<download_health_checks::Model> for HealthCheckDto {
 impl From<codex_health_checks::Model> for HealthCheckDto {
     fn from(m: codex_health_checks::Model) -> Self {
         Self {
+            id: m.id,
             checked_at: m.checked_at,
             reachable: m.reachable,
             error: m.error,
@@ -68,7 +72,17 @@ impl From<codex_health_checks::Model> for HealthCheckDto {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SendRecordDto {
+    /// Row id, unique within the table — a stable React key for the UI list.
+    pub id: i64,
     pub release_id: String,
+    /// The release's title, so the log names what was sent instead of an
+    /// opaque id. `None` only if the release row was removed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_title: Option<String>,
+    /// The resolved series id, so the UI can link the row to the series page.
+    /// `None` when the release is unresolved (or the release row was removed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub series_id: Option<i32>,
     pub sent_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -78,10 +92,18 @@ pub struct SendRecordDto {
     pub error: Option<String>,
 }
 
-impl From<download_sends::Model> for SendRecordDto {
-    fn from(m: download_sends::Model) -> Self {
+impl From<download_sends_repo::SendWithTitle> for SendRecordDto {
+    fn from(row: download_sends_repo::SendWithTitle) -> Self {
+        let download_sends_repo::SendWithTitle {
+            send: m,
+            release_title,
+            series_id,
+        } = row;
         Self {
+            id: m.id,
             release_id: m.release_id,
+            release_title,
+            series_id,
             sent_at: m.sent_at,
             label: m.label,
             source: m.source,

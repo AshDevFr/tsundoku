@@ -21,7 +21,10 @@ use td_codex::{
     CodexClient, CodexError, DEFAULT_SWEEP_PAGE_SIZE, ExternalIndexItem, normalize_source,
 };
 use td_db::repos::codex_link_repo::AutoLink;
-use td_db::repos::{TRIGGER_CRON, codex_link_repo, codex_status_repo, series_external_ids_repo};
+use td_db::repos::{
+    TRIGGER_CRON, codex_link_repo, codex_status_repo, codex_sync_runs_repo,
+    series_external_ids_repo,
+};
 use tokio::sync::broadcast;
 use tokio_cron_scheduler::{Job, JobSchedulerError};
 
@@ -57,7 +60,7 @@ pub fn build(
                 JOB_KEY,
                 || async {},
                 move || async move {
-                    run_tick(client, db).await;
+                    run_tick(client, db, TRIGGER_CRON).await;
                     JobResult {
                         triggered: true,
                         skipped: false,
@@ -71,27 +74,86 @@ pub fn build(
     Ok(job)
 }
 
-/// One sync tick. Public so the manual API trigger can drive it directly.
-/// Contention is handled by the caller via [`crate::dispatch::try_dispatch`];
-/// `run_tick` does not acquire the codex lock itself.
-pub async fn run_tick(client: Arc<CodexClient>, db: DatabaseConnection) {
-    let now = chrono::Utc::now().timestamp();
+/// Terminal result of one sweep, mapped into a `codex_sync_runs` history row.
+/// `Success` carries the fetched/linked counts; the failure variants carry the
+/// message that also lands in `codex_status.last_error`.
+enum SyncOutcome {
+    Success { fetched: i64, linked: i64 },
+    PreflightFailed(String),
+    AuthFailed(String),
+    Error(String),
+}
 
+/// One sync tick. Public so the manual API trigger can drive it directly.
+/// `trigger` (`cron` | `manual`) is recorded on both the reachability history
+/// and the per-sweep history. Contention is handled by the caller via
+/// [`crate::dispatch::try_dispatch`]; `run_tick` does not acquire the codex
+/// lock itself.
+pub async fn run_tick(client: Arc<CodexClient>, db: DatabaseConnection, trigger: &str) {
+    let now = chrono::Utc::now().timestamp();
+    let outcome = sweep_once(&client, &db, now, trigger).await;
+
+    // Append one history row per attempt, including failures, so the admin
+    // Codex page shows a full refresh timeline instead of only the last
+    // snapshot in `codex_status`.
+    let (kind, fetched, linked, error) = match &outcome {
+        SyncOutcome::Success { fetched, linked } => (
+            codex_sync_runs_repo::OUTCOME_SUCCESS,
+            Some(*fetched),
+            Some(*linked),
+            None,
+        ),
+        SyncOutcome::PreflightFailed(msg) => (
+            codex_sync_runs_repo::OUTCOME_PREFLIGHT_FAILED,
+            None,
+            None,
+            Some(msg.as_str()),
+        ),
+        SyncOutcome::AuthFailed(msg) => (
+            codex_sync_runs_repo::OUTCOME_AUTH_FAILED,
+            None,
+            None,
+            Some(msg.as_str()),
+        ),
+        SyncOutcome::Error(msg) => (
+            codex_sync_runs_repo::OUTCOME_ERROR,
+            None,
+            None,
+            Some(msg.as_str()),
+        ),
+    };
+    if let Err(e) =
+        codex_sync_runs_repo::insert(&db, now, trigger, kind, fetched, linked, error).await
+    {
+        tracing::warn!(error = ?e, "failed to record codex sync run history");
+    }
+}
+
+/// The sweep body, returning its terminal [`SyncOutcome`] while still applying
+/// the same `codex_status` side effects as before. Split out of [`run_tick`] so
+/// the history-row write happens in exactly one place regardless of where the
+/// sweep bailed.
+async fn sweep_once(
+    client: &CodexClient,
+    db: &DatabaseConnection,
+    now: i64,
+    trigger: &str,
+) -> SyncOutcome {
     // Preflight: a failed /info means Codex is down or misconfigured. Record
     // it and bail before the heavier authenticated sweep — existing links and
     // last_success_at stay intact so stale-but-valid data survives an outage.
     match client.info().await {
         Ok(info) => {
             // record_preflight maintains the reachability history (appends only
-            // on a transition); the scheduled sweep records under `cron`.
+            // on a transition), tagged with this run's trigger.
             if let Err(e) = codex_status_repo::record_preflight(
-                &db,
+                db,
                 true,
                 Some(&info.name),
                 Some(&info.version),
                 None,
                 now,
-                TRIGGER_CRON,
+                trigger,
             )
             .await
             {
@@ -105,17 +167,17 @@ pub async fn run_tick(client: Arc<CodexClient>, db: DatabaseConnection) {
         }
         Err(e) => {
             let _ = codex_status_repo::record_preflight(
-                &db,
+                db,
                 false,
                 None,
                 None,
                 Some(&e.to_string()),
                 now,
-                TRIGGER_CRON,
+                trigger,
             )
             .await;
             tracing::warn!(error = %e, "codex preflight failed; skipping sweep, preserving links");
-            return;
+            return SyncOutcome::PreflightFailed(e.to_string());
         }
     }
 
@@ -124,32 +186,40 @@ pub async fn run_tick(client: Arc<CodexClient>, db: DatabaseConnection) {
     let items = match client.fetch_all(DEFAULT_SWEEP_PAGE_SIZE).await {
         Ok(items) => items,
         Err(e) => {
-            match classify_sweep_error(&e) {
+            return match classify_sweep_error(&e) {
                 (Some(auth_state), msg) => {
-                    let _ = codex_status_repo::set_auth_state(&db, auth_state, Some(&msg)).await;
+                    let _ = codex_status_repo::set_auth_state(db, auth_state, Some(&msg)).await;
+                    tracing::warn!(error = %e, "codex external-index sweep rejected the api_key");
+                    SyncOutcome::AuthFailed(msg)
                 }
                 (None, msg) => {
-                    let _ = codex_status_repo::set_error(&db, &msg).await;
+                    let _ = codex_status_repo::set_error(db, &msg).await;
+                    tracing::warn!(error = %e, "codex external-index sweep failed; preserving existing links");
+                    SyncOutcome::Error(msg)
                 }
-            }
-            tracing::warn!(error = %e, "codex external-index sweep failed; preserving existing links");
-            return;
+            };
         }
     };
 
     let swept = items.len();
-    match apply_sweep(&db, &items, now).await {
+    match apply_sweep(db, &items, now).await {
         Ok(linked) => {
             if let Err(e) =
-                codex_status_repo::set_success(&db, swept as i64, linked as i64, now).await
+                codex_status_repo::set_success(db, swept as i64, linked as i64, now).await
             {
                 tracing::warn!(error = ?e, "failed to record codex sync success");
             }
             tracing::info!(swept, linked, "codex sync complete");
+            SyncOutcome::Success {
+                fetched: swept as i64,
+                linked: linked as i64,
+            }
         }
         Err(e) => {
-            let _ = codex_status_repo::set_error(&db, &format!("applying sweep: {e}")).await;
+            let msg = format!("applying sweep: {e}");
+            let _ = codex_status_repo::set_error(db, &msg).await;
             tracing::warn!(error = ?e, "codex sync failed while applying sweep to the database");
+            SyncOutcome::Error(msg)
         }
     }
 }

@@ -5,7 +5,10 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
-use td_db::repos::{TRIGGER_MANUAL, codex_link_repo, codex_status_repo, series_repo};
+use td_db::entities::codex_sync_runs;
+use td_db::repos::{
+    TRIGGER_MANUAL, codex_link_repo, codex_status_repo, codex_sync_runs_repo, series_repo,
+};
 use td_scheduler::dispatch;
 use td_scheduler::jobs::sync_codex;
 use utoipa::ToSchema;
@@ -54,6 +57,43 @@ pub struct CodexStatusDto {
     /// Recent reachability transitions + manual tests, newest first. Empty when
     /// disabled or before the first probe.
     pub recent_checks: Vec<HealthCheckDto>,
+    /// Recent sweep attempts (cron + manual), newest first, with the counts each
+    /// produced or why it failed. Empty when disabled or before the first sweep.
+    pub recent_sync_runs: Vec<SyncRunDto>,
+}
+
+/// One sweep-attempt audit entry for the Codex refresh history. `outcome` is
+/// `success` | `preflight_failed` | `auth_failed` | `error`; the counts are set
+/// only on `success`, `error` only otherwise.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncRunDto {
+    /// Row id, unique within the table — a stable React key for the UI list.
+    pub id: i64,
+    pub ran_at: i64,
+    /// `cron` | `manual`.
+    pub trigger: String,
+    pub outcome: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fetched_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linked_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl From<codex_sync_runs::Model> for SyncRunDto {
+    fn from(m: codex_sync_runs::Model) -> Self {
+        Self {
+            id: m.id,
+            ran_at: m.ran_at,
+            trigger: m.trigger,
+            outcome: m.outcome,
+            fetched_count: m.fetched_count,
+            linked_count: m.linked_count,
+            error: m.error,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -100,7 +140,7 @@ pub async fn refresh(State(state): State<AppState>) -> ApiResult<Json<CodexRefre
         sync_codex::JOB_KEY,
         || async {},
         move || async move {
-            sync_codex::run_tick(client, db).await;
+            sync_codex::run_tick(client, db, TRIGGER_MANUAL).await;
             JobResult {
                 triggered: true,
                 skipped: false,
@@ -132,6 +172,7 @@ async fn build_status_dto(state: &AppState) -> ApiResult<CodexStatusDto> {
             linked_count: None,
             fetched_count: None,
             recent_checks: Vec::new(),
+            recent_sync_runs: Vec::new(),
         });
     }
 
@@ -139,6 +180,12 @@ async fn build_status_dto(state: &AppState) -> ApiResult<CodexStatusDto> {
         .await
         .map_err(ApiError::Internal)?;
     let recent_checks = codex_status_repo::list_recent_checks(&state.db, HISTORY_LIMIT)
+        .await
+        .map_err(ApiError::Internal)?
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    let recent_sync_runs = codex_sync_runs_repo::list_recent(&state.db, HISTORY_LIMIT)
         .await
         .map_err(ApiError::Internal)?
         .into_iter()
@@ -158,6 +205,7 @@ async fn build_status_dto(state: &AppState) -> ApiResult<CodexStatusDto> {
             linked_count: r.linked_count,
             fetched_count: r.fetched_count,
             recent_checks,
+            recent_sync_runs,
         },
         // Enabled but no sweep has run yet (e.g. fresh boot before the first
         // cron tick): report enabled + unknown rather than a misleading row.
@@ -173,6 +221,7 @@ async fn build_status_dto(state: &AppState) -> ApiResult<CodexStatusDto> {
             linked_count: None,
             fetched_count: None,
             recent_checks,
+            recent_sync_runs,
         },
     };
     Ok(dto)

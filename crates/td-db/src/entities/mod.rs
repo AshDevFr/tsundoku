@@ -3,6 +3,7 @@
 pub mod codex_health_checks;
 pub mod codex_series_link;
 pub mod codex_status;
+pub mod codex_sync_runs;
 pub mod download_health_checks;
 pub mod download_sends;
 pub mod download_status;
@@ -26,6 +27,7 @@ pub mod tags;
 pub use codex_health_checks::Entity as CodexHealthChecks;
 pub use codex_series_link::Entity as CodexSeriesLink;
 pub use codex_status::Entity as CodexStatus;
+pub use codex_sync_runs::Entity as CodexSyncRuns;
 pub use download_health_checks::Entity as DownloadHealthChecks;
 pub use download_sends::Entity as DownloadSends;
 pub use download_status::Entity as DownloadStatus;

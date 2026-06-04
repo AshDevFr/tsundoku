@@ -2,12 +2,29 @@
 //! successful or failed, lands here; the badge-driving "latest send" columns
 //! stay on the `releases` row.
 
-use anyhow::Result;
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, QueryOrder, QuerySelect, Set};
+use std::collections::HashMap;
 
-use crate::entities::download_sends;
+use anyhow::Result;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
+};
+
+use crate::entities::{download_sends, releases};
 
 pub use download_sends::{ActiveModel, Column, Entity, Model};
+
+/// A send attempt joined to its release's title and series id, for the audit
+/// list. Both are read at query time (not stored on `download_sends`) so the
+/// log stays a thin append-only record. `release_title` / `series_id` are
+/// `None` only if the release vanished (the FK's `ON DELETE CASCADE` normally
+/// prevents that) or, for `series_id`, the release is still unresolved.
+#[derive(Debug, Clone)]
+pub struct SendWithTitle {
+    pub send: Model,
+    pub release_title: Option<String>,
+    pub series_id: Option<i32>,
+}
 
 /// Record one send attempt. `source` is `torrent` | `magnet`; `success`
 /// distinguishes a completed add from a client rejection (whose message is in
@@ -36,13 +53,38 @@ pub async fn insert(
     Ok(())
 }
 
-/// The most recent send attempts across all releases, newest first.
-pub async fn list_recent(db: &DatabaseConnection, limit: u64) -> Result<Vec<Model>> {
-    Ok(Entity::find()
+/// The most recent send attempts across all releases, newest first, each
+/// paired with its release title so the audit list can name what was sent.
+pub async fn list_recent(db: &DatabaseConnection, limit: u64) -> Result<Vec<SendWithTitle>> {
+    let sends = Entity::find()
         .order_by_desc(Column::Id)
         .limit(limit)
         .all(db)
-        .await?)
+        .await?;
+
+    // One extra query resolves every referenced release; cheaper and simpler
+    // than a join + custom select struct for a list capped at ~20 rows. Keep
+    // the title and series id (the latter drives the "link to series" action).
+    let ids: Vec<String> = sends.iter().map(|s| s.release_id.clone()).collect();
+    let releases: HashMap<String, (String, Option<i32>)> = releases::Entity::find()
+        .filter(releases::Column::Id.is_in(ids))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|r| (r.id, (r.title, r.series_id)))
+        .collect();
+
+    Ok(sends
+        .into_iter()
+        .map(|send| {
+            let release = releases.get(&send.release_id);
+            SendWithTitle {
+                release_title: release.map(|(title, _)| title.clone()),
+                series_id: release.and_then(|(_, series_id)| *series_id),
+                send,
+            }
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -101,11 +143,19 @@ mod tests {
         let recent = list_recent(&db, 10).await.unwrap();
         assert_eq!(recent.len(), 2);
         // Newest first.
-        assert_eq!(recent[0].sent_at, 200);
-        assert!(!recent[0].success);
-        assert_eq!(recent[0].error.as_deref(), Some("rejected: bad magnet"));
-        assert_eq!(recent[1].sent_at, 100);
-        assert!(recent[1].success);
-        assert_eq!(recent[1].label.as_deref(), Some("manga"));
+        assert_eq!(recent[0].send.sent_at, 200);
+        assert!(!recent[0].send.success);
+        assert_eq!(
+            recent[0].send.error.as_deref(),
+            Some("rejected: bad magnet")
+        );
+        // Every row carries the joined release title; series id is None here
+        // because the seeded release is unresolved.
+        assert_eq!(recent[0].release_title.as_deref(), Some("Test Release"));
+        assert_eq!(recent[0].series_id, None);
+        assert_eq!(recent[1].send.sent_at, 100);
+        assert!(recent[1].send.success);
+        assert_eq!(recent[1].send.label.as_deref(), Some("manga"));
+        assert_eq!(recent[1].release_title.as_deref(), Some("Test Release"));
     }
 }

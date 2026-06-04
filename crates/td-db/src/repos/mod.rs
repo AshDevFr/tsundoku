@@ -8,6 +8,7 @@ pub const TRIGGER_MANUAL: &str = "manual";
 
 pub mod codex_link_repo;
 pub mod codex_status_repo;
+pub mod codex_sync_runs_repo;
 pub mod download_sends_repo;
 pub mod download_status_repo;
 pub mod mangaupdates_id_repo;

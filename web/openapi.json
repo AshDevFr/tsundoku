@@ -2555,7 +2555,8 @@
           "enabled",
           "reachable",
           "authState",
-          "recentChecks"
+          "recentChecks",
+          "recentSyncRuns"
         ],
         "properties": {
           "authState": {
@@ -2622,6 +2623,13 @@
               "$ref": "#/components/schemas/HealthCheckDto"
             },
             "description": "Recent reachability transitions + manual tests, newest first. Empty when\ndisabled or before the first probe."
+          },
+          "recentSyncRuns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SyncRunDto"
+            },
+            "description": "Recent sweep attempts (cron + manual), newest first, with the counts each\nproduced or why it failed. Empty when disabled or before the first sweep."
           }
         }
       },
@@ -2882,6 +2890,7 @@
         "type": "object",
         "description": "One reachability-history entry. `trigger` is `launch` | `cron` | `manual`.",
         "required": [
+          "id",
           "checkedAt",
           "reachable",
           "trigger"
@@ -2896,6 +2905,11 @@
               "string",
               "null"
             ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row id, unique within the table — a stable React key for the UI list."
           },
           "reachable": {
             "type": "boolean"
@@ -4344,6 +4358,7 @@
         "type": "object",
         "description": "One send-attempt audit entry. `source` is `torrent` | `magnet`.",
         "required": [
+          "id",
           "releaseId",
           "sentAt",
           "source",
@@ -4356,6 +4371,11 @@
               "null"
             ]
           },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row id, unique within the table — a stable React key for the UI list."
+          },
           "label": {
             "type": [
               "string",
@@ -4365,9 +4385,24 @@
           "releaseId": {
             "type": "string"
           },
+          "releaseTitle": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release's title, so the log names what was sent instead of an\nopaque id. `None` only if the release row was removed."
+          },
           "sentAt": {
             "type": "integer",
             "format": "int64"
+          },
+          "seriesId": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The resolved series id, so the UI can link the row to the series page.\n`None` when the release is unresolved (or the release row was removed)."
           },
           "source": {
             "type": "string"
@@ -5118,6 +5153,54 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "SyncRunDto": {
+        "type": "object",
+        "description": "One sweep-attempt audit entry for the Codex refresh history. `outcome` is\n`success` | `preflight_failed` | `auth_failed` | `error`; the counts are set\nonly on `success`, `error` only otherwise.",
+        "required": [
+          "id",
+          "ranAt",
+          "trigger",
+          "outcome"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fetchedCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row id, unique within the table — a stable React key for the UI list."
+          },
+          "linkedCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "ranAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trigger": {
+            "type": "string",
+            "description": "`cron` | `manual`."
           }
         }
       },

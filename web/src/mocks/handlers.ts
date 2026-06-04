@@ -1752,7 +1752,26 @@ export const handlers = [
       lastSuccessAt: NOW,
       linkedCount: 2,
       fetchedCount: 18,
-      recentChecks: [{ checkedAt: NOW, reachable: true, trigger: "launch" }],
+      recentChecks: [
+        { id: 1, checkedAt: NOW, reachable: true, trigger: "launch" },
+      ],
+      recentSyncRuns: [
+        {
+          id: 2,
+          ranAt: NOW,
+          trigger: "manual",
+          outcome: "success",
+          fetchedCount: 18,
+          linkedCount: 2,
+        },
+        {
+          id: 1,
+          ranAt: NOW - 200,
+          trigger: "cron",
+          outcome: "auth_failed",
+          error: "api_key rejected (401)",
+        },
+      ],
     });
   }),
   http.post("/api/v1/codex/refresh", ({ request }) => {
@@ -1773,13 +1792,15 @@ export const handlers = [
       lastError: "connection refused",
       recentChecks: [
         {
+          id: 2,
           checkedAt: NOW,
           reachable: false,
           trigger: "manual",
           error: "connection refused",
         },
-        { checkedAt: NOW - 100, reachable: true, trigger: "launch" },
+        { id: 1, checkedAt: NOW - 100, reachable: true, trigger: "launch" },
       ],
+      recentSyncRuns: [],
     });
   }),
 
@@ -1799,8 +1820,23 @@ export const handlers = [
       reachable: true,
       lastTestAt: NOW,
       lastChangeAt: NOW,
-      recentChecks: [{ checkedAt: NOW, reachable: true, trigger: "launch" }],
-      recentSends: [],
+      recentChecks: [
+        { id: 1, checkedAt: NOW, reachable: true, trigger: "launch" },
+      ],
+      recentSends: [
+        {
+          id: 1,
+          releaseId: "rel-1",
+          releaseTitle: "Chainsaw Man v01",
+          // No seriesId: the global mock feeds the router-less Download page
+          // test, so the title renders as plain text (the linked variant is
+          // exercised where a router context exists).
+          sentAt: NOW,
+          label: "manga",
+          source: "torrent",
+          success: true,
+        },
+      ],
     });
   }),
   http.post("/api/v1/download/test", ({ request }) => {
@@ -1821,6 +1857,7 @@ export const handlers = [
       lastError: "connection refused",
       recentChecks: [
         {
+          id: 1,
           checkedAt: NOW,
           reachable: false,
           trigger: "manual",

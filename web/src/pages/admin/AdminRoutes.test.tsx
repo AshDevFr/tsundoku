@@ -430,6 +430,20 @@ describe("admin codex page", () => {
     expect(await screen.findByTestId("codex-card")).toBeInTheDocument();
   });
 
+  it("renders the per-sweep refresh history with counts and failures", async () => {
+    renderAt("/admin/codex");
+    expect(
+      await screen.findByTestId("codex-recent-sync-runs", undefined, {
+        timeout: 3000,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Recent syncs")).toBeInTheDocument();
+    // Success row shows the linked/fetched counts.
+    expect(screen.getByText(/2 of 18 linked/)).toBeInTheDocument();
+    // Failed sweep surfaces its error.
+    expect(screen.getByText(/api_key rejected \(401\)/)).toBeInTheDocument();
+  });
+
   it("tests the codex connection and toasts the unreachable result", async () => {
     renderAt("/admin/codex");
     const btn = await screen.findByTestId("codex-test-button", undefined, {

@@ -11,7 +11,7 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use crate::codex_presence::{CodexInfo, CodexLinkKind, CodexStatus};
 use crate::errors::ApiErrorBody;
 use crate::handlers::codex::{
-    CodexLinkRequest, CodexLinkResponse, CodexRefreshResponse, CodexStatusDto,
+    CodexLinkRequest, CodexLinkResponse, CodexRefreshResponse, CodexStatusDto, SyncRunDto,
 };
 use crate::handlers::covers::InvalidateCoverCacheResponse;
 use crate::handlers::download::{
@@ -188,6 +188,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         InvalidateCoverCacheResponse,
         CodexRefreshResponse,
         CodexStatusDto,
+        SyncRunDto,
         CodexLinkRequest,
         CodexLinkResponse,
         CodexInfo,

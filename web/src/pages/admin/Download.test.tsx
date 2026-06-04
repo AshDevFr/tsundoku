@@ -67,6 +67,17 @@ describe("AdminDownloadPage", () => {
     expect(screen.getByText("Recent checks")).toBeInTheDocument();
   });
 
+  it("names the sent release and marks the label as a label", async () => {
+    renderPage();
+    await screen.findByTestId("download-card");
+    expect(screen.getByText("Recent sends")).toBeInTheDocument();
+    // The release title identifies what was sent (not just the bare id).
+    expect(screen.getByText("Chainsaw Man v01")).toBeInTheDocument();
+    // The label is explicitly prefixed so it isn't mistaken for the source.
+    expect(screen.getByText(/label: manga/)).toBeInTheDocument();
+    expect(screen.getByText(/via torrent/)).toBeInTheDocument();
+  });
+
   it("runs the connection test and toasts the unreachable result", async () => {
     renderPage();
     const btn = await screen.findByTestId("download-test");
