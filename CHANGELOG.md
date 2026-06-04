@@ -2,6 +2,41 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.10.0] - 2026-06-04
+
+### Features
+
+- *(series)* Add ignore_completion column for Codex tracking opt-out
+- *(series)* Add Codex "ignored" status for completion-tracking opt-out
+- *(series)* Add ignore-completion toggle endpoint
+- *(web)* Add ignore-completion toggle, badge, and feed filter
+- *(download)* Add td-download crate with DownloadClient trait + ruTorrent client
+- *(download)* Add config, sent-to-client columns, and AppState client wiring
+- *(download)* Add admin send-to-client and status endpoints
+- *(web)* Add admin send-to-client button, override popover, and Sent badge
+- *(web)* Allow multiple Codex statuses in the feed filter
+- *(download)* Add connection-status, health-history, and send-audit tables
+- *(download)* Add connection test, status probe, and send-attempt recording
+- *(codex)* Add reachability history and on-demand connection test
+- *(web)* Add download client admin page and connection-test UI
+- *(download)* Add XML-RPC transport, nest [download.rutorrent] config, broaden UI
+- *(web)* Dedupe filter presets by name and confirm overwrites
+- *(admin)* Add Codex sweep history and richer download send audit
+
+### Bug Fixes
+
+- *(web)* Stop dropping spaces while typing in the filter search
+- *(download)* Support HTTP Digest auth for ruTorrent, not just Basic
+- *(mangabaka)* Validate dump content instead of trusting upstream sha1 sidecar
+
+### Refactor
+
+- *(download)* Drop the unused ruTorrent web-UI transport, XML-RPC only
+
+### Documentation
+
+- *(readme)* Add project status & support section
+
 ## [1.9.0] - 2026-06-01
 
 ### Features
