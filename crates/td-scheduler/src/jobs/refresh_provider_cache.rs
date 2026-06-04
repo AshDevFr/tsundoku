@@ -126,7 +126,11 @@ pub async fn run_tick(
         Err(e) => {
             let ms = fetch_started.elapsed().as_millis() as i64;
             let err: anyhow::Error = anyhow::Error::new(e).context(format!("refresh {id} failed"));
-            tracing::warn!(error = ?err, provider = %id, "cache refresh failed");
+            // Compact, single-line `{err:#}` (Display) rather than `{err:?}`
+            // (Debug): a degraded upstream is an expected operational event
+            // that's logged-and-swallowed, not a panic — dumping the full
+            // anyhow backtrace into the scheduler log reads as a crash.
+            tracing::warn!(error = %format!("{err:#}"), provider = %id, "cache refresh failed");
             let msg = format!("error: {err}");
             let kind_class = error_kind::classify_anyhow(&err);
             finalize_metrics(

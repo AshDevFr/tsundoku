@@ -3,11 +3,14 @@
 //! Pipeline:
 //!
 //! 1. [`fetch::download`] streams `series.sqlite.tar.gz` from MangaBaka,
-//!    optionally cross-checking the `.sha1` sidecar.
+//!    cross-checking the `.sha1` sidecar best-effort (see below).
 //! 2. [`extract::extract_dump`] untars the archive into a temp `series.sqlite`.
-//! 3. [`setup::prepare`] adds source-id indexes + an FTS5 virtual table on
+//! 3. [`validate::validate_dump`] confirms the extract is a well-formed
+//!    SQLite carrying a plausible `series` row count — the integrity guard,
+//!    since upstream's sidecar can drift out of sync with the served tarball.
+//! 4. [`setup::prepare`] adds source-id indexes + an FTS5 virtual table on
 //!    the extracted file (a one-time cost per refresh, ~minutes on 585k rows).
-//! 4. [`store::OfflineStore::open_ro`] opens the prepared file as a
+//! 5. [`store::OfflineStore::open_ro`] opens the prepared file as a
 //!    read-only sea-orm connection for the provider to query.
 //!
 //! `refresh_cache()` glues these together with atomic file swaps so an
@@ -17,6 +20,7 @@ pub mod extract;
 pub mod fetch;
 pub mod setup;
 pub mod store;
+pub mod validate;
 
 pub use store::OfflineStore;
 
@@ -104,28 +108,37 @@ async fn refresh_inner(
     let extracted_path = tmp.join(DUMP_FILENAME);
     let dest_path = dump_path(cache_dir);
 
-    // Download. Best-effort SHA-1 verification against the sidecar; we
-    // record a warning if the sidecar is unreachable but do not abort
-    // (some mirrors don't host the sidecar).
+    // Download. The `.sha1` sidecar is cross-checked best-effort only: in
+    // practice upstream republishes the tarball without updating the
+    // sidecar (or vice versa), so a mismatch is logged but does NOT abort —
+    // it can't be distinguished from upstream's own drift. Integrity is
+    // enforced instead by `validate::validate_dump` on the extracted file.
     tracing::info!(%dump_url, "downloading MangaBaka dump");
     let download = fetch::download(http, dump_url, &archive_path).await?;
     let sidecar_url = fetch::sha1_sidecar_url(dump_url);
     match fetch::fetch_expected_sha1(http, &sidecar_url).await {
         Ok(expected) if expected != download.sha1_hex => {
-            return Err(anyhow!(
-                "SHA-1 mismatch for {dump_url}: expected {expected}, got {}",
-                download.sha1_hex
-            ));
+            tracing::warn!(
+                expected = %expected,
+                actual = %download.sha1_hex,
+                %dump_url,
+                "SHA-1 sidecar disagrees with downloaded tarball (upstream drift); \
+                 relying on content validation instead"
+            );
         }
         Ok(_) => tracing::info!("SHA-1 sidecar matched"),
         Err(e) => {
-            tracing::warn!(error = ?e, sidecar = %sidecar_url, "sha1 sidecar unavailable; proceeding without verification");
+            tracing::warn!(error = %format!("{e:#}"), sidecar = %sidecar_url, "sha1 sidecar unavailable; proceeding without verification");
         }
     }
 
     // Extract.
     tracing::info!(archive = %archive_path.display(), "extracting dump");
     extract::extract_dump(&archive_path, &extracted_path).await?;
+
+    // Validate the extracted DB before the multi-minute index build, so a
+    // corrupt/truncated download fails fast rather than after `prepare`.
+    validate::validate_dump(&extracted_path).await?;
 
     // Setup (indexes + FTS).
     setup::prepare(&extracted_path).await?;
