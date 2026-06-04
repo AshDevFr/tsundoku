@@ -21,7 +21,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use reqwest::{Client, StatusCode};
+use reqwest::header::{AUTHORIZATION, WWW_AUTHENTICATE};
+use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 use serde::Deserialize;
 use td_http::{HttpLimiter, LimitedClient};
 
@@ -224,25 +225,114 @@ impl RuTorrentClient {
             password,
         })
     }
+
+    /// Send a request to `{base_url}{suffix}` handling either HTTP Basic or
+    /// Digest auth. `build` adds the method-specific bits (multipart body for a
+    /// POST, nothing for a GET) and is called per attempt, because a 401 Digest
+    /// challenge forces a resend and multipart bodies can't be cloned.
+    ///
+    /// The first attempt carries preemptive Basic auth — one round-trip for
+    /// Basic (or unauthenticated) servers. On a `401` whose `WWW-Authenticate`
+    /// is `Digest` (common for ruTorrent behind a seedbox proxy, which `reqwest`
+    /// can't do natively), it computes the Digest response and retries once. A
+    /// `401` with a Basic challenge means the credentials are simply wrong, so
+    /// it's returned as-is.
+    async fn send_authed<F>(
+        &self,
+        method: Method,
+        suffix: &str,
+        build: F,
+    ) -> Result<Response, DownloadError>
+    where
+        F: Fn(RequestBuilder) -> RequestBuilder,
+    {
+        let client = self.http.inner();
+        let url = format!("{}{}", self.base_url, suffix);
+
+        let mut first = build(client.request(method.clone(), &url));
+        if let Some(user) = &self.username {
+            first = first.basic_auth(user, self.password.clone());
+        }
+        let resp = first.send().await?;
+        if resp.status() != StatusCode::UNAUTHORIZED {
+            return Ok(resp);
+        }
+
+        // 401: only a Digest challenge is recoverable. Need a username to answer.
+        let Some(user) = self.username.as_deref() else {
+            return Ok(resp);
+        };
+        let challenge = resp
+            .headers()
+            .get(WWW_AUTHENTICATE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        if !challenge
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("digest")
+        {
+            return Ok(resp);
+        }
+
+        // The digest `uri` is the request path (no scheme/host); derive it from
+        // the resolved URL so a base_url with a path prefix is handled right.
+        let uri_path = reqwest::Url::parse(&url)
+            .ok()
+            .map(|u| match u.query() {
+                Some(q) => format!("{}?{}", u.path(), q),
+                None => u.path().to_string(),
+            })
+            .unwrap_or_else(|| suffix.to_string());
+
+        let mut prompt = digest_auth::parse(&challenge)
+            .map_err(|e| DownloadError::Rejected(format!("parsing digest challenge: {e}")))?;
+        let context = digest_auth::AuthContext::new_with_method(
+            user,
+            self.password.clone().unwrap_or_default(),
+            &uri_path,
+            Option::<&[u8]>::None,
+            digest_method(&method),
+        );
+        let header = prompt
+            .respond(&context)
+            .map_err(|e| DownloadError::Rejected(format!("computing digest response: {e}")))?
+            .to_header_string();
+
+        let retry = build(client.request(method, &url)).header(AUTHORIZATION, header);
+        Ok(retry.send().await?)
+    }
+}
+
+/// Map a `reqwest::Method` to the `digest_auth` equivalent. Only the verbs the
+/// client actually uses are mapped; anything else falls back to `GET` (the
+/// digest method only feeds HA2 and we never issue those verbs here).
+fn digest_method(method: &Method) -> digest_auth::HttpMethod<'static> {
+    match *method {
+        Method::POST => digest_auth::HttpMethod::POST,
+        Method::HEAD => digest_auth::HttpMethod::HEAD,
+        _ => digest_auth::HttpMethod::GET,
+    }
 }
 
 #[async_trait::async_trait]
 impl DownloadClient for RuTorrentClient {
     async fn add(&self, req: AddRequest) -> Result<(), DownloadError> {
-        let url = format!("{}/php/addtorrent.php", self.base_url);
-        let form = fields_to_form(build_add_fields(&req));
+        // The assembled fields are cloned per attempt because a 401 Digest
+        // challenge forces a resend and `multipart::Form` isn't cloneable.
+        let fields = build_add_fields(&req);
 
-        // LimitedClient exposes no multipart/basic_auth forwarders, so we build
-        // the POST off the raw reqwest::Client via inner(). This is the one
-        // call that bypasses the per-host rate limiter: the .torrent bytes were
-        // already fetched through the limiter upstream, and the ruTorrent host
-        // is the operator's own box, so a single unthrottled POST to it is fine.
-        let mut builder = self.http.inner().post(&url).multipart(form);
-        if let Some(user) = &self.username {
-            builder = builder.basic_auth(user, self.password.clone());
-        }
-
-        let resp = builder.send().await?;
+        // send_authed builds the POST off the raw reqwest::Client via inner().
+        // This is the one path that bypasses the per-host rate limiter: the
+        // .torrent bytes were already fetched through the limiter upstream, and
+        // the ruTorrent host is the operator's own box, so a single unthrottled
+        // POST (plus at most one digest retry) to it is fine.
+        let resp = self
+            .send_authed(Method::POST, "/php/addtorrent.php", |rb| {
+                rb.multipart(fields_to_form(fields.clone()))
+            })
+            .await?;
         match resp.status() {
             StatusCode::OK => parse_add_response(resp.bytes().await?.as_ref()),
             other => Err(DownloadError::Unexpected(other.as_u16())),
@@ -260,17 +350,12 @@ impl DownloadClient for RuTorrentClient {
     }
 
     async fn test_connection(&self) -> Result<(), DownloadError> {
-        // GET the ruTorrent root. Behind an HTTP Basic proxy this also
-        // validates the credentials (a 401 means they're wrong); without auth
-        // it just proves reachability. Built off inner() for basic_auth like
-        // add() — a single request to the operator's own box, so bypassing the
-        // limiter is fine.
-        let url = format!("{}/", self.base_url);
-        let mut builder = self.http.inner().get(&url);
-        if let Some(user) = &self.username {
-            builder = builder.basic_auth(user, self.password.clone());
-        }
-        let resp = builder.send().await?;
+        // GET the ruTorrent root through the Basic-or-Digest path. A 200 proves
+        // reachability *and* that the credentials are accepted; a 401 means
+        // they're wrong (after a digest retry, if the server asked for digest).
+        // Built off inner() like add() — a request to the operator's own box,
+        // so bypassing the limiter is fine.
+        let resp = self.send_authed(Method::GET, "/", |rb| rb).await?;
         classify_test_status(resp.status().as_u16())
     }
 }
@@ -409,5 +494,35 @@ mod tests {
             classify_test_status(503),
             Err(DownloadError::Unexpected(503))
         ));
+    }
+
+    #[test]
+    fn maps_reqwest_methods_to_digest_methods() {
+        assert_eq!(digest_method(&Method::GET), digest_auth::HttpMethod::GET);
+        assert_eq!(digest_method(&Method::POST), digest_auth::HttpMethod::POST);
+    }
+
+    /// End-to-end probe against a real ruTorrent. No-op unless
+    /// `TD_TEST_RUTORRENT_URL` is set, so it's inert in CI; run locally with
+    /// the seedbox URL + credentials to confirm the Basic/Digest negotiation:
+    ///   TD_TEST_RUTORRENT_URL=… TD_TEST_RUTORRENT_USER=… TD_TEST_RUTORRENT_PASS=… \
+    ///     cargo test -p td-download live_connection -- --nocapture
+    #[tokio::test]
+    async fn live_connection() {
+        let Ok(base) = std::env::var("TD_TEST_RUTORRENT_URL") else {
+            return;
+        };
+        let client = RuTorrentClient::new(
+            base,
+            std::env::var("TD_TEST_RUTORRENT_USER").ok(),
+            std::env::var("TD_TEST_RUTORRENT_PASS").ok(),
+            Duration::from_secs(15),
+            HttpLimiter::no_limit(),
+        )
+        .unwrap();
+        client
+            .test_connection()
+            .await
+            .expect("connection test should succeed against the configured ruTorrent");
     }
 }
