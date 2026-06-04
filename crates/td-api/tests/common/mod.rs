@@ -350,13 +350,14 @@ pub fn build_app_with_download(
     td_api::router(state, &cfg)
 }
 
-/// A `RuTorrentClient` pointed at an unreachable address. Gives the send
+/// A download client pointed at an unreachable address. Gives the send
 /// endpoint a `Some(client)` so it gets past the 503 guard; the guard-path
 /// tests (404 / 400) return before any outbound request is made.
 pub fn unreachable_download_client() -> Arc<dyn td_download::DownloadClient> {
     Arc::new(
-        td_download::RuTorrentClient::new(
+        td_download::RtorrentXmlRpcClient::new(
             "http://127.0.0.1:9",
+            None,
             None,
             None,
             std::time::Duration::from_millis(50),

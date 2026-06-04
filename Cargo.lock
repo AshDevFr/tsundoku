@@ -2657,7 +2657,6 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
- "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -3881,12 +3880,9 @@ dependencies = [
  "base64",
  "digest_auth",
  "reqwest",
- "serde",
- "serde_json",
  "td-http",
  "thiserror",
  "tokio",
- "tracing",
 ]
 
 [[package]]

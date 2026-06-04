@@ -369,19 +369,16 @@ pub struct DownloadConfig {
     pub rutorrent: RuTorrentConfig,
 }
 
-/// `transport` value: ruTorrent's web-UI `addtorrent.php` form (the default).
-pub const TRANSPORT_WEBUI: &str = "webui";
-/// `transport` value: rTorrent XML-RPC over the httprpc plugin / an `RPC2`
-/// mount. Add-only for now; the door to download lifecycle later.
-pub const TRANSPORT_XMLRPC: &str = "xmlrpc";
-
 /// ruTorrent connection settings, populated from `[download.rutorrent]`.
+///
+/// tsundoku talks to ruTorrent over rTorrent XML-RPC (the same wire Prowlarr /
+/// Sonarr use); `url_path` selects the endpoint.
 ///
 /// `username`/`password` are the torrent client's own HTTP Basic/Digest
 /// credentials (e.g. the reverse proxy in front of ruTorrent) — unrelated to
 /// tsundoku's own `auth.api_key` / `auth.admin_token`. Both may be omitted for
 /// an unauthenticated instance.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RuTorrentConfig {
     /// Client base URL, e.g. `https://box.example.com/rutorrent`. Required when
@@ -391,12 +388,9 @@ pub struct RuTorrentConfig {
     pub username: Option<String>,
     /// HTTP auth password, or `None`.
     pub password: Option<String>,
-    /// How to talk to ruTorrent: `"webui"` (default — POST the `.torrent` to
-    /// `addtorrent.php`) or `"xmlrpc"` (rTorrent XML-RPC via `url_path`).
-    pub transport: String,
-    /// XML-RPC endpoint path relative to `base_url`, used only when
-    /// `transport = "xmlrpc"` (e.g. `"plugins/httprpc/action.php"` or `"RPC2"`).
-    /// Ignored for the web-UI transport.
+    /// XML-RPC endpoint path relative to `base_url` (e.g.
+    /// `"plugins/httprpc/action.php"` for ruTorrent's httprpc plugin, or
+    /// `"RPC2"` for a bare rTorrent mount). Defaults to `"RPC2"` when omitted.
     pub url_path: Option<String>,
 }
 
@@ -412,18 +406,6 @@ impl Default for DownloadConfig {
             timeout_seconds: 30,
             health_cron: None,
             rutorrent: RuTorrentConfig::default(),
-        }
-    }
-}
-
-impl Default for RuTorrentConfig {
-    fn default() -> Self {
-        Self {
-            base_url: None,
-            username: None,
-            password: None,
-            transport: TRANSPORT_WEBUI.into(),
-            url_path: None,
         }
     }
 }
@@ -457,11 +439,6 @@ impl RuTorrentConfig {
             .as_deref()
             .map(|u| u.trim_end_matches('/').to_string())
             .filter(|u| !u.is_empty())
-    }
-
-    /// True when the XML-RPC transport is selected.
-    pub fn is_xmlrpc(&self) -> bool {
-        self.transport == TRANSPORT_XMLRPC
     }
 }
 
@@ -1522,7 +1499,7 @@ base_url = "https://codex.example.com"
         assert!(!cfg.download.enabled);
         assert_eq!(cfg.download.kind, "rutorrent");
         assert!(cfg.download.rutorrent.base_url.is_none());
-        assert_eq!(cfg.download.rutorrent.transport, "webui");
+        assert!(cfg.download.rutorrent.url_path.is_none());
         assert!(cfg.download.default_start);
         assert!(cfg.download.prefer_torrent_file);
         assert_eq!(cfg.download.timeout_seconds, 30);
@@ -1562,8 +1539,6 @@ password = "secret"
         );
         assert_eq!(cfg.download.rutorrent.username.as_deref(), Some("rt"));
         assert_eq!(cfg.download.rutorrent.password.as_deref(), Some("secret"));
-        // Transport defaults to the web-UI form.
-        assert_eq!(cfg.download.rutorrent.transport, "webui");
         assert_eq!(cfg.download.default_label.as_deref(), Some("manga"));
         assert_eq!(
             cfg.download.default_dir.as_deref(),

@@ -206,7 +206,8 @@ poll_write_batch_size = 10
 
 # --- Send to torrent client (optional) ------------------------------------
 # Adds an admin-only "send to torrent client" button to discovered releases.
-# v1 targets ruTorrent. Disabled by default; the whole block may be omitted.
+# v1 targets ruTorrent over rTorrent XML-RPC (the same wire Prowlarr/Sonarr
+# use). Disabled by default; the whole block may be omitted.
 #
 # Shared (client-agnostic) settings live at [download]; the connection details
 # for the chosen `kind` nest under their own table — [download.rutorrent] here.
@@ -235,5 +236,4 @@ poll_write_batch_size = 10
 # base_url            = "https://box.example.com/rutorrent"
 # username            = "rutorrent-user"        # the CLIENT'S own HTTP Basic/Digest credential (auto-negotiated),
 # password            = "rutorrent-pass"        #   unrelated to tsundoku's [auth]. Omit both if unauthenticated.
-# transport           = "webui"                 # "webui" posts to addtorrent.php (default); "xmlrpc" uses rTorrent XML-RPC.
-# url_path            = "plugins/httprpc/action.php"  # only for transport = "xmlrpc" (or "RPC2" for a bare rTorrent mount).
+# url_path            = "plugins/httprpc/action.php"  # XML-RPC endpoint: ruTorrent's httprpc plugin, or "RPC2" for a bare rTorrent mount (the default).

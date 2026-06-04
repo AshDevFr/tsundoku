@@ -215,26 +215,15 @@ fn build_download_client(
         return None;
     }
     let timeout = std::time::Duration::from_secs(download.timeout_seconds as u64);
-    let built = if rt.is_xmlrpc() {
-        td_download::RtorrentXmlRpcClient::new(
-            base_url,
-            rt.url_path.clone(),
-            rt.username.clone(),
-            rt.password.clone(),
-            timeout,
-            limiter,
-        )
-        .map(|c| Arc::new(c) as Arc<dyn td_download::DownloadClient>)
-    } else {
-        td_download::RuTorrentClient::new(
-            base_url,
-            rt.username.clone(),
-            rt.password.clone(),
-            timeout,
-            limiter,
-        )
-        .map(|c| Arc::new(c) as Arc<dyn td_download::DownloadClient>)
-    };
+    let built = td_download::RtorrentXmlRpcClient::new(
+        base_url,
+        rt.url_path.clone(),
+        rt.username.clone(),
+        rt.password.clone(),
+        timeout,
+        limiter,
+    )
+    .map(|c| Arc::new(c) as Arc<dyn td_download::DownloadClient>);
     match built {
         Ok(c) => Some(c),
         Err(e) => {
