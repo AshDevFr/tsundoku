@@ -52,3 +52,10 @@ name = "nyaa-1r0n"
 enabled = true
 [sources.nyaa]
 feed_url = "https://nyaa.si/?page=rss&u=tsuna69"
+
+[[sources]]
+kind = "nyaa"
+name = "nyaa-Oak"
+enabled = true
+[sources.nyaa]
+feed_url = "https://nyaa.si/?page=rss&u=Oakminati&c=3_1"
