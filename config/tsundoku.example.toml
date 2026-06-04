@@ -61,7 +61,7 @@ active_provider = "mangabaka"
 # block + a line in the registry builder.
 [providers.mangabaka]
 enabled = true
-api_base_url           = "https://api.mangabaka.dev"
+api_base_url = "https://api.mangabaka.dev"
 # Set api_key + api_fallback = true to enable live API calls. Without an
 # api_key the provider runs in offline-only mode; cache misses surface as
 # `Ok(None)` to the resolver.
@@ -70,7 +70,7 @@ api_base_url           = "https://api.mangabaka.dev"
 # offline_dump_url     = "https://..."        # leave unset to disable offline cache
 # offline_refresh_cron = "0 4 * * 0"          # weekly Sunday 04:00 UTC; 5-field is auto-padded to seconds-0
 negative_cache_ttl_days = 7
-timeout_seconds        = 60
+timeout_seconds = 60
 
 # Resolution pipeline settings. Controls how releases get matched to
 # series rows. Thresholds use Dice-coefficient scoring on character
@@ -78,15 +78,15 @@ timeout_seconds        = 60
 [ingestion]
 # Above this Dice score, a fuzzy-title hit counts as a definitive match
 # and gets persisted with resolution_path='fuzzy_title'.
-resolution_threshold  = 0.85
+resolution_threshold = 0.85
 # Minimum score to surface a candidate in the review queue. Below this
 # the release stays `unresolved` with no candidates persisted.
-review_threshold      = 0.55
+review_threshold = 0.55
 # Cap on `MetadataProvider::search` candidates inspected per release.
-fuzzy_search_limit    = 10
+fuzzy_search_limit = 10
 # When false, low-confidence hits leave the release as `unresolved`
 # without populating `review_candidates`.
-queue_low_confidence  = true
+queue_low_confidence = true
 # Per-tick batch size for the poll loop's `releases` upserts. The loop
 # walks `releases.chunks(N)`, opens one transaction per chunk, and
 # commits the whole chunk in one fsync. Higher = fewer fsyncs (faster
@@ -169,8 +169,8 @@ poll_write_batch_size = 10
 # kind    = "nyaa"
 # name    = "english-manga-trusted"
 # cron    = "0 */2 * * *"     # every 2 hours; 5-field crons are auto-padded to seconds-0.
-                              # Omit to skip the scheduled poll; `tsundoku poll --source <name>`
-                              # still works as a one-shot.
+# Omit to skip the scheduled poll; `tsundoku poll --source <name>`
+# still works as a one-shot.
 # enabled = true
 #   [sources.nyaa]
 #   feed_url        = "https://nyaa.si/?page=rss&c=3_1&f=2"
@@ -224,8 +224,8 @@ poll_write_batch_size = 10
 # [download]
 # enabled             = true
 # kind                = "rutorrent"             # only "rutorrent" in v1.
-# default_label       = "manga"                 # omit to let the client apply its own default.
-# default_dir         = "/downloads/manga"      # omit to use the client default download dir.
+# default_label       = "tsundoku"              # omit to let the client apply its own default.
+# default_dir         = "/downloads/tsundoku"   # omit to use the client default download dir.
 # default_start       = true                    # false adds the torrent stopped.
 # prefer_torrent_file = true                    # false sends a magnet URL instead of the .torrent file.
 # timeout_seconds     = 30

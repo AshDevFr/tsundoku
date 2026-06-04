@@ -92,8 +92,16 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
   const presets = useFilterPresets((s) => s.presets);
   const savePreset = useFilterPresets((s) => s.savePreset);
   const deletePreset = useFilterPresets((s) => s.deletePreset);
-  const [saveOpen, { open: openSave, close: closeSave }] = useDisclosure(false);
+  const [saveOpen, { open: openSave, close: closeSaveModal }] =
+    useDisclosure(false);
   const [presetName, setPresetName] = useState("");
+  // Two-step guard so overwriting an existing preset needs an explicit
+  // second click rather than silently clobbering it.
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
+  const closeSave = () => {
+    setConfirmOverwrite(false);
+    closeSaveModal();
+  };
   // Local mirror of the URL `q` so the input stays responsive while the
   // debounced commit catches up. Initialized from the URL and re-synced
   // when navigation changes `q` externally (e.g. preset apply, clear).
@@ -160,12 +168,24 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     [tags.data?.items],
   );
 
+  const trimmedName = presetName.trim();
+  const overwriting = useMemo(
+    () =>
+      presets.find((p) => p.name.toLowerCase() === trimmedName.toLowerCase()),
+    [presets, trimmedName],
+  );
+
   const handleSave = () => {
-    const trimmed = presetName.trim();
-    if (!trimmed) return;
-    savePreset(trimmed, { ...search, page: 1 });
+    if (!trimmedName) return;
+    if (overwriting && !confirmOverwrite) {
+      setConfirmOverwrite(true);
+      return;
+    }
+    savePreset(trimmedName, { ...search, page: 1 });
     notifications.show({
-      message: `Preset "${trimmed}" saved`,
+      message: overwriting
+        ? `Preset "${trimmedName}" updated`
+        : `Preset "${trimmedName}" saved`,
       color: "green",
     });
     setPresetName("");
@@ -193,28 +213,25 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
                   <Menu.Label>No saved presets</Menu.Label>
                 )}
                 {presets.map((p) => (
-                  <Menu.Item
-                    key={p.id}
-                    onClick={() => onChange({ ...p.search, page: 1 })}
-                    rightSection={
-                      <Tooltip label="Delete preset">
-                        <ActionIcon
-                          variant="subtle"
-                          size="xs"
-                          c="red"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deletePreset(p.id);
-                          }}
-                          aria-label={`Delete preset ${p.name}`}
-                        >
-                          ×
-                        </ActionIcon>
-                      </Tooltip>
-                    }
-                  >
-                    {p.name}
-                  </Menu.Item>
+                  <Group key={p.id} gap={0} wrap="nowrap" pr="xs">
+                    <Menu.Item
+                      flex={1}
+                      onClick={() => onChange({ ...p.search, page: 1 })}
+                    >
+                      {p.name}
+                    </Menu.Item>
+                    <Tooltip label="Delete preset">
+                      <ActionIcon
+                        variant="subtle"
+                        size="xs"
+                        c="red"
+                        onClick={() => deletePreset(p.id)}
+                        aria-label={`Delete preset ${p.name}`}
+                      >
+                        ×
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
                 ))}
               </Menu.Dropdown>
             </Menu>
@@ -389,18 +406,34 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
             label="Name"
             placeholder="Ongoing manga, hidden owned…"
             value={presetName}
-            onChange={(e) => setPresetName(e.currentTarget.value)}
+            onChange={(e) => {
+              setPresetName(e.currentTarget.value);
+              setConfirmOverwrite(false);
+            }}
             data-autofocus
             onKeyDown={(e) => {
               if (e.key === "Enter") handleSave();
             }}
+            description={
+              overwriting
+                ? `This name is taken — saving will overwrite "${overwriting.name}".`
+                : undefined
+            }
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={closeSave}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={!presetName.trim()}>
-              Save preset
+            <Button
+              onClick={handleSave}
+              disabled={!trimmedName}
+              color={overwriting ? "yellow" : undefined}
+            >
+              {!overwriting
+                ? "Save preset"
+                : confirmOverwrite
+                  ? "Click again to confirm"
+                  : "Overwrite preset"}
             </Button>
           </Group>
         </Stack>

@@ -53,12 +53,24 @@ interface PresetState {
 
 export const useFilterPresets = create<PresetState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       presets: [],
       savePreset: (name, search) => {
-        const id = crypto.randomUUID();
-        const preset: FilterPreset = { id, name, search };
-        set((state) => ({ presets: [...state.presets, preset] }));
+        // Names are unique case-insensitively: saving over an existing name
+        // overwrites that preset (keeping its id) rather than adding a clone.
+        const existing = get().presets.find(
+          (p) => p.name.toLowerCase() === name.toLowerCase(),
+        );
+        const preset: FilterPreset = {
+          id: existing?.id ?? crypto.randomUUID(),
+          name,
+          search,
+        };
+        set((state) => ({
+          presets: existing
+            ? state.presets.map((p) => (p.id === existing.id ? preset : p))
+            : [...state.presets, preset],
+        }));
         return preset;
       },
       deletePreset: (id) =>
