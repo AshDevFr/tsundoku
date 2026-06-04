@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.10.1] - 2026-06-04
+
+### Bug Fixes
+
+- *(resolution)* Resolve against the Nyaa "Information" link, not just description links
+
 ## [1.10.0] - 2026-06-04
 
 ### Features
