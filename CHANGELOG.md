@@ -2,6 +2,17 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.10.2] - 2026-06-05
+
+### Features
+
+- *(series)* Add sort by rating to the browse list
+
+### Documentation
+
+- Add Download and Codex admin pages with screenshots
+- Refresh screenshots and add a second Nyaa source to the fixture config
+
 ## [1.10.1] - 2026-06-04
 
 ### Bug Fixes
