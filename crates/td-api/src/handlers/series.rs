@@ -181,9 +181,10 @@ pub struct SeriesListQuery {
     /// `any` (default) or `all`. See [`Self::tags`].
     pub tags_mode: Option<String>,
     /// Sort field. Supports `last_release_at` (default), `first_seen_at`,
-    /// `total_volumes`, `total_chapters`, `highest_volume`, and
-    /// `highest_chapter`. The count / highest sorts are nullable-aware:
-    /// rows without a value sink to the end regardless of direction.
+    /// `total_volumes`, `total_chapters`, `highest_volume`,
+    /// `highest_chapter`, and `rating`. The count / highest / rating sorts
+    /// are nullable-aware: rows without a value sink to the end regardless
+    /// of direction.
     /// Ignored when `q` is present (results are ranked by relevance instead).
     pub sort: Option<String>,
     /// `asc` or `desc` (default).
@@ -285,6 +286,7 @@ pub async fn list(
         Some("total_chapters") => series::Column::TotalChapters,
         Some("highest_volume") => series::Column::HighestVolume,
         Some("highest_chapter") => series::Column::HighestChapter,
+        Some("rating") => series::Column::Rating,
         _ => series::Column::LastReleaseAt,
     };
     let desc = !matches!(q.order.as_deref(), Some("asc"));
@@ -299,6 +301,7 @@ pub async fn list(
             | series::Column::TotalChapters
             | series::Column::HighestVolume
             | series::Column::HighestChapter
+            | series::Column::Rating
     ) {
         select = select.order_by_asc(Expr::col(sort_col).is_null());
     }

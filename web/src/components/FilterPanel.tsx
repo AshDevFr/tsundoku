@@ -50,6 +50,7 @@ const SORT_OPTIONS = [
   { value: "total_chapters", label: "Chapter count" },
   { value: "highest_volume", label: "Available volumes" },
   { value: "highest_chapter", label: "Available chapters" },
+  { value: "rating", label: "Rating" },
 ];
 
 /// "Newest first / Oldest first" reads as nonsense for a numeric sort like
@@ -64,6 +65,7 @@ const ORDER_LABELS_BY_SORT: Record<string, OrderLabels> = {
   total_chapters: { desc: "Highest first", asc: "Lowest first" },
   highest_volume: { desc: "Highest first", asc: "Lowest first" },
   highest_chapter: { desc: "Highest first", asc: "Lowest first" },
+  rating: { desc: "Highest first", asc: "Lowest first" },
 };
 const DEFAULT_ORDER_LABELS: OrderLabels = {
   desc: "Highest first",

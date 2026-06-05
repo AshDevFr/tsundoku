@@ -3433,9 +3433,10 @@ export interface operations {
                 tagsMode?: string;
                 /**
                  * @description Sort field. Supports `last_release_at` (default), `first_seen_at`,
-                 *     `total_volumes`, `total_chapters`, `highest_volume`, and
-                 *     `highest_chapter`. The count / highest sorts are nullable-aware:
-                 *     rows without a value sink to the end regardless of direction.
+                 *     `total_volumes`, `total_chapters`, `highest_volume`,
+                 *     `highest_chapter`, and `rating`. The count / highest / rating sorts
+                 *     are nullable-aware: rows without a value sink to the end regardless
+                 *     of direction.
                  *     Ignored when `q` is present (results are ranked by relevance instead).
                  */
                 sort?: string;

@@ -1554,7 +1554,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "Sort field. Supports `last_release_at` (default), `first_seen_at`,\n`total_volumes`, `total_chapters`, `highest_volume`, and\n`highest_chapter`. The count / highest sorts are nullable-aware:\nrows without a value sink to the end regardless of direction.\nIgnored when `q` is present (results are ranked by relevance instead).",
+            "description": "Sort field. Supports `last_release_at` (default), `first_seen_at`,\n`total_volumes`, `total_chapters`, `highest_volume`,\n`highest_chapter`, and `rating`. The count / highest / rating sorts\nare nullable-aware: rows without a value sink to the end regardless\nof direction.\nIgnored when `q` is present (results are ranked by relevance instead).",
             "required": false,
             "schema": {
               "type": "string"

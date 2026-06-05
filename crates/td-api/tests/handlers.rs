@@ -4813,6 +4813,73 @@ async fn series_list_includes_codex_for_admin() {
 }
 
 #[tokio::test]
+async fn series_list_sorts_by_rating_with_nulls_last() {
+    let db = fresh_db().await;
+    let now = Utc::now().timestamp();
+    let seed = |title: &str, rating: Option<f64>| {
+        let title = title.to_string();
+        let db = db.clone();
+        async move {
+            series::ActiveModel {
+                canonical_title: Set(title),
+                kind: Set(Some("manga".into())),
+                metadata_source: Set("api".into()),
+                metadata_fetched_at: Set(now),
+                first_seen_at: Set(now),
+                last_release_at: Set(now),
+                rating: Set(rating),
+                owned: Set(0),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+    };
+    seed("Mid", Some(6.5)).await;
+    seed("Top", Some(9.0)).await;
+    seed("Unrated", None).await;
+    seed("Low", Some(2.0)).await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let titles = |order: &str| {
+        let app = app.clone();
+        let uri = format!("/api/v1/series?sort=rating&order={order}");
+        async move {
+            let resp = app
+                .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_json(resp)
+                .await
+                .get("items")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| i["canonicalTitle"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        }
+    };
+
+    // Descending: highest rating first, unrated row sinks to the end.
+    assert_eq!(titles("desc").await, ["Top", "Mid", "Low", "Unrated"]);
+    // Ascending: lowest rated first, unrated row STILL sinks to the end
+    // (nullable-aware ordering, not NULLs-first like raw SQLite ASC).
+    assert_eq!(titles("asc").await, ["Low", "Mid", "Top", "Unrated"]);
+}
+
+#[tokio::test]
 async fn series_detail_codex_is_admin_only() {
     let db = fresh_db().await;
     let sid = seed_series_with_highs(&db, "Behind Series", Some(12.0), None).await;
