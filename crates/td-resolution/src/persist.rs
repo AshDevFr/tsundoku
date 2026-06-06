@@ -23,7 +23,7 @@ use sea_orm::{
 use td_db::entities::{releases, series, series_external_ids};
 use td_db::repos::tagging_repo;
 use td_metadata::{ForeignId, SeriesKind, SeriesMetadata, SeriesStatus};
-use td_source::Span;
+use td_source::{spans_from_json, spans_max_end};
 
 /// Source-of-truth provenance for the `series.metadata_source` column.
 /// `offline_cache` means "provider served the response from a local dump";
@@ -338,8 +338,8 @@ async fn bump_series_highest(
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or_default();
         let spans = td_source::detect_spans(&files, &release.title);
-        rel_volume = spans.volumes.map(|s| s.end);
-        rel_chapter = spans.chapters.map(|s| s.end);
+        rel_volume = spans_max_end(&spans.volumes);
+        rel_chapter = spans_max_end(&spans.chapters);
     }
     if rel_volume.is_none() && rel_chapter.is_none() {
         return Ok(());
@@ -371,11 +371,11 @@ async fn bump_series_highest(
     Ok(())
 }
 
-/// The `end` (max) of a JSON-encoded [`Span`], or `None` when absent or
-/// unparseable (older rows written before span detection shipped).
+/// The largest `end` across a JSON-encoded span list, or `None` when absent or
+/// unparseable. Tolerant of the legacy single-object shape via
+/// [`spans_from_json`] (older rows written before spans became lists).
 fn parse_span_end(json: Option<&str>) -> Option<f64> {
-    let json = json?;
-    serde_json::from_str::<Span>(json).ok().map(|s| s.end)
+    spans_max_end(&spans_from_json(json))
 }
 
 /// Return `Some(candidate)` only when it strictly exceeds the current value
@@ -521,6 +521,7 @@ mod tests {
     use migration::{Migrator, MigratorTrait};
     use sea_orm::Database;
     use td_metadata::{ForeignId, SeriesMetadata};
+    use td_source::{Span, spans_to_json};
 
     async fn fresh_db() -> DatabaseConnection {
         let db = Database::connect("sqlite::memory:").await.unwrap();
@@ -1010,8 +1011,8 @@ mod tests {
             resolution_status: Set("unresolved".into()),
             resolution_attempts: Set(0),
             last_resolve_attempt_at: Set(None),
-            volume_span_json: Set(volume.map(|s| serde_json::to_string(&s).unwrap())),
-            chapter_span_json: Set(chapter.map(|s| serde_json::to_string(&s).unwrap())),
+            volume_span_json: Set(spans_to_json(&volume.into_iter().collect::<Vec<_>>())),
+            chapter_span_json: Set(spans_to_json(&chapter.into_iter().collect::<Vec<_>>())),
             resolved_at: Set(None),
             search_queries: Set(None),
             cleanup_rules_applied: Set(None),

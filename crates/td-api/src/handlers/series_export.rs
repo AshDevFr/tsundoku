@@ -248,8 +248,11 @@ fn fmt_f64(f: f64) -> String {
     }
 }
 
-/// A volume/chapter span as stored in `*_span_json` (`td_source::span::Span`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A volume/chapter span for the export's nested release output. Backed by the
+/// `*_span_json` columns, which now store a gap-preserving list of
+/// `td_source::Span`. This single-span DTO carries the coarse `(min, max)` of
+/// that list; surfacing the full list (with gaps) is a Phase 4 follow-up.
+#[derive(Debug, Clone, Serialize)]
 struct SpanDto {
     start: f64,
     end: f64,
@@ -266,7 +269,13 @@ impl SpanDto {
 }
 
 fn parse_span(raw: Option<&str>) -> Option<SpanDto> {
-    serde_json::from_str(raw?).ok()
+    // The column stores a gap-preserving list; collapse it to a coarse
+    // (min, max) for the current single-span export field. Tolerant of the
+    // legacy single-object shape via `spans_from_json`.
+    let spans = td_source::spans_from_json(raw);
+    let start = spans.iter().map(|s| s.start).reduce(f64::min)?;
+    let end = spans.iter().map(|s| s.end).reduce(f64::max)?;
+    Some(SpanDto { start, end })
 }
 
 /// One linked release in the nested `includeReleases` output. Field naming

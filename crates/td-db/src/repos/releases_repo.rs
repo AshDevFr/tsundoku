@@ -7,7 +7,7 @@ use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
     QueryOrder, QuerySelect, Set, TransactionTrait,
 };
-use td_source::{DiscoveredRelease, detect_formats, detect_spans};
+use td_source::{DiscoveredRelease, detect_formats, detect_spans, spans_max_end, spans_to_json};
 
 use crate::entities::{release_formats, releases, review_candidates};
 
@@ -145,17 +145,12 @@ fn to_active_model(
     };
 
     // Volume / chapter spans parsed from the file names (falling back to the
-    // title). Stored so the series-link step can bump `series.highest_*`
-    // without re-parsing, and so a future per-release UI can show the range.
+    // title). Stored as gap-preserving JSON lists so the series-link step can
+    // bump `series.highest_*` without re-parsing, and so the catalog/feed can
+    // show the actual available ranges (with gaps) rather than a single span.
     let spans = detect_spans(&release.files, &release.title);
-    let volume_span_json = spans
-        .volumes
-        .map(|s| serde_json::to_string(&s))
-        .transpose()?;
-    let chapter_span_json = spans
-        .chapters
-        .map(|s| serde_json::to_string(&s))
-        .transpose()?;
+    let volume_span_json = spans_to_json(&spans.volumes);
+    let chapter_span_json = spans_to_json(&spans.chapters);
 
     Ok(releases::ActiveModel {
         id: Set(id.to_string()),
@@ -406,14 +401,8 @@ pub async fn recompute_all_spans(db: &DatabaseConnection) -> Result<SpanRecomput
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or_default();
         let spans = detect_spans(&files, &rel.title);
-        let vol_json = spans
-            .volumes
-            .map(|s| serde_json::to_string(&s))
-            .transpose()?;
-        let chap_json = spans
-            .chapters
-            .map(|s| serde_json::to_string(&s))
-            .transpose()?;
+        let vol_json = spans_to_json(&spans.volumes);
+        let chap_json = spans_to_json(&spans.chapters);
 
         if vol_json != rel.volume_span_json || chap_json != rel.chapter_span_json {
             let model = releases::ActiveModel {
@@ -428,8 +417,8 @@ pub async fn recompute_all_spans(db: &DatabaseConnection) -> Result<SpanRecomput
 
         if let Some(sid) = rel.series_id {
             let entry = per_series.entry(sid).or_insert((None, None));
-            entry.0 = max_opt(entry.0, spans.volumes.map(|s| s.end));
-            entry.1 = max_opt(entry.1, spans.chapters.map(|s| s.end));
+            entry.0 = max_opt(entry.0, spans_max_end(&spans.volumes));
+            entry.1 = max_opt(entry.1, spans_max_end(&spans.chapters));
         }
     }
 
@@ -829,6 +818,59 @@ mod tests {
         // Second run is a no-op: spans already stored, series already correct.
         let second = recompute_all_spans(&db).await.unwrap();
         assert_eq!(second, SpanRecompute::default());
+    }
+
+    #[tokio::test]
+    async fn recompute_rewrites_legacy_spans_to_arrays_and_preserves_gaps() {
+        use crate::entities::releases;
+        use sea_orm::{ActiveModelTrait, Set};
+
+        let db = fresh_db().await;
+
+        // Files cover v01-04 and v06-09 — volume 5 is genuinely missing.
+        let mut r = sample("feed");
+        r.external_id = "gap".into();
+        r.link = "https://nyaa.si/view/gap".into();
+        r.files = vec!["Series v01-04.cbz".into(), "Series v06-09.cbz".into()];
+        let id = persist_discovered(&db, &r, 1).await.unwrap();
+
+        // Simulate a row written before spans became lists: overwrite the
+        // column with the legacy single-object shape.
+        releases::ActiveModel {
+            id: Set(id.clone()),
+            volume_span_json: Set(Some(r#"{"start":1.0,"end":9.0}"#.into())),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
+
+        // Recompute re-derives from the file list (still intact) and rewrites
+        // the column to the gap-preserving array form — no re-poll needed.
+        let summary = recompute_all_spans(&db).await.unwrap();
+        assert_eq!(summary.releases_rewritten, 1);
+
+        let row = find_by_id(&db, &id).await.unwrap().unwrap();
+        let raw = row.volume_span_json.as_deref().unwrap();
+        assert!(raw.starts_with('['), "stored as a JSON array, got {raw}");
+        assert_eq!(
+            td_source::spans_from_json(Some(raw)),
+            vec![
+                td_source::Span {
+                    start: 1.0,
+                    end: 4.0,
+                },
+                td_source::Span {
+                    start: 6.0,
+                    end: 9.0,
+                },
+            ],
+            "the gap at volume 5 survives as two entries",
+        );
+
+        // Idempotent once the array shape is stored.
+        let second = recompute_all_spans(&db).await.unwrap();
+        assert_eq!(second.releases_rewritten, 0);
     }
 
     #[tokio::test]

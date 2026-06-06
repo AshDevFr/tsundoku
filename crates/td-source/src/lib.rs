@@ -25,4 +25,6 @@ pub use format::{Format, detect_formats};
 pub use registry::{SourceRegistry, SourceRegistryBuilder};
 pub use release::{DiscoveredRelease, ExternalLinks, PollContext, PollOutcome};
 pub use source::{Backfillable, DiscoverySource};
-pub use span::{ReleaseSpans, Span, detect_spans};
+pub use span::{
+    ReleaseSpans, Span, detect_spans, merge_spans, spans_from_json, spans_max_end, spans_to_json,
+};
