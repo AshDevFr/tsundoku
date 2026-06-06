@@ -5920,3 +5920,66 @@ async fn series_feed_walks_keyset_with_cursor_and_coverage() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn series_feed_post_filters_by_external_ids() {
+    let db = fresh_db().await;
+    let a = seed_feed_series(
+        &db,
+        "Active One",
+        100,
+        r#"[{"start":1.0,"end":4.0}]"#,
+        4.0,
+        "111",
+    )
+    .await;
+    let _b = seed_feed_series(
+        &db,
+        "Active Two",
+        200,
+        r#"[{"start":1.0,"end":3.0}]"#,
+        3.0,
+        "222",
+    )
+    .await;
+    let c = seed_feed_series(
+        &db,
+        "Active Three",
+        300,
+        r#"[{"start":1.0,"end":9.0}]"#,
+        9.0,
+        "333",
+    )
+    .await;
+
+    let app = stub_app(db);
+
+    // POST the subset we track (A and C); B must be excluded.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/feed")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"externalIds":["mangabaka:111","mangabaka:333"],"limit":100}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let ids: Vec<i64> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["seriesId"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![a as i64, c as i64],
+        "filtered to the posted ids, in keyset order"
+    );
+    assert_eq!(body["hasMore"], false);
+}

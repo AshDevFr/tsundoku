@@ -1809,6 +1809,35 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Filtered variant of [`feed`]: same cursor walk, but narrowed to the series\nwhose provider ids the consumer sends in the body. Use this (over the `GET`)\nwhen a consumer tracks a known subset — a Codex release plugin posting the\n`provider:externalId` set it owns so it only receives changes it cares\nabout. It's a `POST` purely so the id list can be large; it mutates nothing\nand is gated like the other reads.",
+        "operationId": "feed_query",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeriesFeedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "A page of changed series, filtered to the requested ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesFeedResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/series/invalidate-metadata-hashes": {
@@ -4836,6 +4865,38 @@
               "$ref": "#/components/schemas/CoverageSpanDto"
             },
             "description": "Merged available volume ranges (sorted, gaps preserved)."
+          }
+        }
+      },
+      "SeriesFeedRequest": {
+        "type": "object",
+        "description": "Body for `POST /series/feed`: the cursor + limit of the `GET`, plus the\nprovider id set to narrow the page to. It's a `POST` only so this list can\nbe large (a consumer's whole owned catalog) without hitting URL limits.",
+        "properties": {
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor from a previous response's `nextCursor`. Omit to start\nfrom the beginning.",
+            "default": null
+          },
+          "externalIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Narrow the page to series carrying one of these `provider:externalId`\nmappings (e.g. `mangabaka:12345`). Empty ⇒ no filter (same as `GET`).",
+            "default": []
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Max items per page (default 100, capped at 500).",
+            "default": null,
+            "minimum": 0
           }
         }
       },

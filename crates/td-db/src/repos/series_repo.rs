@@ -189,6 +189,13 @@ pub async fn recent(db: &DatabaseConnection, limit: u64) -> Result<Vec<Model>> {
 /// `(after_updated_at, after_id)`, ordered ascending so a consumer can walk
 /// forward from a stored cursor. Pass `(0, 0)` to start from the beginning.
 ///
+/// `external_ids` optionally narrows the page to series carrying one of the
+/// given `(provider, external_id)` mappings — a consumer (e.g. a Codex release
+/// plugin) sending the subset it tracks so it only receives changes it cares
+/// about. Empty ⇒ no filter. The filter composes with the cursor; note that a
+/// cursor already advanced past a *newly*-added id won't replay that series'
+/// older changes, so adding an id wants a one-off unfiltered backfill for it.
+///
 /// Keyset, not offset: stable and gap-free while series are being re-stamped
 /// concurrently. A series that gets re-stamped jumps to the tail (higher
 /// `updated_at`) and is re-delivered, so callers must upsert by `series_id`.
@@ -197,6 +204,7 @@ pub async fn feed_after(
     db: &DatabaseConnection,
     after_updated_at: i64,
     after_id: i32,
+    external_ids: &[(String, String)],
     limit: u64,
 ) -> Result<Vec<Model>> {
     // (updated_at, id) > (after_updated_at, after_id)
@@ -207,14 +215,47 @@ pub async fn feed_after(
                 .add(series::Column::UpdatedAt.eq(after_updated_at))
                 .add(series::Column::Id.gt(after_id)),
         );
-    Ok(series::Entity::find()
+    let mut query = series::Entity::find()
         .filter(series::Column::UpdatedAt.gt(0))
-        .filter(keyset)
+        .filter(keyset);
+    if !external_ids.is_empty() {
+        query = query.filter(series::Column::Id.in_subquery(external_ids_subquery(external_ids)));
+    }
+    Ok(query
         .order_by_asc(series::Column::UpdatedAt)
         .order_by_asc(series::Column::Id)
         .limit(limit)
         .all(db)
         .await?)
+}
+
+/// Subquery selecting `series_id`s that carry any of the given
+/// `(provider, external_id)` mappings. Grouped by provider into one
+/// `provider = ? AND external_id IN (...)` clause each (usually a single
+/// provider), so thousands of ids stay a bounded `IN` list rather than a deep
+/// `OR` chain.
+fn external_ids_subquery(external_ids: &[(String, String)]) -> sea_orm::sea_query::SelectStatement {
+    use std::collections::HashMap;
+    let mut by_provider: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (provider, external_id) in external_ids {
+        by_provider
+            .entry(provider.as_str())
+            .or_default()
+            .push(external_id.as_str());
+    }
+    let mut cond = Condition::any();
+    for (provider, ids) in by_provider {
+        cond = cond.add(
+            Condition::all()
+                .add(series_external_ids::Column::Provider.eq(provider))
+                .add(series_external_ids::Column::ExternalId.is_in(ids)),
+        );
+    }
+    Query::select()
+        .column(series_external_ids::Column::SeriesId)
+        .from(series_external_ids::Entity)
+        .cond_where(cond)
+        .to_owned()
 }
 
 /// Find the series whose `metadata_hash` matches the given hash, if any.
@@ -591,7 +632,7 @@ mod tests {
         let b = seed_with_updated(&db, "B", 100).await;
         let c = seed_with_updated(&db, "C", 200).await;
 
-        let page = feed_after(&db, 0, 0, 10).await.unwrap();
+        let page = feed_after(&db, 0, 0, &[], 10).await.unwrap();
         let ids: Vec<i32> = page.iter().map(|s| s.id).collect();
         assert_eq!(
             ids,
@@ -610,14 +651,14 @@ mod tests {
         assert!(e1 < e2);
 
         // Walk one at a time from the start.
-        let p1 = feed_after(&db, 0, 0, 1).await.unwrap();
+        let p1 = feed_after(&db, 0, 0, &[], 1).await.unwrap();
         assert_eq!(p1.iter().map(|s| s.id).collect::<Vec<_>>(), vec![d]);
-        let p2 = feed_after(&db, 50, d, 1).await.unwrap();
+        let p2 = feed_after(&db, 50, d, &[], 1).await.unwrap();
         assert_eq!(p2.iter().map(|s| s.id).collect::<Vec<_>>(), vec![e1]);
         // Same-second tie: resuming after (100, e1) yields e2, not a re-deliver.
-        let p3 = feed_after(&db, 100, e1, 10).await.unwrap();
+        let p3 = feed_after(&db, 100, e1, &[], 10).await.unwrap();
         assert_eq!(p3.iter().map(|s| s.id).collect::<Vec<_>>(), vec![e2]);
-        let p4 = feed_after(&db, 100, e2, 10).await.unwrap();
+        let p4 = feed_after(&db, 100, e2, &[], 10).await.unwrap();
         assert!(p4.is_empty(), "caught up");
     }
 
@@ -626,7 +667,7 @@ mod tests {
         let db = fresh().await;
         let b = seed_with_updated(&db, "B", 100).await;
         // Consumer has walked past B (cursor at (100, b)).
-        assert!(feed_after(&db, 100, b, 10).await.unwrap().is_empty());
+        assert!(feed_after(&db, 100, b, &[], 10).await.unwrap().is_empty());
 
         // B's coverage changes again -> updated_at jumps to the tail.
         series::Entity::update(series::ActiveModel {
@@ -638,11 +679,40 @@ mod tests {
         .await
         .unwrap();
 
-        let page = feed_after(&db, 100, b, 10).await.unwrap();
+        let page = feed_after(&db, 100, b, &[], 10).await.unwrap();
         assert_eq!(
             page.iter().map(|s| s.id).collect::<Vec<_>>(),
             vec![b],
             "a re-stamped series re-appears past the old cursor",
         );
+    }
+
+    #[tokio::test]
+    async fn feed_after_filters_by_external_ids() {
+        let db = fresh().await;
+        let a = seed_with_updated(&db, "A", 100).await;
+        let b = seed_with_updated(&db, "B", 200).await;
+        let c = seed_with_updated(&db, "C", 300).await;
+        link(&db, a, "mangabaka", "1").await;
+        link(&db, b, "mangabaka", "2").await;
+        link(&db, c, "mangabaka", "3").await;
+        // A second provider mapping on B, to prove provider is matched too.
+        link(&db, b, "anilist", "999").await;
+
+        // Filter to A and C only.
+        let want = [
+            ("mangabaka".to_string(), "1".to_string()),
+            ("mangabaka".to_string(), "3".to_string()),
+        ];
+        let page = feed_after(&db, 0, 0, &want, 10).await.unwrap();
+        assert_eq!(page.iter().map(|s| s.id).collect::<Vec<_>>(), vec![a, c]);
+
+        // The provider half of the pair matters: anilist:1 matches nothing.
+        let none = [("anilist".to_string(), "1".to_string())];
+        assert!(feed_after(&db, 0, 0, &none, 10).await.unwrap().is_empty());
+
+        // The filter composes with the cursor: resuming after A yields only C.
+        let after_a = feed_after(&db, 100, a, &want, 10).await.unwrap();
+        assert_eq!(after_a.iter().map(|s| s.id).collect::<Vec<_>>(), vec![c]);
     }
 }

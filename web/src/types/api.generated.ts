@@ -767,7 +767,15 @@ export interface paths {
          */
         get: operations["feed"];
         put?: never;
-        post?: never;
+        /**
+         * Filtered variant of [`feed`]: same cursor walk, but narrowed to the series
+         *     whose provider ids the consumer sends in the body. Use this (over the `GET`)
+         *     when a consumer tracks a known subset — a Codex release plugin posting the
+         *     `provider:externalId` set it owns so it only receives changes it cares
+         *     about. It's a `POST` purely so the id list can be large; it mutates nothing
+         *     and is gated like the other reads.
+         */
+        post: operations["feed_query"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2141,6 +2149,31 @@ export interface components {
             updatedAt: number;
             /** @description Merged available volume ranges (sorted, gaps preserved). */
             volumeCoverage: components["schemas"]["CoverageSpanDto"][];
+        };
+        /**
+         * @description Body for `POST /series/feed`: the cursor + limit of the `GET`, plus the
+         *     provider id set to narrow the page to. It's a `POST` only so this list can
+         *     be large (a consumer's whole owned catalog) without hitting URL limits.
+         */
+        SeriesFeedRequest: {
+            /**
+             * @description Opaque cursor from a previous response's `nextCursor`. Omit to start
+             *     from the beginning.
+             * @default null
+             */
+            cursor: string | null;
+            /**
+             * @description Narrow the page to series carrying one of these `provider:externalId`
+             *     mappings (e.g. `mangabaka:12345`). Empty ⇒ no filter (same as `GET`).
+             * @default []
+             */
+            externalIds: string[];
+            /**
+             * Format: int32
+             * @description Max items per page (default 100, capped at 500).
+             * @default null
+             */
+            limit: number | null;
         };
         /**
          * @description One page of the release feed. Walk while `hasMore` is true, passing
@@ -3662,6 +3695,30 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description A page of changed series */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesFeedResponse"];
+                };
+            };
+        };
+    };
+    feed_query: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeriesFeedRequest"];
+            };
+        };
+        responses: {
+            /** @description A page of changed series, filtered to the requested ids */
             200: {
                 headers: {
                     [name: string]: unknown;

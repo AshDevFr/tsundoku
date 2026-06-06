@@ -179,6 +179,22 @@ impl Default for SeriesFeedQuery {
     }
 }
 
+/// Body for `POST /series/feed`: the cursor + limit of the `GET`, plus the
+/// provider id set to narrow the page to. It's a `POST` only so this list can
+/// be large (a consumer's whole owned catalog) without hitting URL limits.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SeriesFeedRequest {
+    /// Opaque cursor from a previous response's `nextCursor`. Omit to start
+    /// from the beginning.
+    pub cursor: Option<String>,
+    /// Max items per page (default 100, capped at 500).
+    pub limit: Option<u32>,
+    /// Narrow the page to series carrying one of these `provider:externalId`
+    /// mappings (e.g. `mangabaka:12345`). Empty ⇒ no filter (same as `GET`).
+    pub external_ids: Vec<String>,
+}
+
 /// Encode a keyset position into an opaque cursor token.
 fn encode_feed_cursor(updated_at: i64, id: i32) -> String {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -964,17 +980,69 @@ pub async fn feed(
     State(state): State<AppState>,
     Query(q): Query<SeriesFeedQuery>,
 ) -> ApiResult<Json<SeriesFeedResponse>> {
-    let limit = q.limit.clamp(1, FEED_MAX_LIMIT) as u64;
-    let (after_updated_at, after_id) = match q.cursor.as_deref() {
+    Ok(Json(
+        feed_page(&state, q.cursor.as_deref(), q.limit, &[]).await?,
+    ))
+}
+
+/// Filtered variant of [`feed`]: same cursor walk, but narrowed to the series
+/// whose provider ids the consumer sends in the body. Use this (over the `GET`)
+/// when a consumer tracks a known subset — a Codex release plugin posting the
+/// `provider:externalId` set it owns so it only receives changes it cares
+/// about. It's a `POST` purely so the id list can be large; it mutates nothing
+/// and is gated like the other reads.
+#[utoipa::path(
+    post,
+    path = "/api/v1/series/feed",
+    request_body = SeriesFeedRequest,
+    responses((status = 200, description = "A page of changed series, filtered to the requested ids", body = SeriesFeedResponse)),
+    tag = "series",
+)]
+pub async fn feed_query(
+    State(state): State<AppState>,
+    Json(req): Json<SeriesFeedRequest>,
+) -> ApiResult<Json<SeriesFeedResponse>> {
+    // "provider:externalId" → (provider, externalId). Tokens without a colon
+    // are dropped leniently (a consumer always has both halves from the feed).
+    let external_ids: Vec<(String, String)> = req
+        .external_ids
+        .iter()
+        .filter_map(|t| {
+            t.split_once(':')
+                .map(|(p, e)| (p.to_string(), e.to_string()))
+        })
+        .collect();
+    let limit = req.limit.unwrap_or(FEED_DEFAULT_LIMIT);
+    Ok(Json(
+        feed_page(&state, req.cursor.as_deref(), limit, &external_ids).await?,
+    ))
+}
+
+/// Shared core for both feed handlers: decode the cursor, page the keyset
+/// (optionally filtered to `external_ids`), and shape the response.
+async fn feed_page(
+    state: &AppState,
+    cursor: Option<&str>,
+    limit: u32,
+    external_ids: &[(String, String)],
+) -> ApiResult<SeriesFeedResponse> {
+    let limit = limit.clamp(1, FEED_MAX_LIMIT) as u64;
+    let (after_updated_at, after_id) = match cursor {
         Some(token) => decode_feed_cursor(token)
             .ok_or_else(|| ApiError::BadRequest(format!("invalid cursor: {token}")))?,
         None => (0, 0),
     };
 
     // Fetch one extra to detect whether more pages remain without a COUNT.
-    let mut rows = series_repo::feed_after(&state.db, after_updated_at, after_id, limit + 1)
-        .await
-        .map_err(anyhow_err)?;
+    let mut rows = series_repo::feed_after(
+        &state.db,
+        after_updated_at,
+        after_id,
+        external_ids,
+        limit + 1,
+    )
+    .await
+    .map_err(anyhow_err)?;
     let has_more = rows.len() as u64 > limit;
     rows.truncate(limit as usize);
     let next_cursor = rows.last().map(|s| encode_feed_cursor(s.updated_at, s.id));
@@ -1010,11 +1078,11 @@ pub async fn feed(
         })
         .collect();
 
-    Ok(Json(SeriesFeedResponse {
+    Ok(SeriesFeedResponse {
         items,
         next_cursor,
         has_more,
-    }))
+    })
 }
 
 /// Parse a stored `*_coverage_json` column into the feed's span DTOs.
