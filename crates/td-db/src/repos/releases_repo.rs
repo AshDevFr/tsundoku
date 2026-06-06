@@ -526,6 +526,32 @@ pub async fn count_by_series_ids(
     Ok(rows.into_iter().map(|r| (r.series_id, r.n)).collect())
 }
 
+/// All releases linked to a batch of series, grouped by `series_id` and
+/// ordered newest-first (`posted_at` desc) within each series. Series with
+/// no linked releases are omitted (callers treat absence as an empty list).
+/// Used by the catalog export's optional `includeReleases` to avoid an N+1.
+pub async fn list_by_series_ids(
+    db: &DatabaseConnection,
+    series_ids: &[i32],
+) -> Result<std::collections::HashMap<i32, Vec<Model>>> {
+    if series_ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let rows = releases::Entity::find()
+        .filter(releases::Column::SeriesId.is_in(series_ids.iter().copied()))
+        .order_by_desc(releases::Column::PostedAt)
+        .all(db)
+        .await?;
+    let mut map: std::collections::HashMap<i32, Vec<Model>> = std::collections::HashMap::new();
+    for row in rows {
+        // `series_id` is guaranteed Some by the IN filter above.
+        if let Some(sid) = row.series_id {
+            map.entry(sid).or_default().push(row);
+        }
+    }
+    Ok(map)
+}
+
 pub use releases::{ActiveModel, Column, Entity};
 
 #[cfg(test)]
@@ -602,6 +628,78 @@ mod tests {
             vec!["cbz"],
             "format must attach to the surviving row"
         );
+    }
+
+    #[tokio::test]
+    async fn list_by_series_ids_groups_orders_desc_and_omits_empties() {
+        use crate::entities::series;
+        use sea_orm::{ActiveModelTrait, Set};
+
+        let db = fresh_db().await;
+        let mk_series = |title: &str| {
+            let title = title.to_string();
+            let db = &db;
+            async move {
+                series::ActiveModel {
+                    canonical_title: Set(title),
+                    metadata_source: Set("test".into()),
+                    metadata_fetched_at: Set(1),
+                    first_seen_at: Set(1),
+                    last_release_at: Set(1),
+                    owned: Set(0),
+                    ..Default::default()
+                }
+                .insert(db)
+                .await
+                .unwrap()
+                .id
+            }
+        };
+        let s1 = mk_series("S1").await;
+        let s2 = mk_series("S2").await;
+
+        // Two releases linked to s1 with distinct posted_at; one (newer) and
+        // one (older). s2 gets no releases.
+        let mut older = sample("feed");
+        older.external_id = "old".into();
+        older.link = "https://nyaa.si/view/old".into();
+        older.posted_at = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        let id_old = persist_discovered(&db, &older, 1).await.unwrap();
+
+        let mut newer = sample("feed");
+        newer.external_id = "new".into();
+        newer.link = "https://nyaa.si/view/new".into();
+        newer.posted_at = Utc.timestamp_opt(1_700_009_999, 0).unwrap();
+        let id_new = persist_discovered(&db, &newer, 1).await.unwrap();
+
+        for id in [&id_old, &id_new] {
+            releases::ActiveModel {
+                id: Set(id.clone()),
+                series_id: Set(Some(s1)),
+                ..Default::default()
+            }
+            .update(&db)
+            .await
+            .unwrap();
+        }
+
+        let map = list_by_series_ids(&db, &[s1, s2]).await.unwrap();
+        assert_eq!(map.len(), 1, "series with no linked releases are omitted");
+        let s1_rows = &map[&s1];
+        assert_eq!(s1_rows.len(), 2);
+        assert_eq!(
+            s1_rows[0].id, id_new,
+            "newest (highest posted_at) comes first"
+        );
+        assert_eq!(s1_rows[1].id, id_old);
+        assert!(!map.contains_key(&s2));
+    }
+
+    #[tokio::test]
+    async fn list_by_series_ids_empty_input_is_empty_map() {
+        let db = fresh_db().await;
+        let map = list_by_series_ids(&db, &[]).await.unwrap();
+        assert!(map.is_empty());
     }
 
     #[tokio::test]

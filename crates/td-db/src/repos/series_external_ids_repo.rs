@@ -76,6 +76,27 @@ pub async fn list_for_series(db: &DatabaseConnection, series_id: i32) -> Result<
         .await?)
 }
 
+/// All external IDs for a batch of series, grouped by `series_id`. Series
+/// with no mappings are omitted (callers treat absence as an empty list).
+/// One SELECT used by the catalog export to avoid an N+1 over the page.
+pub async fn by_series_ids(
+    db: &DatabaseConnection,
+    series_ids: &[i32],
+) -> Result<std::collections::HashMap<i32, Vec<Model>>> {
+    if series_ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let rows = series_external_ids::Entity::find()
+        .filter(series_external_ids::Column::SeriesId.is_in(series_ids.iter().copied()))
+        .all(db)
+        .await?;
+    let mut map: std::collections::HashMap<i32, Vec<Model>> = std::collections::HashMap::new();
+    for row in rows {
+        map.entry(row.series_id).or_default().push(row);
+    }
+    Ok(map)
+}
+
 /// Row counts grouped by `provider`. Used by the admin id-maps view to
 /// show how many foreign-id mappings each provider contributes.
 pub async fn count_by_provider(db: &DatabaseConnection) -> Result<Vec<ProviderCount>> {
@@ -144,5 +165,30 @@ mod tests {
         let db = fresh_db().await;
         let rows = count_by_provider(&db).await.unwrap();
         assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn by_series_ids_groups_per_series_and_omits_empties() {
+        let db = fresh_db().await;
+        let s1 = insert_series(&db, "A").await;
+        let s2 = insert_series(&db, "B").await;
+        let s3 = insert_series(&db, "C").await;
+        upsert(&db, s1, "mal", "mal-1", 0).await.unwrap();
+        upsert(&db, s1, "anilist", "al-1", 0).await.unwrap();
+        upsert(&db, s2, "mal", "mal-2", 0).await.unwrap();
+        // s3 has no mappings.
+
+        let map = by_series_ids(&db, &[s1, s2, s3]).await.unwrap();
+        assert_eq!(map.len(), 2, "series with no mappings are omitted");
+        assert_eq!(map[&s1].len(), 2);
+        assert_eq!(map[&s2].len(), 1);
+        assert!(!map.contains_key(&s3));
+    }
+
+    #[tokio::test]
+    async fn by_series_ids_empty_input_is_empty_map() {
+        let db = fresh_db().await;
+        let map = by_series_ids(&db, &[]).await.unwrap();
+        assert!(map.is_empty());
     }
 }

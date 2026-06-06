@@ -5566,3 +5566,179 @@ async fn send_to_client_records_failed_attempt_and_502s() {
     assert_eq!(sends[0]["releaseId"], id);
     assert!(sends[0]["error"].is_string());
 }
+
+// ---- series catalog export (GET /series/export) ----
+
+/// Read a response body as UTF-8 text (export endpoints return files, not JSON
+/// envelopes).
+async fn body_text(resp: axum::response::Response) -> String {
+    let bytes = to_bytes(resp.into_body(), 4 * 1024 * 1024).await.unwrap();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+fn export_app(db: sea_orm::DatabaseConnection) -> axum::Router {
+    build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    )
+}
+
+#[tokio::test]
+async fn series_export_requires_admin_bearer() {
+    // The export lives in the admin (writes) group, so a read without a bearer
+    // is rejected even though reads are otherwise open.
+    let db = fresh_db().await;
+    seed_series(&db, "Manga A", "manga").await;
+    let app = export_app(db);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/export")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn series_export_json_is_attachment_and_respects_filters() {
+    let db = fresh_db().await;
+    seed_series(&db, "Manga A", "manga").await;
+    seed_series(&db, "Manga B", "manga").await;
+    seed_series(&db, "Novel X", "novel").await;
+    let app = export_app(db);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/export?format=json&kind=manga")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/json; charset=utf-8"
+    );
+    let disposition = resp
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(disposition.starts_with("attachment; filename=\"tsundoku-series-export-"));
+    assert!(disposition.ends_with(".json\""));
+
+    let body = body_text(resp).await;
+    let arr: Value = serde_json::from_str(&body).unwrap();
+    let titles: Vec<&str> = arr
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["canonicalTitle"].as_str().unwrap())
+        .collect();
+    // The kind filter is honored exactly like GET /series: novel excluded,
+    // alphabetical order.
+    assert_eq!(titles, vec!["Manga A", "Manga B"]);
+}
+
+#[tokio::test]
+async fn series_export_csv_sets_headers_and_header_row() {
+    let db = fresh_db().await;
+    seed_series(&db, "Manga A", "manga").await;
+    let app = export_app(db);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/export?format=csv")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get(header::CONTENT_TYPE).unwrap(),
+        "text/csv; charset=utf-8"
+    );
+    assert!(
+        resp.headers()
+            .get(header::CONTENT_DISPOSITION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with(".csv\"")
+    );
+    let body = body_text(resp).await;
+    let header_row = body.lines().next().unwrap();
+    assert!(header_row.starts_with("id,canonicalTitle,"));
+    assert!(header_row.contains("codexStatus"));
+    // Header + one data row.
+    assert_eq!(body.lines().count(), 2);
+}
+
+#[tokio::test]
+async fn series_export_markdown_sets_headers_and_table() {
+    let db = fresh_db().await;
+    seed_series(&db, "Manga A", "manga").await;
+    let app = export_app(db);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/export?format=markdown")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get(header::CONTENT_TYPE).unwrap(),
+        "text/markdown; charset=utf-8"
+    );
+    let body = body_text(resp).await;
+    assert!(body.contains("# tsundoku series catalog"));
+    assert!(body.contains("| id | canonicalTitle |"));
+    assert!(body.contains("Manga A"));
+}
+
+#[tokio::test]
+async fn series_export_fields_param_subsets_columns() {
+    let db = fresh_db().await;
+    seed_series(&db, "Manga A", "manga").await;
+    let app = export_app(db);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                // Out-of-order + an unknown key; canonicalTitle is forced in.
+                .uri("/api/v1/series/export?format=csv&fields=year,bogus,kind")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp).await;
+    // Canonical column order: canonicalTitle, kind, year.
+    assert_eq!(body.lines().next().unwrap(), "canonicalTitle,kind,year");
+    // The data row reflects the seeded kind + year.
+    assert_eq!(body.lines().nth(1).unwrap(), "Manga A,manga,2020");
+}

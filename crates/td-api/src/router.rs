@@ -17,8 +17,8 @@ use crate::auth;
 use crate::docs::ApiDoc;
 use crate::embed::serve_static;
 use crate::handlers::{
-    codex, covers, download, events, health, info, metrics, providers, releases, series, sources,
-    stats, tagging,
+    codex, covers, download, events, health, info, metrics, providers, releases, series,
+    series_export, sources, stats, tagging,
 };
 use crate::state::AppState;
 
@@ -29,6 +29,10 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/series", post(series::create))
         .route("/series/{id}", patch(series::update))
         .route("/series/refresh-all", post(series::refresh_all))
+        // Catalog export: admin-only (exposes Codex ownership), so it lives in
+        // the writes group despite being a GET — same rationale as
+        // `GET /codex/status` and `GET /download/status`.
+        .route("/series/export", get(series_export::export))
         .route("/series/recompute-spans", post(series::recompute_spans))
         .route(
             "/series/invalidate-metadata-hashes",

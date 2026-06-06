@@ -385,7 +385,7 @@ async fn decorate_list_items(
 /// unrecognized values — treated leniently as "no filter"). The status
 /// comparison reuses [`compute_status`] so the filter and the per-row badge
 /// can never disagree.
-async fn codex_status_filter(
+pub(crate) async fn codex_status_filter(
     state: &AppState,
     q: &SeriesListQuery,
     is_admin: bool,
@@ -459,14 +459,14 @@ async fn codex_status_filter(
 }
 
 /// A series-id constraint derived from the codex status filter.
-enum CodexIdFilter {
+pub(crate) enum CodexIdFilter {
     /// Keep only these ids (the OR-union of the selected on-Codex statuses).
     Include(Vec<i32>),
     /// Keep everything except these ids (selection includes `missing`).
     Exclude(Vec<i32>),
 }
 
-fn apply_codex_id_filter(
+pub(crate) fn apply_codex_id_filter(
     select: sea_orm::Select<series::Entity>,
     filter: &CodexIdFilter,
 ) -> sea_orm::Select<series::Entity> {
@@ -522,7 +522,7 @@ async fn codex_synced_at(state: &AppState, is_admin: bool) -> ApiResult<Option<i
 /// no-query path and the search path. Pulled out so the search path can
 /// re-apply them as a server-side intersection against its ranked
 /// candidate set.
-fn apply_series_filters(
+pub(crate) fn apply_series_filters(
     mut select: sea_orm::Select<series::Entity>,
     q: &SeriesListQuery,
 ) -> sea_orm::Select<series::Entity> {
@@ -589,7 +589,7 @@ fn apply_series_filters(
 /// Split a comma-separated genre / tag list into trimmed, non-empty names.
 /// Returns an empty vec if the input is absent or yields no usable tokens —
 /// the caller treats that as "no constraint" rather than "match nothing".
-fn parse_csv(raw: Option<&str>) -> Vec<String> {
+pub(crate) fn parse_csv(raw: Option<&str>) -> Vec<String> {
     let Some(s) = raw else { return Vec::new() };
     s.split(',')
         .map(str::trim)
