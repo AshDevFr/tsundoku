@@ -1331,6 +1331,34 @@ export const handlers = [
     return HttpResponse.json(body);
   }),
 
+  // Catalog export: returns a tiny file payload with the same content-type +
+  // Content-Disposition the backend sets, so the download helper exercises its
+  // full path (blob + filename). Tests that assert on the request URL override
+  // this with `server.use`.
+  http.get("/api/v1/series/export", ({ request }) => {
+    const url = new URL(request.url);
+    const format = url.searchParams.get("format") ?? "json";
+    const ext = format === "markdown" ? "md" : format;
+    const body =
+      format === "csv"
+        ? "canonicalTitle\r\n"
+        : format === "markdown"
+          ? "# tsundoku series catalog\n"
+          : "[]";
+    const type =
+      format === "csv"
+        ? "text/csv"
+        : format === "markdown"
+          ? "text/markdown"
+          : "application/json";
+    return new HttpResponse(body, {
+      headers: {
+        "content-type": `${type}; charset=utf-8`,
+        "content-disposition": `attachment; filename="tsundoku-series-export-2026-06-08.${ext}"`,
+      },
+    });
+  }),
+
   http.get("/api/v1/genres", () => {
     const counts = new Map<string, number>();
     for (const s of SERIES) {

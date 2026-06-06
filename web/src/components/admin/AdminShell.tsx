@@ -38,6 +38,7 @@ const NAV: NavEntry[] = [
   { label: "Metrics", to: "/admin/metrics" },
   { label: "ID Maps", to: "/admin/id-maps" },
   { label: "Maintenance", to: "/admin/maintenance" },
+  { label: "Export", to: "/admin/export" },
 ];
 
 /// Layout wrapper for every page under `/admin/*`. Hosts the auth gate

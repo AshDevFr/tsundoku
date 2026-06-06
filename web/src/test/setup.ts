@@ -43,6 +43,14 @@ window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;
 // open; jsdom has no layout, so stub it out to keep option selection working.
 Element.prototype.scrollIntoView = vi.fn();
 
+// jsdom doesn't implement object URLs; the catalog-export download path calls
+// these to save a blob. Stub them so the download helper runs end-to-end in
+// component tests (the file save itself is a no-op under jsdom).
+if (typeof URL.createObjectURL !== "function") {
+  URL.createObjectURL = vi.fn(() => "blob:mock");
+  URL.revokeObjectURL = vi.fn();
+}
+
 // Minimal EventSource stand-in for jsdom. Tracks instances so tests can
 // dispatch synthetic frames; auto-reconnect / readyState transitions
 // are not modelled (tests that need them should drive .listeners

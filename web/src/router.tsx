@@ -10,6 +10,7 @@ import { AdminShell } from "@/components/admin/AdminShell";
 import { CODEX_STATUS_VALUES } from "@/constants/series";
 import { AdminCodexPage } from "@/pages/admin/Codex";
 import { AdminDownloadPage } from "@/pages/admin/Download";
+import { AdminExportPage } from "@/pages/admin/Export";
 import { AdminIdMapsPage } from "@/pages/admin/IdMaps";
 import { AdminMaintenancePage } from "@/pages/admin/Maintenance";
 import { AdminMetricsPage } from "@/pages/admin/Metrics";
@@ -185,6 +186,12 @@ export const adminMaintenanceRoute = createRoute({
   component: AdminMaintenancePage,
 });
 
+export const adminExportRoute = createRoute({
+  getParentRoute: () => adminLayoutRoute,
+  path: "export",
+  component: AdminExportPage,
+});
+
 const routeTree = rootRoute.addChildren([
   feedRoute,
   seriesDetailRoute,
@@ -201,6 +208,7 @@ const routeTree = rootRoute.addChildren([
     adminMetricsRoute,
     adminIdMapsRoute,
     adminMaintenanceRoute,
+    adminExportRoute,
   ]),
 ]);
 
