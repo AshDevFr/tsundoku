@@ -14,6 +14,18 @@ pub struct Model {
     pub status: Option<String>,
     pub year: Option<i32>,
     pub description: Option<String>,
+    /// Gap-preserving merged volume coverage across all linked releases: a JSON
+    /// array of `{start,end}` (`td_source::Span`), or NULL when none parsed.
+    /// Maintained by `releases_repo::recompute_series_coverage`; the max end
+    /// equals `highest_volume`.
+    pub volume_coverage_json: Option<String>,
+    /// Gap-preserving merged chapter coverage; same shape as
+    /// `volume_coverage_json`. Max end equals `highest_chapter`.
+    pub chapter_coverage_json: Option<String>,
+    /// Epoch seconds the series' release coverage (or `highest_*`) last changed.
+    /// Bumped only on real coverage changes — never by a metadata refresh — so
+    /// it drives the incremental release feed's `(updated_at, id)` cursor.
+    pub updated_at: i64,
     pub metadata_json: Option<String>,
     pub metadata_source: String,
     pub metadata_hash: Option<String>,

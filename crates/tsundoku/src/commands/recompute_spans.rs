@@ -25,7 +25,8 @@ pub async fn run(config_path: PathBuf) -> Result<()> {
     let db = td_db::connect(&cfg).await?;
     td_db::run_migrations(&db).await?;
 
-    let summary = releases_repo::recompute_all_spans(&db).await?;
+    let now = chrono::Utc::now().timestamp();
+    let summary = releases_repo::recompute_all_spans(&db, now).await?;
 
     println!("\nrecompute-spans summary:");
     println!("  releases rewritten  {}", summary.releases_rewritten);

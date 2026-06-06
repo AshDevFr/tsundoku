@@ -7,9 +7,12 @@ use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
     QueryOrder, QuerySelect, Set, TransactionTrait,
 };
-use td_source::{DiscoveredRelease, detect_formats, detect_spans, spans_max_end, spans_to_json};
+use td_source::{
+    DiscoveredRelease, Span, detect_formats, detect_spans, merge_spans, spans_from_json,
+    spans_max_end, spans_to_json,
+};
 
-use crate::entities::{release_formats, releases, review_candidates};
+use crate::entities::{release_formats, releases, review_candidates, series};
 
 pub use releases::Model;
 
@@ -331,6 +334,20 @@ pub async fn bulk_reject(db: &DatabaseConnection, ids: &[String], now: i64) -> R
         return Ok(0);
     }
     let txn = db.begin().await?;
+    // Capture the series these releases were linked to *before* we clear the
+    // link, so we can shrink their coverage afterward. This path bypasses
+    // `link_release`, so it owns its own coverage maintenance.
+    let mut affected: Vec<i32> = releases::Entity::find()
+        .filter(releases::Column::Id.is_in(ids.iter().cloned()))
+        .filter(releases::Column::SeriesId.is_not_null())
+        .all(&txn)
+        .await?
+        .into_iter()
+        .filter_map(|r| r.series_id)
+        .collect();
+    affected.sort_unstable();
+    affected.dedup();
+
     let res = releases::Entity::update_many()
         .col_expr(
             releases::Column::ResolutionStatus,
@@ -357,6 +374,11 @@ pub async fn bulk_reject(db: &DatabaseConnection, ids: &[String], now: i64) -> R
         .filter(review_candidates::Column::ReleaseId.is_in(ids.iter().cloned()))
         .exec(&txn)
         .await?;
+    // Now that the links are cleared, recompute each affected series' coverage
+    // (it can only shrink) and bump `updated_at` where it moved.
+    for sid in affected {
+        recompute_series_coverage(&txn, sid, now).await?;
+    }
     txn.commit().await?;
     Ok(res.rows_affected)
 }
@@ -367,28 +389,122 @@ pub struct SpanRecompute {
     /// Releases whose stored `volume_span_json` / `chapter_span_json` was
     /// rewritten because re-parsing produced a different value.
     pub releases_rewritten: u64,
-    /// Series rows whose `highest_volume` / `highest_chapter` changed.
+    /// Series rows whose coverage / `highest_*` changed (and whose
+    /// `updated_at` was therefore bumped).
     pub series_updated: u64,
 }
 
+/// The four series columns derived from a set of per-release spans.
+struct Coverage {
+    volume_json: Option<String>,
+    chapter_json: Option<String>,
+    highest_volume: Option<f64>,
+    highest_chapter: Option<f64>,
+}
+
+/// Merge accumulated per-release spans into a series' coverage fields. The
+/// `highest_*` marks are just the max end of the merged lists, so coverage and
+/// the marks can never drift apart.
+fn coverage_of(mut volumes: Vec<Span>, mut chapters: Vec<Span>) -> Coverage {
+    merge_spans(&mut volumes);
+    merge_spans(&mut chapters);
+    Coverage {
+        highest_volume: spans_max_end(&volumes),
+        highest_chapter: spans_max_end(&chapters),
+        volume_json: spans_to_json(&volumes),
+        chapter_json: spans_to_json(&chapters),
+    }
+}
+
+/// True when `row` already stores exactly this coverage, so no write — and no
+/// `updated_at` bump — is needed.
+fn coverage_unchanged(row: &series::Model, cov: &Coverage) -> bool {
+    row.volume_coverage_json == cov.volume_json
+        && row.chapter_coverage_json == cov.chapter_json
+        && row.highest_volume == cov.highest_volume
+        && row.highest_chapter == cov.highest_chapter
+}
+
+/// Recompute one series' merged volume/chapter coverage and `highest_*` from
+/// its currently-linked releases' stored spans, bumping `updated_at` to `now`
+/// **only when something actually changed**. Returns `true` if the row was
+/// rewritten.
+///
+/// This is the authoritative per-series maintenance invoked on every assign /
+/// reject / re-link. Unlike a monotonic bump it can *lower* coverage when a
+/// release is unlinked, because it re-merges from scratch over the releases
+/// that are linked *now*. A re-link is two calls (old series + new series).
+/// The no-op short-circuit is what keeps `updated_at` — and the release feed —
+/// from churning when nothing about coverage moved.
+pub async fn recompute_series_coverage<C: ConnectionTrait>(
+    db: &C,
+    series_id: i32,
+    now: i64,
+) -> Result<bool> {
+    let Some(row) = series::Entity::find_by_id(series_id).one(db).await? else {
+        return Ok(false);
+    };
+    let linked = releases::Entity::find()
+        .filter(releases::Column::SeriesId.eq(series_id))
+        .all(db)
+        .await?;
+    let mut volumes = Vec::new();
+    let mut chapters = Vec::new();
+    for r in &linked {
+        if r.volume_span_json.is_none() && r.chapter_span_json.is_none() {
+            // Legacy row persisted before span detection: re-derive from the
+            // stored file list (falling back to the title) so linking one still
+            // contributes coverage without waiting for a `recompute-spans`
+            // backfill. Marker-less rows yield nothing, which is correct.
+            let files: Vec<String> = r
+                .files_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_default();
+            let spans = detect_spans(&files, &r.title);
+            volumes.extend(spans.volumes);
+            chapters.extend(spans.chapters);
+        } else {
+            volumes.extend(spans_from_json(r.volume_span_json.as_deref()));
+            chapters.extend(spans_from_json(r.chapter_span_json.as_deref()));
+        }
+    }
+    let cov = coverage_of(volumes, chapters);
+    if coverage_unchanged(&row, &cov) {
+        return Ok(false);
+    }
+    let model = series::ActiveModel {
+        id: Set(series_id),
+        volume_coverage_json: Set(cov.volume_json),
+        chapter_coverage_json: Set(cov.chapter_json),
+        highest_volume: Set(cov.highest_volume),
+        highest_chapter: Set(cov.highest_chapter),
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    series::Entity::update(model).exec(db).await?;
+    Ok(true)
+}
+
 /// Authoritatively recompute every release's volume/chapter span and every
-/// series' `highest_*` marks from scratch. Unlike the incremental bump in
-/// `td_resolution::persist::link_release` (which only ever raises a series
-/// mark), this is a full pass that *replaces* the series values with the
-/// MAX across their currently-linked releases — so it corrects values that
-/// an earlier, more eager parse inflated, and clears marks on series whose
-/// releases no longer parse to anything. Run it after a parsing-strategy
-/// change or to backfill a catalog that predates span detection.
+/// series' coverage + `highest_*` marks from scratch. Unlike the per-link
+/// `recompute_series_coverage`, this re-derives each release's span from its
+/// stored file list (so it also corrects an earlier, more eager parse) and
+/// then rebuilds coverage for every series. `updated_at` is bumped to `now`
+/// only for series whose coverage/marks actually move. Run it after a
+/// parsing-strategy change or to backfill a catalog that predates span
+/// detection or this coverage column.
 ///
 /// Pure DB + lexical parsing: makes no network calls and does not touch
 /// resolution state. Idempotent — running it twice in a row leaves the
 /// second run reporting zero changes.
-pub async fn recompute_all_spans(db: &DatabaseConnection) -> Result<SpanRecompute> {
+pub async fn recompute_all_spans(db: &DatabaseConnection, now: i64) -> Result<SpanRecompute> {
     use std::collections::HashMap;
 
     let mut summary = SpanRecompute::default();
-    // series_id -> (max volume end, max chapter end) across linked releases.
-    let mut per_series: HashMap<i32, (Option<f64>, Option<f64>)> = HashMap::new();
+    // series_id -> accumulated (unmerged) volume/chapter spans across its
+    // currently-linked releases.
+    let mut per_series: HashMap<i32, (Vec<Span>, Vec<Span>)> = HashMap::new();
 
     // Walk every release once, re-deriving its span from the stored file
     // list (falling back to the title) and rewriting the columns when the
@@ -416,42 +532,36 @@ pub async fn recompute_all_spans(db: &DatabaseConnection) -> Result<SpanRecomput
         }
 
         if let Some(sid) = rel.series_id {
-            let entry = per_series.entry(sid).or_insert((None, None));
-            entry.0 = max_opt(entry.0, spans_max_end(&spans.volumes));
-            entry.1 = max_opt(entry.1, spans_max_end(&spans.chapters));
+            let entry = per_series.entry(sid).or_default();
+            entry.0.extend(spans.volumes.iter().copied());
+            entry.1.extend(spans.chapters.iter().copied());
         }
     }
 
-    // Replace each series' marks with the freshly-aggregated MAX. Series
-    // with no linked release that parses sink to NULL. Only rows that
-    // actually move are written.
-    let series_rows = crate::entities::series::Entity::find().all(db).await?;
+    // Rebuild each series' coverage from the freshly-aggregated spans. Series
+    // with no linked release that parses sink to empty/NULL. Only rows that
+    // actually change are written (and only those bump `updated_at`).
+    let series_rows = series::Entity::find().all(db).await?;
     for s in series_rows {
-        let (vol, chap) = per_series.get(&s.id).copied().unwrap_or((None, None));
-        if vol == s.highest_volume && chap == s.highest_chapter {
+        let (volumes, chapters) = per_series.remove(&s.id).unwrap_or_default();
+        let cov = coverage_of(volumes, chapters);
+        if coverage_unchanged(&s, &cov) {
             continue;
         }
-        let model = crate::entities::series::ActiveModel {
+        let model = series::ActiveModel {
             id: Set(s.id),
-            highest_volume: Set(vol),
-            highest_chapter: Set(chap),
+            volume_coverage_json: Set(cov.volume_json),
+            chapter_coverage_json: Set(cov.chapter_json),
+            highest_volume: Set(cov.highest_volume),
+            highest_chapter: Set(cov.highest_chapter),
+            updated_at: Set(now),
             ..Default::default()
         };
-        crate::entities::series::Entity::update(model)
-            .exec(db)
-            .await?;
+        series::Entity::update(model).exec(db).await?;
         summary.series_updated += 1;
     }
 
     Ok(summary)
-}
-
-fn max_opt(a: Option<f64>, b: Option<f64>) -> Option<f64> {
-    match (a, b) {
-        (Some(a), Some(b)) => Some(a.max(b)),
-        (Some(a), None) => Some(a),
-        (None, b) => b,
-    }
 }
 
 /// Idempotently attach a format tag to a release.
@@ -805,7 +915,7 @@ mod tests {
             .unwrap();
         }
 
-        let first = recompute_all_spans(&db).await.unwrap();
+        let first = recompute_all_spans(&db, 1_700_000_000).await.unwrap();
         assert_eq!(first.series_updated, 1);
         let row = series::Entity::find_by_id(series_id)
             .one(&db)
@@ -814,10 +924,43 @@ mod tests {
             .unwrap();
         assert_eq!(row.highest_volume, Some(5.0));
         assert_eq!(row.highest_chapter, Some(50.0));
+        // Coverage is populated and merged across the two releases. v01-03 and
+        // v05 stay disjoint (volume 4 is missing), and `updated_at` is stamped.
+        assert_eq!(
+            td_source::spans_from_json(row.volume_coverage_json.as_deref()),
+            vec![
+                td_source::Span {
+                    start: 1.0,
+                    end: 3.0,
+                },
+                td_source::Span {
+                    start: 5.0,
+                    end: 5.0,
+                },
+            ],
+        );
+        assert_eq!(
+            td_source::spans_from_json(row.chapter_coverage_json.as_deref()),
+            vec![td_source::Span {
+                start: 50.0,
+                end: 50.0,
+            }],
+        );
+        assert_eq!(row.updated_at, 1_700_000_000);
 
-        // Second run is a no-op: spans already stored, series already correct.
-        let second = recompute_all_spans(&db).await.unwrap();
+        // Second run is a no-op: spans already stored, series already correct,
+        // so `updated_at` is left untouched.
+        let second = recompute_all_spans(&db, 1_700_000_999).await.unwrap();
         assert_eq!(second, SpanRecompute::default());
+        let row = series::Entity::find_by_id(series_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row.updated_at, 1_700_000_000,
+            "no-op must not bump updated_at"
+        );
     }
 
     #[tokio::test]
@@ -847,7 +990,7 @@ mod tests {
 
         // Recompute re-derives from the file list (still intact) and rewrites
         // the column to the gap-preserving array form — no re-poll needed.
-        let summary = recompute_all_spans(&db).await.unwrap();
+        let summary = recompute_all_spans(&db, 1_700_000_000).await.unwrap();
         assert_eq!(summary.releases_rewritten, 1);
 
         let row = find_by_id(&db, &id).await.unwrap().unwrap();
@@ -869,8 +1012,152 @@ mod tests {
         );
 
         // Idempotent once the array shape is stored.
-        let second = recompute_all_spans(&db).await.unwrap();
+        let second = recompute_all_spans(&db, 1_700_000_000).await.unwrap();
         assert_eq!(second.releases_rewritten, 0);
+    }
+
+    /// Insert a series and two releases linked to it, the first covering
+    /// `v01-04` and the second `v06-09` (volume 5 missing). Returns the series
+    /// id and the two release ids.
+    async fn series_with_two_gapped_releases(db: &DatabaseConnection) -> (i32, String, String) {
+        use crate::entities::series;
+        use sea_orm::{ActiveModelTrait, Set};
+
+        let sid = series::ActiveModel {
+            canonical_title: Set("Cov".into()),
+            metadata_source: Set("test".into()),
+            metadata_fetched_at: Set(1),
+            first_seen_at: Set(1),
+            last_release_at: Set(1),
+            owned: Set(0),
+            ..Default::default()
+        }
+        .insert(db)
+        .await
+        .unwrap()
+        .id;
+
+        let mut r1 = sample("feed");
+        r1.external_id = "c1".into();
+        r1.link = "https://nyaa.si/view/c1".into();
+        r1.files = vec!["Series v01-04.cbz".into()];
+        let id1 = persist_discovered(db, &r1, 1).await.unwrap();
+
+        let mut r2 = sample("feed");
+        r2.external_id = "c2".into();
+        r2.link = "https://nyaa.si/view/c2".into();
+        r2.files = vec!["Series v06-09.cbz".into()];
+        let id2 = persist_discovered(db, &r2, 1).await.unwrap();
+
+        for id in [&id1, &id2] {
+            set_resolution(db, id, Some(sid), Some("test".into()), None, "resolved", 1)
+                .await
+                .unwrap();
+        }
+        (sid, id1, id2)
+    }
+
+    async fn series_row(db: &DatabaseConnection, sid: i32) -> crate::entities::series::Model {
+        crate::entities::series::Entity::find_by_id(sid)
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn recompute_series_coverage_merges_links_and_no_op_skips_bump() {
+        let db = fresh_db().await;
+        let (sid, _id1, _id2) = series_with_two_gapped_releases(&db).await;
+
+        let changed = recompute_series_coverage(&db, sid, 1_700_000_000)
+            .await
+            .unwrap();
+        assert!(changed);
+        let row = series_row(&db, sid).await;
+        assert_eq!(
+            td_source::spans_from_json(row.volume_coverage_json.as_deref()),
+            vec![
+                td_source::Span {
+                    start: 1.0,
+                    end: 4.0,
+                },
+                td_source::Span {
+                    start: 6.0,
+                    end: 9.0,
+                },
+            ],
+            "the gap at volume 5 survives in series coverage",
+        );
+        assert_eq!(row.highest_volume, Some(9.0));
+        assert_eq!(row.updated_at, 1_700_000_000);
+
+        // No-op: nothing changed, so `updated_at` must NOT move.
+        let again = recompute_series_coverage(&db, sid, 1_700_009_999)
+            .await
+            .unwrap();
+        assert!(!again);
+        assert_eq!(series_row(&db, sid).await.updated_at, 1_700_000_000);
+    }
+
+    #[tokio::test]
+    async fn recompute_series_coverage_shrinks_when_a_release_unlinks() {
+        use sea_orm::{ActiveModelTrait, Set};
+        let db = fresh_db().await;
+        let (sid, _id1, id2) = series_with_two_gapped_releases(&db).await;
+        recompute_series_coverage(&db, sid, 1_700_000_000)
+            .await
+            .unwrap();
+
+        // Unlink the second release; coverage (and `highest_volume`) must drop,
+        // which the old monotonic bump could never do.
+        releases::ActiveModel {
+            id: Set(id2),
+            series_id: Set(None),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
+
+        let changed = recompute_series_coverage(&db, sid, 1_700_000_500)
+            .await
+            .unwrap();
+        assert!(changed);
+        let row = series_row(&db, sid).await;
+        assert_eq!(
+            td_source::spans_from_json(row.volume_coverage_json.as_deref()),
+            vec![td_source::Span {
+                start: 1.0,
+                end: 4.0,
+            }],
+        );
+        assert_eq!(row.highest_volume, Some(4.0), "highest dropped on unlink");
+        assert_eq!(row.updated_at, 1_700_000_500);
+    }
+
+    #[tokio::test]
+    async fn bulk_reject_shrinks_affected_series_coverage() {
+        let db = fresh_db().await;
+        let (sid, _id1, id2) = series_with_two_gapped_releases(&db).await;
+        recompute_series_coverage(&db, sid, 1_700_000_000)
+            .await
+            .unwrap();
+
+        // Rejecting the second release clears its link; bulk_reject owns its
+        // own coverage maintenance (it bypasses link_release).
+        bulk_reject(&db, &[id2], 1_700_000_700).await.unwrap();
+
+        let row = series_row(&db, sid).await;
+        assert_eq!(
+            td_source::spans_from_json(row.volume_coverage_json.as_deref()),
+            vec![td_source::Span {
+                start: 1.0,
+                end: 4.0,
+            }],
+        );
+        assert_eq!(row.highest_volume, Some(4.0));
+        assert_eq!(row.updated_at, 1_700_000_700);
     }
 
     #[tokio::test]

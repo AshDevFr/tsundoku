@@ -1370,7 +1370,8 @@ pub struct RecomputeSpansResponse {
 pub async fn recompute_spans(
     State(state): State<AppState>,
 ) -> ApiResult<Json<RecomputeSpansResponse>> {
-    let summary = releases_repo::recompute_all_spans(&state.db)
+    let now = Utc::now().timestamp();
+    let summary = releases_repo::recompute_all_spans(&state.db, now)
         .await
         .map_err(anyhow_err)?;
     Ok(Json(RecomputeSpansResponse {

@@ -21,9 +21,8 @@ use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, NotSet, QueryFilter, Set, TransactionTrait,
 };
 use td_db::entities::{releases, series, series_external_ids};
-use td_db::repos::tagging_repo;
+use td_db::repos::{releases_repo, tagging_repo};
 use td_metadata::{ForeignId, SeriesKind, SeriesMetadata, SeriesStatus};
-use td_source::{spans_from_json, spans_max_end};
 
 /// Source-of-truth provenance for the `series.metadata_source` column.
 /// `offline_cache` means "provider served the response from a local dump";
@@ -158,6 +157,13 @@ pub async fn upsert_series_from_metadata(
                     last_release_at: Set(last_release_at),
                     highest_volume: NotSet,
                     highest_chapter: NotSet,
+                    // Release-derived coverage + its change timestamp are owned
+                    // by `recompute_series_coverage`, not metadata: a refresh
+                    // must never bump `updated_at` or the feed would re-emit
+                    // every series each provider-cache cycle.
+                    volume_coverage_json: NotSet,
+                    chapter_coverage_json: NotSet,
+                    updated_at: NotSet,
                     owned: NotSet,
                     // Operator-owned flag: leave it alone so a provider
                     // re-fetch never resets a manually-set ignore.
@@ -188,6 +194,11 @@ pub async fn upsert_series_from_metadata(
                 last_release_at: Set(release_posted_at),
                 highest_volume: Set(None),
                 highest_chapter: Set(None),
+                // Empty until a release links and `recompute_series_coverage`
+                // fills it; `updated_at = 0` until that first real change.
+                volume_coverage_json: Set(None),
+                chapter_coverage_json: Set(None),
+                updated_at: Set(0),
                 owned: Set(0),
                 ignore_completion: Set(false),
             };
@@ -301,91 +312,30 @@ pub async fn link_release(
     };
     releases::Entity::update(model).exec(db).await?;
 
-    // When a release is attached to a series, raise the series' "highest
-    // volume / chapter seen across releases" markers if this release's
-    // parsed span reaches further than what's recorded. Monotonic by
-    // design: a release moving away (reject, re-link) does not lower the
-    // marks, matching the "best ever observed" semantics the browse UI
-    // wants. Failures here are non-fatal — the link itself already
-    // committed and the next resolve will retry the bump.
-    if let Some(sid) = series_id
-        && let Some(rel) = current.as_ref()
-        && let Err(e) = bump_series_highest(db, sid, rel).await
-    {
-        tracing::warn!(error = ?e, series_id = sid, release_id, "failed to bump series highest volume/chapter");
+    // Rebuild the merged coverage + `highest_*` of every series this (re)link
+    // touched, bumping each one's `updated_at` only when it actually moved. A
+    // re-link affects two series (the one losing this release and the one
+    // gaining it); a reject/keep affects only the old one. Unlike the previous
+    // monotonic bump, this re-merges from scratch, so coverage *shrinks*
+    // correctly when a release moves away. Best-effort: the link already
+    // committed, so a failure here is logged, not propagated — the next link
+    // or a `recompute-spans` run repairs it.
+    let old_series_id = current.as_ref().and_then(|r| r.series_id);
+    for sid in affected_series(old_series_id, series_id) {
+        if let Err(e) = releases_repo::recompute_series_coverage(db, sid, attempted_at).await {
+            tracing::warn!(error = ?e, series_id = sid, release_id, "failed to recompute series coverage");
+        }
     }
     Ok(())
 }
 
-/// Deserialize a release's stored volume / chapter span and, if either end
-/// exceeds the series' current `highest_*`, lift the series mark to it.
-/// Writes only the columns that actually move, leaving the rest untouched.
-async fn bump_series_highest(
-    db: &DatabaseConnection,
-    series_id: i32,
-    release: &releases::Model,
-) -> Result<()> {
-    let mut rel_volume = parse_span_end(release.volume_span_json.as_deref());
-    let mut rel_chapter = parse_span_end(release.chapter_span_json.as_deref());
-    // Legacy rows persisted before span detection shipped have no stored
-    // span JSON. Rather than wait for a re-poll to backfill them, derive
-    // the span on the fly from the same inputs (files, then title) the
-    // persist step uses, so resolving an old release still lifts the marks.
-    if rel_volume.is_none() && rel_chapter.is_none() {
-        let files: Vec<String> = release
-            .files_json
-            .as_deref()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or_default();
-        let spans = td_source::detect_spans(&files, &release.title);
-        rel_volume = spans_max_end(&spans.volumes);
-        rel_chapter = spans_max_end(&spans.chapters);
-    }
-    if rel_volume.is_none() && rel_chapter.is_none() {
-        return Ok(());
-    }
-
-    let Some(row) = series::Entity::find_by_id(series_id).one(db).await? else {
-        return Ok(());
-    };
-
-    let new_volume = raise(row.highest_volume, rel_volume);
-    let new_chapter = raise(row.highest_chapter, rel_chapter);
-    if new_volume.is_none() && new_chapter.is_none() {
-        return Ok(());
-    }
-
-    let model = series::ActiveModel {
-        id: Set(series_id),
-        highest_volume: match new_volume {
-            Some(v) => Set(Some(v)),
-            None => NotSet,
-        },
-        highest_chapter: match new_chapter {
-            Some(v) => Set(Some(v)),
-            None => NotSet,
-        },
-        ..Default::default()
-    };
-    series::Entity::update(model).exec(db).await?;
-    Ok(())
-}
-
-/// The largest `end` across a JSON-encoded span list, or `None` when absent or
-/// unparseable. Tolerant of the legacy single-object shape via
-/// [`spans_from_json`] (older rows written before spans became lists).
-fn parse_span_end(json: Option<&str>) -> Option<f64> {
-    spans_max_end(&spans_from_json(json))
-}
-
-/// Return `Some(candidate)` only when it strictly exceeds the current value
-/// (or there is no current value). `None` means "leave the column alone".
-fn raise(current: Option<f64>, candidate: Option<f64>) -> Option<f64> {
-    let candidate = candidate?;
-    match current {
-        Some(c) if candidate <= c => None,
-        _ => Some(candidate),
-    }
+/// The distinct, non-null series ids affected by a (re)link: the release's
+/// previous series and its new one.
+fn affected_series(old: Option<i32>, new: Option<i32>) -> Vec<i32> {
+    let mut ids: Vec<i32> = [old, new].into_iter().flatten().collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 async fn find_series_by_id<C: sea_orm::ConnectionTrait>(
@@ -1245,5 +1195,184 @@ mod tests {
         .unwrap();
         // No series rows exist; the call simply must not error.
         assert_eq!(series::Entity::find().all(&db).await.unwrap().len(), 0);
+    }
+
+    /// A second, distinct series: different external id and no shared foreign
+    /// ids, so the upsert can't collapse it into the first one.
+    fn other_metadata() -> SeriesMetadata {
+        SeriesMetadata {
+            external_id: "67890".into(),
+            canonical_title: "Spy x Family".into(),
+            alternate_titles: vec![],
+            foreign_ids: vec![],
+            raw: serde_json::json!({"id": 67890}),
+            content_hash: "hash-other".into(),
+            ..sample_metadata()
+        }
+    }
+
+    #[tokio::test]
+    async fn relink_moves_coverage_between_series() {
+        let db = fresh_db().await;
+        let a = upsert_series_from_metadata(
+            &db,
+            "mangabaka",
+            &sample_metadata(),
+            1_700_000_000,
+            Utc::now(),
+            false,
+        )
+        .await
+        .unwrap()
+        .series_id;
+        let b = upsert_series_from_metadata(
+            &db,
+            "mangabaka",
+            &other_metadata(),
+            1_700_000_000,
+            Utc::now(),
+            false,
+        )
+        .await
+        .unwrap()
+        .series_id;
+        assert_ne!(a, b);
+
+        insert_release_with_spans(
+            &db,
+            "nyaa:mover",
+            Some(Span {
+                start: 1.0,
+                end: 5.0,
+            }),
+            None,
+        )
+        .await;
+
+        // Assign to A.
+        link_release(
+            &db,
+            "nyaa:mover",
+            Some(a),
+            Some("manual"),
+            Some(1.0),
+            "resolved",
+            1_000,
+        )
+        .await
+        .unwrap();
+        let row_a = series::Entity::find_by_id(a)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row_a.highest_volume, Some(5.0));
+        assert_eq!(row_a.updated_at, 1_000);
+
+        // Re-link to B: A must lose the coverage, B must gain it, and BOTH
+        // `updated_at`s must reflect the move.
+        link_release(
+            &db,
+            "nyaa:mover",
+            Some(b),
+            Some("manual"),
+            Some(1.0),
+            "resolved",
+            2_000,
+        )
+        .await
+        .unwrap();
+        let row_a = series::Entity::find_by_id(a)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        let row_b = series::Entity::find_by_id(b)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row_a.highest_volume, None, "A lost the release");
+        assert_eq!(row_a.volume_coverage_json, None);
+        assert_eq!(
+            row_a.updated_at, 2_000,
+            "A re-stamped when it lost coverage"
+        );
+        assert_eq!(row_b.highest_volume, Some(5.0), "B gained the release");
+        assert_eq!(row_b.updated_at, 2_000);
+    }
+
+    #[tokio::test]
+    async fn metadata_refresh_does_not_bump_updated_at() {
+        let db = fresh_db().await;
+        let sid = upsert_series_from_metadata(
+            &db,
+            "mangabaka",
+            &sample_metadata(),
+            1_700_000_000,
+            Utc::now(),
+            false,
+        )
+        .await
+        .unwrap()
+        .series_id;
+
+        // A linked release stamps coverage + updated_at.
+        insert_release_with_spans(
+            &db,
+            "nyaa:r",
+            Some(Span {
+                start: 1.0,
+                end: 3.0,
+            }),
+            None,
+        )
+        .await;
+        link_release(
+            &db,
+            "nyaa:r",
+            Some(sid),
+            Some("manual"),
+            Some(1.0),
+            "resolved",
+            5_000,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            series::Entity::find_by_id(sid)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap()
+                .updated_at,
+            5_000
+        );
+
+        // A metadata refresh that changes the row (new hash) must NOT touch
+        // `updated_at` — otherwise the feed would re-emit every series each
+        // provider-cache cycle.
+        let refreshed = SeriesMetadata {
+            description: Some("Updated synopsis.".into()),
+            content_hash: "hash-v2".into(),
+            ..sample_metadata()
+        };
+        upsert_series_from_metadata(
+            &db,
+            "mangabaka",
+            &refreshed,
+            1_700_000_500,
+            Utc::now(),
+            false,
+        )
+        .await
+        .unwrap();
+        let row = series::Entity::find_by_id(sid)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.description.as_deref(), Some("Updated synopsis."));
+        assert_eq!(row.updated_at, 5_000, "refresh must not bump updated_at");
     }
 }
