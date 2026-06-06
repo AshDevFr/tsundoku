@@ -5,8 +5,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: tsundoku
+    # Host ports are shifted off the Rust/Vite defaults (8080 / 5173) so this
+    # stack can run side by side with Codex, which uses those defaults. Only
+    # the host side moves; the container still listens on 8080 internally.
+    # Override with TSUNDOKU_HTTP_PORT in .env if 8090 is also taken.
     ports:
-      - "8080:8080"
+      - "${TSUNDOKU_HTTP_PORT:-8090}:8080"
     volumes:
       - ./config:/app/config:ro
       # Named volume, not a host bind mount: SQLite's WAL relies on mmap'd
@@ -40,8 +44,9 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     container_name: tsundoku-dev
+    # Shifted off 8080 to coexist with Codex (see the prod service note).
     ports:
-      - "8080:8080"
+      - "${TSUNDOKU_HTTP_PORT:-8090}:8080"
     volumes:
       - .:/app
       - cargo_cache:/usr/local/cargo/registry
@@ -69,9 +74,14 @@ services:
     image: node:22-alpine
     container_name: tsundoku-frontend-dev
     working_dir: /app
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    # Run Vite on the published port (not its 5173 default) so it doesn't
+    # collide with Codex's dev server. Host and container port MUST match:
+    # Vite's HMR websocket targets the *server* port, so a host≠container
+    # remap would make HMR connect to the wrong port. Override both via
+    # TSUNDOKU_WEB_PORT.
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port ${TSUNDOKU_WEB_PORT:-5183}"
     ports:
-      - "5173:5173"
+      - "${TSUNDOKU_WEB_PORT:-5183}:${TSUNDOKU_WEB_PORT:-5183}"
     volumes:
       - ./web:/app
       - frontend_node_modules:/app/node_modules
@@ -127,8 +137,10 @@ services:
       timeout: 3s
       retries: 30
       start_period: 30s
+    # Shifted off 8082 too, in case Codex mirrors this stack's screenshot
+    # profile. Internal traffic (healthcheck, playwright BASE_URL) stays 8080.
     ports:
-      - "8082:8080"
+      - "${TSUNDOKU_SCREENSHOTS_PORT:-8092}:8080"
     profiles:
       - screenshots
     networks:

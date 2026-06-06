@@ -234,8 +234,8 @@ docker-build: ## Build the production Docker image
 docker-build-clean-cache: ## Clear Docker buildx cache (use when build layers go stale)
 	docker buildx prune --filter type=exec.cachemount -f
 
-docker-run: ## Run the production image
-	docker run -p 8080:8080 tsundoku:latest
+docker-run: ## Run the production image (host 8090 to coexist with Codex; container still 8080)
+	docker run -p 8090:8080 tsundoku:latest
 
 docker-push: ## Push to a registry (usage: make docker-push REGISTRY=ghcr.io/you)
 	@if [ -z "$(REGISTRY)" ]; then \
