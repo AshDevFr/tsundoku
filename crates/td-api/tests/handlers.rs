@@ -5742,3 +5742,45 @@ async fn series_export_fields_param_subsets_columns() {
     // The data row reflects the seeded kind + year.
     assert_eq!(body.lines().nth(1).unwrap(), "Manga A,manga,2020");
 }
+
+#[tokio::test]
+async fn series_list_filters_by_multiple_kinds() {
+    // The kind filter accepts a comma-separated set (OR via IN); the catalog
+    // export's multi-select relies on this. A single value still works.
+    let db = fresh_db().await;
+    seed_series(&db, "Manga A", "manga").await;
+    seed_series(&db, "Manhwa B", "manhwa").await;
+    seed_series(&db, "Novel X", "novel").await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?kind=manga,manhwa&pageSize=50")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["total"], 2, "manga + manhwa, novel excluded");
+    let kinds: Vec<&str> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"manga"));
+    assert!(kinds.contains(&"manhwa"));
+    assert!(!kinds.contains(&"novel"));
+}

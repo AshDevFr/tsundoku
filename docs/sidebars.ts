@@ -33,6 +33,7 @@ const sidebars: SidebarsConfig = {
         "admin-maintenance",
         "download",
         "codex",
+        "export",
       ],
     },
     {

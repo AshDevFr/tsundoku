@@ -733,6 +733,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/series/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export the (filtered) series catalog as a downloadable file. */
+        get: operations["export_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series/invalidate-metadata-hashes": {
         parameters: {
             query?: never;
@@ -3498,6 +3515,44 @@ export interface operations {
             };
             /** @description canonicalTitle is empty */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    export_series: {
+        parameters: {
+            query?: {
+                /** @description `json` (default), `csv`, or `markdown`. */
+                format?: string;
+                /** @description Comma-separated [`ExportField`] keys. Absent ⇒ all fields. */
+                fields?: string;
+                /**
+                 * @description When `true`, nest each series' linked releases (JSON/Markdown only;
+                 *     CSV stays a flat series-level table and carries `releaseCount`).
+                 */
+                includeReleases?: boolean;
+                kind?: string;
+                status?: string;
+                owned?: boolean;
+                hasReleases?: boolean;
+                metadataSource?: string;
+                genres?: string;
+                genresMode?: string;
+                tags?: string;
+                tagsMode?: string;
+                codexStatus?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Catalog export as a downloadable JSON/CSV/Markdown file */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

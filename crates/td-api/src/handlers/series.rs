@@ -526,11 +526,17 @@ pub(crate) fn apply_series_filters(
     mut select: sea_orm::Select<series::Entity>,
     q: &SeriesListQuery,
 ) -> sea_orm::Select<series::Entity> {
-    if let Some(k) = q.kind.as_deref() {
-        select = select.filter(series::Column::Kind.eq(k));
+    // Kind / status accept one or more comma-separated values
+    // (e.g. `kind=manga,manhwa`), OR-combined via `IN`. A single value is the
+    // common case (what the browse UI sends) and still works as a one-element
+    // set; the catalog export's multi-selects send several.
+    let kinds = parse_csv(q.kind.as_deref());
+    if !kinds.is_empty() {
+        select = select.filter(series::Column::Kind.is_in(kinds));
     }
-    if let Some(s) = q.status.as_deref() {
-        select = select.filter(series::Column::Status.eq(s));
+    let statuses = parse_csv(q.status.as_deref());
+    if !statuses.is_empty() {
+        select = select.filter(series::Column::Status.is_in(statuses));
     }
     if let Some(owned) = q.owned {
         let flag = if owned { 1 } else { 0 };

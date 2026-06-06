@@ -46,8 +46,8 @@ use crate::handlers::sources::{
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
 use crate::handlers::{
-    codex, covers, download, events, health, info, metrics, providers, releases, series, sources,
-    stats, tagging,
+    codex, covers, download, events, health, info, metrics, providers, releases, series,
+    series_export, sources, stats, tagging,
 };
 use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult};
 
@@ -71,6 +71,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         series::refresh_all,
         series::recompute_spans,
         series::invalidate_metadata_hashes,
+        series_export::export,
         releases::list,
         releases::list_unresolved,
         releases::list_groups,

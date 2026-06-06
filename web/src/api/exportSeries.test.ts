@@ -35,8 +35,8 @@ describe("buildExportUrl", () => {
       fields: ["canonicalTitle"],
       includeReleases: true,
       filters: {
-        kind: "manga",
-        status: "ongoing",
+        kind: ["manga", "manhwa"],
+        status: ["ongoing"],
         metadataSource: "auto",
         hasReleases: false,
         codexStatus: ["missing", "behind"],
@@ -46,7 +46,8 @@ describe("buildExportUrl", () => {
     });
     const sp = new URL(url, "http://x").searchParams;
     expect(sp.get("includeReleases")).toBe("true");
-    expect(sp.get("kind")).toBe("manga");
+    // Multi-value kind/status are comma-joined.
+    expect(sp.get("kind")).toBe("manga,manhwa");
     expect(sp.get("status")).toBe("ongoing");
     expect(sp.get("metadataSource")).toBe("auto");
     // `false` must be sent explicitly (it's a meaningful "orphans only" filter),

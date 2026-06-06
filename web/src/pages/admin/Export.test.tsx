@@ -56,6 +56,14 @@ describe("AdminExportPage", () => {
     expect(fieldInput("codexStatus")).toBeChecked();
   });
 
+  it("collapses the filters drawer by default and toggles it open", () => {
+    renderPage();
+    // Collapsed by default (the whole-catalog dump is the common case).
+    expect(screen.getByLabelText("Expand filters")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("export-filters-toggle"));
+    expect(screen.getByLabelText("Collapse filters")).toBeInTheDocument();
+  });
+
   it("disables the include-releases switch for CSV", () => {
     renderPage();
     const sw = screen.getByLabelText(

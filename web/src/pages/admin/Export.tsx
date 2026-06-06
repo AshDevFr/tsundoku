@@ -1,8 +1,11 @@
 import {
+  ActionIcon,
   Anchor,
+  Badge,
   Button,
   Card,
   Checkbox,
+  Collapse,
   Group,
   MultiSelect,
   SegmentedControl,
@@ -14,6 +17,7 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useState } from "react";
 import { downloadSeriesExport, type ExportFormat } from "@/api/exportSeries";
@@ -139,14 +143,27 @@ export function AdminExportPage() {
     useState<Record<string, boolean>>(initialSelection);
   const [running, setRunning] = useState(false);
 
-  // Filters.
-  const [kind, setKind] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  // Filters. Collapsed by default — the whole-catalog dump is the common case,
+  // so filters are an opt-in drawer rather than always-on noise.
+  const [filtersOpen, { toggle: toggleFilters }] = useDisclosure(false);
+  const [kinds, setKinds] = useState<string[]>([]);
+  const [statuses, setStatuses] = useState<string[]>([]);
   const [metadataSource, setMetadataSource] = useState<string | null>(null);
   const [hasReleases, setHasReleases] = useState<string | null>(null);
   const [codexStatus, setCodexStatus] = useState<string[]>([]);
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
+  // How many filter dimensions are constraining the export — shown in the
+  // collapsed header so an active filter isn't hidden out of sight.
+  const activeFilterCount =
+    (kinds.length > 0 ? 1 : 0) +
+    (statuses.length > 0 ? 1 : 0) +
+    (metadataSource ? 1 : 0) +
+    (hasReleases ? 1 : 0) +
+    (codexStatus.length > 0 ? 1 : 0) +
+    (selectedGenres.length > 0 ? 1 : 0) +
+    (selectedTags.length > 0 ? 1 : 0);
 
   // Releases nest only in JSON/Markdown; CSV is a flat series-level table.
   const releasesDisabled = format === "csv";
@@ -180,8 +197,8 @@ export function AdminExportPage() {
         fields,
         includeReleases: effectiveIncludeReleases,
         filters: {
-          kind,
-          status,
+          kind: kinds,
+          status: statuses,
           metadataSource,
           hasReleases: hasReleases == null ? null : hasReleases === "true",
           codexStatus,
@@ -243,76 +260,107 @@ export function AdminExportPage() {
 
       <Card withBorder radius="md" p="md" data-testid="export-filters-card">
         <Stack gap="sm">
-          <Stack gap={2}>
-            <Title order={4}>Filters</Title>
-            <Text size="xs" c="dimmed">
-              Same semantics as the browse list. Leave blank for the whole
-              catalog. Tip: set Codex status to{" "}
-              <Text span fw={600}>
-                Not on Codex
-              </Text>{" "}
-              to export only series you don't own.
-            </Text>
-          </Stack>
-          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
-            <Select
-              label="Type"
-              data={KIND_OPTIONS}
-              value={kind}
-              onChange={setKind}
-              clearable
-              placeholder="Any"
-              data-testid="export-filter-kind"
-            />
-            <Select
-              label="Status"
-              data={STATUS_OPTIONS}
-              value={status}
-              onChange={setStatus}
-              clearable
-              placeholder="Any"
-              data-testid="export-filter-status"
-            />
-            <Select
-              label="Metadata source"
-              data={METADATA_SOURCE_DATA}
-              value={metadataSource}
-              onChange={setMetadataSource}
-              clearable
-              placeholder="Any"
-              data-testid="export-filter-metadata-source"
-            />
-            <Select
-              label="Has releases"
-              data={HAS_RELEASES_DATA}
-              value={hasReleases}
-              onChange={setHasReleases}
-              clearable
-              placeholder="Any"
-              data-testid="export-filter-has-releases"
-            />
-            <MultiSelectField
-              label="Codex status"
-              data={CODEX_STATUS_OPTIONS}
-              value={codexStatus}
-              onChange={setCodexStatus}
-              testid="export-filter-codex-status"
-            />
-            <MultiSelectField
-              label="Genres"
-              data={genreNames}
-              value={selectedGenres}
-              onChange={setSelectedGenres}
-              testid="export-filter-genres"
-            />
-            <MultiSelectField
-              label="Tags"
-              data={tagNames}
-              value={selectedTags}
-              onChange={setSelectedTags}
-              testid="export-filter-tags"
-            />
-          </SimpleGrid>
+          <Group
+            justify="space-between"
+            align="center"
+            onClick={toggleFilters}
+            style={{ cursor: "pointer" }}
+            data-testid="export-filters-toggle"
+          >
+            <Group gap="xs" align="center">
+              <Title order={4}>Filters</Title>
+              {activeFilterCount > 0 && (
+                <Badge
+                  size="sm"
+                  variant="light"
+                  data-testid="export-filters-count"
+                >
+                  {activeFilterCount} active
+                </Badge>
+              )}
+              {activeFilterCount === 0 && (
+                <Text size="xs" c="dimmed">
+                  whole catalog
+                </Text>
+              )}
+            </Group>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              aria-label={filtersOpen ? "Collapse filters" : "Expand filters"}
+            >
+              <Text size="sm" aria-hidden>
+                {filtersOpen ? "▲" : "▼"}
+              </Text>
+            </ActionIcon>
+          </Group>
+          <Collapse expanded={filtersOpen}>
+            <Stack gap="sm">
+              <Text size="xs" c="dimmed">
+                Same semantics as the browse list. Leave blank for the whole
+                catalog. Tip: set Codex status to{" "}
+                <Text span fw={600}>
+                  Not on Codex
+                </Text>{" "}
+                to export only series you don't own.
+              </Text>
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                <MultiSelectField
+                  label="Type"
+                  data={KIND_OPTIONS}
+                  value={kinds}
+                  onChange={setKinds}
+                  testid="export-filter-kind"
+                />
+                <MultiSelectField
+                  label="Status"
+                  data={STATUS_OPTIONS}
+                  value={statuses}
+                  onChange={setStatuses}
+                  testid="export-filter-status"
+                />
+                <Select
+                  label="Metadata source"
+                  data={METADATA_SOURCE_DATA}
+                  value={metadataSource}
+                  onChange={setMetadataSource}
+                  clearable
+                  placeholder="Any"
+                  data-testid="export-filter-metadata-source"
+                />
+                <Select
+                  label="Has releases"
+                  data={HAS_RELEASES_DATA}
+                  value={hasReleases}
+                  onChange={setHasReleases}
+                  clearable
+                  placeholder="Any"
+                  data-testid="export-filter-has-releases"
+                />
+                <MultiSelectField
+                  label="Codex status"
+                  data={CODEX_STATUS_OPTIONS}
+                  value={codexStatus}
+                  onChange={setCodexStatus}
+                  testid="export-filter-codex-status"
+                />
+                <MultiSelectField
+                  label="Genres"
+                  data={genreNames}
+                  value={selectedGenres}
+                  onChange={setSelectedGenres}
+                  testid="export-filter-genres"
+                />
+                <MultiSelectField
+                  label="Tags"
+                  data={tagNames}
+                  value={selectedTags}
+                  onChange={setSelectedTags}
+                  testid="export-filter-tags"
+                />
+              </SimpleGrid>
+            </Stack>
+          </Collapse>
         </Stack>
       </Card>
 

@@ -15,8 +15,10 @@ export type ExportFormat = "json" | "csv" | "markdown";
 /// constraint" handling. The relevance `q` search is intentionally absent: it
 /// is a ranking path, not a catalog filter (see Phase 1 notes).
 export interface ExportFilters {
-  kind?: string | null;
-  status?: string | null;
+  /// Kind/status accept multiple values (OR-combined server-side via `IN`),
+  /// sent as a comma-separated list — matching the multi-select UI.
+  kind?: string[];
+  status?: string[];
   metadataSource?: string | null;
   hasReleases?: boolean | null;
   codexStatus?: string[];
@@ -46,8 +48,8 @@ export function buildExportUrl(opts: ExportOptions): string {
   }
 
   const f = opts.filters;
-  if (f.kind) params.set("kind", f.kind);
-  if (f.status) params.set("status", f.status);
+  if (f.kind && f.kind.length > 0) params.set("kind", f.kind.join(","));
+  if (f.status && f.status.length > 0) params.set("status", f.status.join(","));
   if (f.metadataSource) params.set("metadataSource", f.metadataSource);
   if (f.hasReleases != null) params.set("hasReleases", String(f.hasReleases));
   if (f.codexStatus && f.codexStatus.length > 0) {
