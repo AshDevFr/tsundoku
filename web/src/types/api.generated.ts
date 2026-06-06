@@ -750,6 +750,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/series/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Incremental release feed: series with coverage activity, ordered by
+         *     `(updatedAt, id)` after an opaque cursor. A consumer (e.g. a Codex release
+         *     plugin) polls this a few times a day, stores `nextCursor`, and only ever
+         *     receives series whose coverage changed since its last poll. Keyset, not
+         *     offset, so it's gap-free and dupe-free while series are re-stamped
+         *     concurrently; delivery is at-least-once, so consumers upsert by `seriesId`.
+         */
+        get: operations["feed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series/invalidate-metadata-hashes": {
         parameters: {
             query?: never;
@@ -1061,30 +1085,6 @@ export interface paths {
         };
         /** Tag analog of [`list_genres`]. Same shape, different table. */
         get: operations["list_tags"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/series/feed": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Incremental release feed: series with coverage activity, ordered by
-         *     `(updatedAt, id)` after an opaque cursor. A consumer (e.g. a Codex release
-         *     plugin) polls this a few times a day, stores `nextCursor`, and only ever
-         *     receives series whose coverage changed since its last poll. Keyset, not
-         *     offset, so it's gap-free and dupe-free while series are re-stamped
-         *     concurrently; delivery is at-least-once, so consumers upsert by `seriesId`.
-         */
-        get: operations["feed"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3644,6 +3644,34 @@ export interface operations {
             };
         };
     };
+    feed: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Opaque cursor from a previous response's `nextCursor`. Omit to start
+                 *     from the beginning.
+                 */
+                cursor?: string;
+                /** @description Max items per page (default 100, capped at 500). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of changed series */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesFeedResponse"];
+                };
+            };
+        };
+    };
     invalidate_series_metadata_hashes: {
         parameters: {
             query?: {
@@ -4096,34 +4124,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TagList"];
-                };
-            };
-        };
-    };
-    feed: {
-        parameters: {
-            query?: {
-                /**
-                 * @description Opaque cursor from a previous response's `nextCursor`. Omit to start
-                 *     from the beginning.
-                 */
-                cursor?: string;
-                /** @description Max items per page (default 100, capped at 500). */
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A page of changed series */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SeriesFeedResponse"];
                 };
             };
         };

@@ -1768,6 +1768,49 @@
         ]
       }
     },
+    "/api/v1/series/feed": {
+      "get": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Incremental release feed: series with coverage activity, ordered by\n`(updatedAt, id)` after an opaque cursor. A consumer (e.g. a Codex release\nplugin) polls this a few times a day, stores `nextCursor`, and only ever\nreceives series whose coverage changed since its last poll. Keyset, not\noffset, so it's gap-free and dupe-free while series are re-stamped\nconcurrently; delivery is at-least-once, so consumers upsert by `seriesId`.",
+        "operationId": "feed",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `nextCursor`. Omit to start\nfrom the beginning.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items per page (default 100, capped at 500).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of changed series",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesFeedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/series/invalidate-metadata-hashes": {
       "post": {
         "tags": [
@@ -2362,49 +2405,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TagList"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/series/feed": {
-      "get": {
-        "tags": [
-          "series"
-        ],
-        "summary": "Incremental release feed: series with coverage activity, ordered by\n`(updatedAt, id)` after an opaque cursor. A consumer (e.g. a Codex release\nplugin) polls this a few times a day, stores `nextCursor`, and only ever\nreceives series whose coverage changed since its last poll. Keyset, not\noffset, so it's gap-free and dupe-free while series are re-stamped\nconcurrently; delivery is at-least-once, so consumers upsert by `seriesId`.",
-        "operationId": "feed",
-        "parameters": [
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque cursor from a previous response's `nextCursor`. Omit to start\nfrom the beginning.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Max items per page (default 100, capped at 500).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "A page of changed series",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SeriesFeedResponse"
                 }
               }
             }

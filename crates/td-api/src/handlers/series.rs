@@ -955,7 +955,7 @@ pub async fn get(
 /// concurrently; delivery is at-least-once, so consumers upsert by `seriesId`.
 #[utoipa::path(
     get,
-    path = "/series/feed",
+    path = "/api/v1/series/feed",
     params(SeriesFeedQuery),
     responses((status = 200, description = "A page of changed series", body = SeriesFeedResponse)),
     tag = "series",
