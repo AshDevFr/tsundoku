@@ -58,6 +58,45 @@ async fn seed_series(db: &sea_orm::DatabaseConnection, title: &str, kind: &str) 
     row.id
 }
 
+/// Seed a series with feed-relevant fields: a coverage list, an `updated_at`,
+/// `highest_volume`, and a mangabaka external id.
+async fn seed_feed_series(
+    db: &sea_orm::DatabaseConnection,
+    title: &str,
+    updated_at: i64,
+    volume_coverage_json: &str,
+    highest_volume: f64,
+    mangabaka_id: &str,
+) -> i32 {
+    let now = Utc::now().timestamp();
+    let id = series::ActiveModel {
+        canonical_title: Set(title.into()),
+        metadata_source: Set("api".into()),
+        metadata_fetched_at: Set(now),
+        first_seen_at: Set(now),
+        last_release_at: Set(now),
+        owned: Set(0),
+        updated_at: Set(updated_at),
+        volume_coverage_json: Set(Some(volume_coverage_json.into())),
+        highest_volume: Set(Some(highest_volume)),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .unwrap()
+    .id;
+    td_db::entities::series_external_ids::ActiveModel {
+        provider: Set("mangabaka".into()),
+        external_id: Set(mangabaka_id.into()),
+        series_id: Set(id),
+        fetched_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
 #[tokio::test]
 async fn health_returns_ok() {
     let db = fresh_db().await;
@@ -5783,4 +5822,101 @@ async fn series_list_filters_by_multiple_kinds() {
     assert!(kinds.contains(&"manga"));
     assert!(kinds.contains(&"manhwa"));
     assert!(!kinds.contains(&"novel"));
+}
+
+fn stub_app(db: sea_orm::DatabaseConnection) -> axum::Router {
+    build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    )
+}
+
+#[tokio::test]
+async fn series_feed_walks_keyset_with_cursor_and_coverage() {
+    let db = fresh_db().await;
+    // updated_at = 0 → inactive, must never surface in the feed.
+    seed_series(&db, "Inactive", "manga").await;
+    let active1 = seed_feed_series(
+        &db,
+        "Active One",
+        100,
+        r#"[{"start":1.0,"end":4.0},{"start":6.0,"end":9.0}]"#,
+        9.0,
+        "111",
+    )
+    .await;
+    let active2 = seed_feed_series(
+        &db,
+        "Active Two",
+        200,
+        r#"[{"start":1.0,"end":3.0}]"#,
+        3.0,
+        "222",
+    )
+    .await;
+
+    let app = stub_app(db);
+
+    // First page: one item (oldest active first), more remaining.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/feed?limit=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["seriesId"], active1);
+    assert_eq!(items[0]["updatedAt"], 100);
+    assert_eq!(items[0]["highestVolume"], 9.0);
+    assert_eq!(items[0]["externalIds"][0]["provider"], "mangabaka");
+    assert_eq!(items[0]["externalIds"][0]["externalId"], "111");
+    // Coverage is the gap-preserving NumericSpan[] shape.
+    assert_eq!(
+        items[0]["volumeCoverage"],
+        serde_json::json!([{"start":1.0,"end":4.0},{"start":6.0,"end":9.0}])
+    );
+    assert_eq!(body["hasMore"], true);
+    let cursor = body["nextCursor"].as_str().unwrap().to_string();
+
+    // Resume from the cursor: the second active series, no more after it.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/series/feed?limit=1&cursor={cursor}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["seriesId"], active2);
+    assert_eq!(body["hasMore"], false);
+
+    // A malformed cursor is a 400, not a silent restart.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/feed?cursor=not-base64!")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

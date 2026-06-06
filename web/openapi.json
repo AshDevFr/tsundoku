@@ -2368,6 +2368,49 @@
           }
         }
       }
+    },
+    "/series/feed": {
+      "get": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Incremental release feed: series with coverage activity, ordered by\n`(updatedAt, id)` after an opaque cursor. A consumer (e.g. a Codex release\nplugin) polls this a few times a day, stores `nextCursor`, and only ever\nreceives series whose coverage changed since its last poll. Keyset, not\noffset, so it's gap-free and dupe-free while series are re-stamped\nconcurrently; delivery is at-least-once, so consumers upsert by `seriesId`.",
+        "operationId": "feed",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `nextCursor`. Omit to start\nfrom the beginning.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items per page (default 100, capped at 500).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of changed series",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesFeedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2758,6 +2801,24 @@
               "$ref": "#/components/schemas/SyncRunDto"
             },
             "description": "Recent sweep attempts (cron + manual), newest first, with the counts each\nproduced or why it failed. Empty when disabled or before the first sweep."
+          }
+        }
+      },
+      "CoverageSpanDto": {
+        "type": "object",
+        "description": "One inclusive `[start, end]` coverage range. Mirrors Codex's `NumericSpan`\n(single values are `start == end`) so a release plugin can ingest the\n`volumeCoverage` / `chapterCoverage` lists verbatim.",
+        "required": [
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "number",
+            "format": "double"
+          },
+          "start": {
+            "type": "number",
+            "format": "double"
           }
         }
       },
@@ -4712,6 +4773,96 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "SeriesFeedItem": {
+        "type": "object",
+        "description": "One series in the incremental release feed (`GET /series/feed`). Carries\nthe provider IDs a consumer matches on plus the merged, gap-preserving\nvolume/chapter coverage across the series' linked releases.",
+        "required": [
+          "seriesId",
+          "canonicalTitle",
+          "externalIds",
+          "volumeCoverage",
+          "chapterCoverage",
+          "updatedAt"
+        ],
+        "properties": {
+          "canonicalTitle": {
+            "type": "string"
+          },
+          "chapterCoverage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageSpanDto"
+            },
+            "description": "Merged available chapter ranges (sorted, gaps preserved)."
+          },
+          "externalIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdDto"
+            },
+            "description": "Provider mappings (`provider` + `externalId`) — the match key for a\nconsumer that keeps its own catalog keyed on, e.g., MangaBaka ids."
+          },
+          "highestChapter": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Max end of `chapterCoverage`."
+          },
+          "highestVolume": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Max end of `volumeCoverage`, denormalized for a quick \"behind?\" check."
+          },
+          "seriesId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Epoch seconds this series' coverage last changed (the cursor key)."
+          },
+          "volumeCoverage": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageSpanDto"
+            },
+            "description": "Merged available volume ranges (sorted, gaps preserved)."
+          }
+        }
+      },
+      "SeriesFeedResponse": {
+        "type": "object",
+        "description": "One page of the release feed. Walk while `hasMore` is true, passing\n`nextCursor` back as `cursor`; when `hasMore` is false, keep `nextCursor`\nas the bookmark and idle until the next poll.",
+        "required": [
+          "items",
+          "hasMore"
+        ],
+        "properties": {
+          "hasMore": {
+            "type": "boolean",
+            "description": "`true` when more series remain after this page (fetch again now)."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesFeedItem"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor at the last item returned, or absent when the page is\nempty. Treat it as a token — do not parse its structure."
           }
         }
       },

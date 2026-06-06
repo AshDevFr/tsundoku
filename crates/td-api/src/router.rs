@@ -88,6 +88,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/info", get(info::info))
         .route("/stats", get(stats::stats))
         .route("/series", get(series::list))
+        .route("/series/feed", get(series::feed))
         .route("/series/{id}", get(series::get))
         .route("/releases", get(releases::list))
         .route("/releases/unresolved", get(releases::list_unresolved))

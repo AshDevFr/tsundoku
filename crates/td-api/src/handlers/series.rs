@@ -109,6 +109,93 @@ pub struct ExternalIdDto {
     pub fetched_at: i64,
 }
 
+/// One inclusive `[start, end]` coverage range. Mirrors Codex's `NumericSpan`
+/// (single values are `start == end`) so a release plugin can ingest the
+/// `volumeCoverage` / `chapterCoverage` lists verbatim.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CoverageSpanDto {
+    pub start: f64,
+    pub end: f64,
+}
+
+/// One series in the incremental release feed (`GET /series/feed`). Carries
+/// the provider IDs a consumer matches on plus the merged, gap-preserving
+/// volume/chapter coverage across the series' linked releases.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesFeedItem {
+    pub series_id: i32,
+    pub canonical_title: String,
+    /// Provider mappings (`provider` + `externalId`) — the match key for a
+    /// consumer that keeps its own catalog keyed on, e.g., MangaBaka ids.
+    pub external_ids: Vec<ExternalIdDto>,
+    /// Merged available volume ranges (sorted, gaps preserved).
+    pub volume_coverage: Vec<CoverageSpanDto>,
+    /// Merged available chapter ranges (sorted, gaps preserved).
+    pub chapter_coverage: Vec<CoverageSpanDto>,
+    /// Max end of `volumeCoverage`, denormalized for a quick "behind?" check.
+    pub highest_volume: Option<f64>,
+    /// Max end of `chapterCoverage`.
+    pub highest_chapter: Option<f64>,
+    /// Epoch seconds this series' coverage last changed (the cursor key).
+    pub updated_at: i64,
+}
+
+/// One page of the release feed. Walk while `hasMore` is true, passing
+/// `nextCursor` back as `cursor`; when `hasMore` is false, keep `nextCursor`
+/// as the bookmark and idle until the next poll.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesFeedResponse {
+    pub items: Vec<SeriesFeedItem>,
+    /// Opaque cursor at the last item returned, or absent when the page is
+    /// empty. Treat it as a token — do not parse its structure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// `true` when more series remain after this page (fetch again now).
+    pub has_more: bool,
+}
+
+const FEED_DEFAULT_LIMIT: u32 = 100;
+const FEED_MAX_LIMIT: u32 = 500;
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(default, rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct SeriesFeedQuery {
+    /// Opaque cursor from a previous response's `nextCursor`. Omit to start
+    /// from the beginning.
+    pub cursor: Option<String>,
+    /// Max items per page (default 100, capped at 500).
+    pub limit: u32,
+}
+
+impl Default for SeriesFeedQuery {
+    fn default() -> Self {
+        Self {
+            cursor: None,
+            limit: FEED_DEFAULT_LIMIT,
+        }
+    }
+}
+
+/// Encode a keyset position into an opaque cursor token.
+fn encode_feed_cursor(updated_at: i64, id: i32) -> String {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    URL_SAFE_NO_PAD.encode(format!("{updated_at}:{id}"))
+}
+
+/// Decode a cursor token back into `(updated_at, id)`. `None` on any
+/// malformed input so the handler can return a 400 rather than silently
+/// restarting the walk.
+fn decode_feed_cursor(token: &str) -> Option<(i64, i32)> {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    let bytes = URL_SAFE_NO_PAD.decode(token).ok()?;
+    let text = String::from_utf8(bytes).ok()?;
+    let (updated_at, id) = text.split_once(':')?;
+    Some((updated_at.parse().ok()?, id.parse().ok()?))
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesDetail {
@@ -858,6 +945,87 @@ pub async fn get(
         tags_for_series,
         codex,
     )))
+}
+
+/// Incremental release feed: series with coverage activity, ordered by
+/// `(updatedAt, id)` after an opaque cursor. A consumer (e.g. a Codex release
+/// plugin) polls this a few times a day, stores `nextCursor`, and only ever
+/// receives series whose coverage changed since its last poll. Keyset, not
+/// offset, so it's gap-free and dupe-free while series are re-stamped
+/// concurrently; delivery is at-least-once, so consumers upsert by `seriesId`.
+#[utoipa::path(
+    get,
+    path = "/series/feed",
+    params(SeriesFeedQuery),
+    responses((status = 200, description = "A page of changed series", body = SeriesFeedResponse)),
+    tag = "series",
+)]
+pub async fn feed(
+    State(state): State<AppState>,
+    Query(q): Query<SeriesFeedQuery>,
+) -> ApiResult<Json<SeriesFeedResponse>> {
+    let limit = q.limit.clamp(1, FEED_MAX_LIMIT) as u64;
+    let (after_updated_at, after_id) = match q.cursor.as_deref() {
+        Some(token) => decode_feed_cursor(token)
+            .ok_or_else(|| ApiError::BadRequest(format!("invalid cursor: {token}")))?,
+        None => (0, 0),
+    };
+
+    // Fetch one extra to detect whether more pages remain without a COUNT.
+    let mut rows = series_repo::feed_after(&state.db, after_updated_at, after_id, limit + 1)
+        .await
+        .map_err(anyhow_err)?;
+    let has_more = rows.len() as u64 > limit;
+    rows.truncate(limit as usize);
+    let next_cursor = rows.last().map(|s| encode_feed_cursor(s.updated_at, s.id));
+
+    let ids: Vec<i32> = rows.iter().map(|s| s.id).collect();
+    let externals = series_external_ids_repo::by_series_ids(&state.db, &ids)
+        .await
+        .map_err(anyhow_err)?;
+
+    let items = rows
+        .into_iter()
+        .map(|s| {
+            let external_ids = externals
+                .get(&s.id)
+                .into_iter()
+                .flatten()
+                .map(|m| ExternalIdDto {
+                    provider: m.provider.clone(),
+                    external_id: m.external_id.clone(),
+                    fetched_at: m.fetched_at,
+                })
+                .collect();
+            SeriesFeedItem {
+                series_id: s.id,
+                canonical_title: s.canonical_title,
+                external_ids,
+                volume_coverage: coverage_dto(s.volume_coverage_json.as_deref()),
+                chapter_coverage: coverage_dto(s.chapter_coverage_json.as_deref()),
+                highest_volume: s.highest_volume,
+                highest_chapter: s.highest_chapter,
+                updated_at: s.updated_at,
+            }
+        })
+        .collect();
+
+    Ok(Json(SeriesFeedResponse {
+        items,
+        next_cursor,
+        has_more,
+    }))
+}
+
+/// Parse a stored `*_coverage_json` column into the feed's span DTOs.
+fn coverage_dto(json: Option<&str>) -> Vec<CoverageSpanDto> {
+    td_source::spans_from_json(json)
+        .into_iter()
+        .map(|s| CoverageSpanDto {
+            start: s.start,
+            end: s.end,
+        })
+        .collect()
 }
 
 /// Response from `POST /api/v1/series/refresh-all`. Mirrors the

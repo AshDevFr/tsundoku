@@ -3,8 +3,8 @@
 use anyhow::Result;
 use sea_orm::sea_query::{Expr, OnConflict, Query};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
 };
 
 use crate::entities::{series, series_external_ids};
@@ -179,6 +179,39 @@ pub async fn find_by_id(db: &DatabaseConnection, id: i32) -> Result<Option<Model
 pub async fn recent(db: &DatabaseConnection, limit: u64) -> Result<Vec<Model>> {
     Ok(series::Entity::find()
         .order_by_desc(series::Column::LastReleaseAt)
+        .limit(limit)
+        .all(db)
+        .await?)
+}
+
+/// One page of the incremental release feed: series with real coverage
+/// activity (`updated_at > 0`) whose keyset position is strictly after
+/// `(after_updated_at, after_id)`, ordered ascending so a consumer can walk
+/// forward from a stored cursor. Pass `(0, 0)` to start from the beginning.
+///
+/// Keyset, not offset: stable and gap-free while series are being re-stamped
+/// concurrently. A series that gets re-stamped jumps to the tail (higher
+/// `updated_at`) and is re-delivered, so callers must upsert by `series_id`.
+/// Fetch `limit + 1` to detect whether more pages remain.
+pub async fn feed_after(
+    db: &DatabaseConnection,
+    after_updated_at: i64,
+    after_id: i32,
+    limit: u64,
+) -> Result<Vec<Model>> {
+    // (updated_at, id) > (after_updated_at, after_id)
+    let keyset = Condition::any()
+        .add(series::Column::UpdatedAt.gt(after_updated_at))
+        .add(
+            Condition::all()
+                .add(series::Column::UpdatedAt.eq(after_updated_at))
+                .add(series::Column::Id.gt(after_id)),
+        );
+    Ok(series::Entity::find()
+        .filter(series::Column::UpdatedAt.gt(0))
+        .filter(keyset)
+        .order_by_asc(series::Column::UpdatedAt)
+        .order_by_asc(series::Column::Id)
         .limit(limit)
         .all(db)
         .await?)
@@ -534,6 +567,82 @@ mod tests {
             hash_of(&db, other).await,
             Some("hash-other".into()),
             "anilist-backed row stays untouched when scoped to mangabaka",
+        );
+    }
+
+    async fn seed_with_updated(db: &DatabaseConnection, title: &str, updated_at: i64) -> i32 {
+        let id = seed(db, title, "api", None).await;
+        series::Entity::update(series::ActiveModel {
+            id: Set(id),
+            updated_at: Set(updated_at),
+            ..Default::default()
+        })
+        .exec(db)
+        .await
+        .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn feed_after_skips_inactive_and_walks_ascending() {
+        let db = fresh().await;
+        // updated_at = 0 (never had coverage activity) must not surface.
+        let _inactive = seed(&db, "Inactive", "api", None).await;
+        let b = seed_with_updated(&db, "B", 100).await;
+        let c = seed_with_updated(&db, "C", 200).await;
+
+        let page = feed_after(&db, 0, 0, 10).await.unwrap();
+        let ids: Vec<i32> = page.iter().map(|s| s.id).collect();
+        assert_eq!(
+            ids,
+            vec![b, c],
+            "ascending by updated_at, inactive excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn feed_after_is_keyset_resumable_with_ties() {
+        let db = fresh().await;
+        let d = seed_with_updated(&db, "D", 50).await;
+        // Two series share updated_at = 100; the id is the tiebreaker.
+        let e1 = seed_with_updated(&db, "E1", 100).await;
+        let e2 = seed_with_updated(&db, "E2", 100).await;
+        assert!(e1 < e2);
+
+        // Walk one at a time from the start.
+        let p1 = feed_after(&db, 0, 0, 1).await.unwrap();
+        assert_eq!(p1.iter().map(|s| s.id).collect::<Vec<_>>(), vec![d]);
+        let p2 = feed_after(&db, 50, d, 1).await.unwrap();
+        assert_eq!(p2.iter().map(|s| s.id).collect::<Vec<_>>(), vec![e1]);
+        // Same-second tie: resuming after (100, e1) yields e2, not a re-deliver.
+        let p3 = feed_after(&db, 100, e1, 10).await.unwrap();
+        assert_eq!(p3.iter().map(|s| s.id).collect::<Vec<_>>(), vec![e2]);
+        let p4 = feed_after(&db, 100, e2, 10).await.unwrap();
+        assert!(p4.is_empty(), "caught up");
+    }
+
+    #[tokio::test]
+    async fn feed_after_redelivers_a_rebumped_series() {
+        let db = fresh().await;
+        let b = seed_with_updated(&db, "B", 100).await;
+        // Consumer has walked past B (cursor at (100, b)).
+        assert!(feed_after(&db, 100, b, 10).await.unwrap().is_empty());
+
+        // B's coverage changes again -> updated_at jumps to the tail.
+        series::Entity::update(series::ActiveModel {
+            id: Set(b),
+            updated_at: Set(300),
+            ..Default::default()
+        })
+        .exec(&db)
+        .await
+        .unwrap();
+
+        let page = feed_after(&db, 100, b, 10).await.unwrap();
+        assert_eq!(
+            page.iter().map(|s| s.id).collect::<Vec<_>>(),
+            vec![b],
+            "a re-stamped series re-appears past the old cursor",
         );
     }
 }

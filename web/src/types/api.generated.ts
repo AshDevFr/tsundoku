@@ -1069,6 +1069,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/series/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Incremental release feed: series with coverage activity, ordered by
+         *     `(updatedAt, id)` after an opaque cursor. A consumer (e.g. a Codex release
+         *     plugin) polls this a few times a day, stores `nextCursor`, and only ever
+         *     receives series whose coverage changed since its last poll. Keyset, not
+         *     offset, so it's gap-free and dupe-free while series are re-stamped
+         *     concurrently; delivery is at-least-once, so consumers upsert by `seriesId`.
+         */
+        get: operations["feed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1262,6 +1286,17 @@ export interface components {
              *     produced or why it failed. Empty when disabled or before the first sweep.
              */
             recentSyncRuns: components["schemas"]["SyncRunDto"][];
+        };
+        /**
+         * @description One inclusive `[start, end]` coverage range. Mirrors Codex's `NumericSpan`
+         *     (single values are `start == end`) so a release plugin can ingest the
+         *     `volumeCoverage` / `chapterCoverage` lists verbatim.
+         */
+        CoverageSpanDto: {
+            /** Format: double */
+            end: number;
+            /** Format: double */
+            start: number;
         };
         /**
          * @description Body for creating a manual series. Only `canonicalTitle` is required;
@@ -2072,6 +2107,55 @@ export interface components {
             totalVolumes?: number | null;
             /** Format: int32 */
             year?: number | null;
+        };
+        /**
+         * @description One series in the incremental release feed (`GET /series/feed`). Carries
+         *     the provider IDs a consumer matches on plus the merged, gap-preserving
+         *     volume/chapter coverage across the series' linked releases.
+         */
+        SeriesFeedItem: {
+            canonicalTitle: string;
+            /** @description Merged available chapter ranges (sorted, gaps preserved). */
+            chapterCoverage: components["schemas"]["CoverageSpanDto"][];
+            /**
+             * @description Provider mappings (`provider` + `externalId`) — the match key for a
+             *     consumer that keeps its own catalog keyed on, e.g., MangaBaka ids.
+             */
+            externalIds: components["schemas"]["ExternalIdDto"][];
+            /**
+             * Format: double
+             * @description Max end of `chapterCoverage`.
+             */
+            highestChapter?: number | null;
+            /**
+             * Format: double
+             * @description Max end of `volumeCoverage`, denormalized for a quick "behind?" check.
+             */
+            highestVolume?: number | null;
+            /** Format: int32 */
+            seriesId: number;
+            /**
+             * Format: int64
+             * @description Epoch seconds this series' coverage last changed (the cursor key).
+             */
+            updatedAt: number;
+            /** @description Merged available volume ranges (sorted, gaps preserved). */
+            volumeCoverage: components["schemas"]["CoverageSpanDto"][];
+        };
+        /**
+         * @description One page of the release feed. Walk while `hasMore` is true, passing
+         *     `nextCursor` back as `cursor`; when `hasMore` is false, keep `nextCursor`
+         *     as the bookmark and idle until the next poll.
+         */
+        SeriesFeedResponse: {
+            /** @description `true` when more series remain after this page (fetch again now). */
+            hasMore: boolean;
+            items: components["schemas"]["SeriesFeedItem"][];
+            /**
+             * @description Opaque cursor at the last item returned, or absent when the page is
+             *     empty. Treat it as a token — do not parse its structure.
+             */
+            nextCursor?: string | null;
         };
         SeriesListItem: {
             canonicalTitle: string;
@@ -4012,6 +4096,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TagList"];
+                };
+            };
+        };
+    };
+    feed: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Opaque cursor from a previous response's `nextCursor`. Omit to start
+                 *     from the beginning.
+                 */
+                cursor?: string;
+                /** @description Max items per page (default 100, capped at 500). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of changed series */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesFeedResponse"];
                 };
             };
         };

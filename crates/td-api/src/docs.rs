@@ -35,9 +35,10 @@ use crate::handlers::releases::{
     UnresolvedRelease,
 };
 use crate::handlers::series::{
-    CreateSeriesRequest, ExternalIdDto, InvalidateMetadataHashesResponse, RecomputeSpansResponse,
-    RefreshAllSeriesResponse, SeriesDetail, SeriesListItem, SeriesListPage,
-    SetIgnoreCompletionRequest, UpdateSeriesRequest,
+    CoverageSpanDto, CreateSeriesRequest, ExternalIdDto, InvalidateMetadataHashesResponse,
+    RecomputeSpansResponse, RefreshAllSeriesResponse, SeriesDetail, SeriesFeedItem,
+    SeriesFeedResponse, SeriesListItem, SeriesListPage, SetIgnoreCompletionRequest,
+    UpdateSeriesRequest,
 };
 use crate::handlers::sources::{
     ManualBackfillResponse, ManualPollResponse, ManualReenrichResponse, PollAllResponse,
@@ -64,6 +65,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         stats::stats,
         series::list,
         series::get,
+        series::feed,
         series::create,
         series::update,
         series::refresh_metadata,
@@ -122,6 +124,9 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         SeriesListItem,
         SeriesListPage,
         SeriesDetail,
+        SeriesFeedItem,
+        SeriesFeedResponse,
+        CoverageSpanDto,
         CreateSeriesRequest,
         UpdateSeriesRequest,
         SetIgnoreCompletionRequest,
