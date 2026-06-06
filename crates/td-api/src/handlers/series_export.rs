@@ -98,6 +98,8 @@ pub(crate) enum ExportField {
     TotalChapters,
     HighestVolume,
     HighestChapter,
+    VolumeCoverage,
+    ChapterCoverage,
     ReleaseCount,
     Rating,
     Owned,
@@ -107,7 +109,7 @@ pub(crate) enum ExportField {
 impl ExportField {
     /// Canonical column order. Drives both the default "all fields" export and
     /// the column order in CSV/Markdown output.
-    const ALL: [ExportField; 23] = [
+    const ALL: [ExportField; 25] = [
         ExportField::Id,
         ExportField::CanonicalTitle,
         ExportField::AlternateTitles,
@@ -127,6 +129,8 @@ impl ExportField {
         ExportField::TotalChapters,
         ExportField::HighestVolume,
         ExportField::HighestChapter,
+        ExportField::VolumeCoverage,
+        ExportField::ChapterCoverage,
         ExportField::ReleaseCount,
         ExportField::Rating,
         ExportField::Owned,
@@ -156,6 +160,8 @@ impl ExportField {
             ExportField::TotalChapters => "totalChapters",
             ExportField::HighestVolume => "highestVolume",
             ExportField::HighestChapter => "highestChapter",
+            ExportField::VolumeCoverage => "volumeCoverage",
+            ExportField::ChapterCoverage => "chapterCoverage",
             ExportField::ReleaseCount => "releaseCount",
             ExportField::Rating => "rating",
             ExportField::Owned => "owned",
@@ -205,6 +211,10 @@ enum ExportValue {
     Float(f64),
     Bool(bool),
     List(Vec<String>),
+    /// A gap-preserving coverage list. JSON renders the structured
+    /// `[{start,end}]` (Codex's `NumericSpan[]`); CSV/Markdown render a compact
+    /// `"1-4; 6-9"`.
+    Spans(Vec<td_source::Span>),
     Null,
 }
 
@@ -220,12 +230,16 @@ impl ExportValue {
                     .map(|s| serde_json::Value::String(s.clone()))
                     .collect(),
             ),
+            ExportValue::Spans(spans) => {
+                serde_json::to_value(spans).unwrap_or(serde_json::Value::Null)
+            }
             ExportValue::Null => serde_json::Value::Null,
         }
     }
 
     /// Plain-text rendering for a CSV/Markdown cell (before per-format
-    /// escaping). `Null` is the empty string; lists join with `"; "`.
+    /// escaping). `Null` is the empty string; lists join with `"; "`; coverage
+    /// renders as `"1-4; 6-9"`.
     fn to_cell(&self) -> String {
         match self {
             ExportValue::Str(s) => s.clone(),
@@ -233,6 +247,9 @@ impl ExportValue {
             ExportValue::Float(f) => fmt_f64(*f),
             ExportValue::Bool(b) => b.to_string(),
             ExportValue::List(v) => v.join("; "),
+            ExportValue::Spans(spans) => {
+                spans.iter().map(span_human).collect::<Vec<_>>().join("; ")
+            }
             ExportValue::Null => String::new(),
         }
     }
@@ -248,39 +265,30 @@ fn fmt_f64(f: f64) -> String {
     }
 }
 
-/// A volume/chapter span for the export's nested release output. Backed by the
-/// `*_span_json` columns, which now store a gap-preserving list of
-/// `td_source::Span`. This single-span DTO carries the coarse `(min, max)` of
-/// that list; surfacing the full list (with gaps) is a Phase 4 follow-up.
-#[derive(Debug, Clone, Serialize)]
-struct SpanDto {
-    start: f64,
-    end: f64,
-}
-
-impl SpanDto {
-    fn human(&self) -> String {
-        if (self.start - self.end).abs() < f64::EPSILON {
-            fmt_f64(self.start)
-        } else {
-            format!("{}-{}", fmt_f64(self.start), fmt_f64(self.end))
-        }
+/// A single span as a human range: `3` for a point, `1-5` for a range.
+fn span_human(s: &td_source::Span) -> String {
+    if (s.start - s.end).abs() < f64::EPSILON {
+        fmt_f64(s.start)
+    } else {
+        format!("{}-{}", fmt_f64(s.start), fmt_f64(s.end))
     }
 }
 
-fn parse_span(raw: Option<&str>) -> Option<SpanDto> {
-    // The column stores a gap-preserving list; collapse it to a coarse
-    // (min, max) for the current single-span export field. Tolerant of the
-    // legacy single-object shape via `spans_from_json`.
+/// Reduce a stored `*_coverage_json` / `*_span_json` column to an export value:
+/// `Null` when empty, else the gap-preserving span list.
+fn spans_value(raw: Option<&str>) -> ExportValue {
     let spans = td_source::spans_from_json(raw);
-    let start = spans.iter().map(|s| s.start).reduce(f64::min)?;
-    let end = spans.iter().map(|s| s.end).reduce(f64::max)?;
-    Some(SpanDto { start, end })
+    if spans.is_empty() {
+        ExportValue::Null
+    } else {
+        ExportValue::Spans(spans)
+    }
 }
 
 /// One linked release in the nested `includeReleases` output. Field naming
 /// mirrors `ReleaseDto` so a consumer sees the same shape it would from
-/// `GET /releases`.
+/// `GET /releases`. `volumeSpan` / `chapterSpan` are the gap-preserving
+/// `NumericSpan[]` lists (omitted when empty).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReleaseExport {
@@ -294,17 +302,17 @@ struct ReleaseExport {
     size_bytes: Option<i64>,
     posted_at: i64,
     resolution_status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    volume_span: Option<SpanDto>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    chapter_span: Option<SpanDto>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    volume_span: Vec<td_source::Span>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    chapter_span: Vec<td_source::Span>,
 }
 
 impl ReleaseExport {
     fn from_model(m: releases::Model) -> Self {
         ReleaseExport {
-            volume_span: parse_span(m.volume_span_json.as_deref()),
-            chapter_span: parse_span(m.chapter_span_json.as_deref()),
+            volume_span: td_source::spans_from_json(m.volume_span_json.as_deref()),
+            chapter_span: td_source::spans_from_json(m.chapter_span_json.as_deref()),
             id: m.id,
             title: m.title,
             source: m.source_name,
@@ -316,21 +324,24 @@ impl ReleaseExport {
         }
     }
 
-    /// Markdown bullet: `Title (vol 1-3, ch 1-30) — <link>`. Newlines in a
-    /// title are flattened so the bullet stays on one line.
+    /// Markdown bullet: `Title (vol 1-3, ch 1-30) — <link>`. Disjoint ranges
+    /// join with `, ` (e.g. `vol 1-4, 6-9`). Newlines in a title are flattened
+    /// so the bullet stays on one line.
     fn md_bullet(&self) -> String {
         let title = self.title.replace(['\n', '\r'], " ");
-        let mut spans = Vec::new();
-        if let Some(v) = &self.volume_span {
-            spans.push(format!("vol {}", v.human()));
+        let render =
+            |spans: &[td_source::Span]| spans.iter().map(span_human).collect::<Vec<_>>().join(", ");
+        let mut parts = Vec::new();
+        if !self.volume_span.is_empty() {
+            parts.push(format!("vol {}", render(&self.volume_span)));
         }
-        if let Some(c) = &self.chapter_span {
-            spans.push(format!("ch {}", c.human()));
+        if !self.chapter_span.is_empty() {
+            parts.push(format!("ch {}", render(&self.chapter_span)));
         }
-        let span_suffix = if spans.is_empty() {
+        let span_suffix = if parts.is_empty() {
             String::new()
         } else {
-            format!(" ({})", spans.join(", "))
+            format!(" ({})", parts.join(", "))
         };
         format!("{title}{span_suffix} — {}", self.link)
     }
@@ -604,6 +615,8 @@ fn extract_value(
         ExportField::TotalChapters => opt_int(m.total_chapters),
         ExportField::HighestVolume => opt_float(m.highest_volume),
         ExportField::HighestChapter => opt_float(m.highest_chapter),
+        ExportField::VolumeCoverage => spans_value(m.volume_coverage_json.as_deref()),
+        ExportField::ChapterCoverage => spans_value(m.chapter_coverage_json.as_deref()),
         ExportField::ReleaseCount => ExportValue::Int(release_count),
         ExportField::Rating => opt_float(m.rating),
         ExportField::Owned => ExportValue::Bool(codex.is_some()),
@@ -865,23 +878,55 @@ mod tests {
         assert_eq!(fmt_f64(8.5), "8.5");
     }
 
+    fn span(start: f64, end: f64) -> td_source::Span {
+        td_source::Span { start, end }
+    }
+
     #[test]
     fn span_human_collapses_single_point() {
+        assert_eq!(span_human(&span(3.0, 3.0)), "3");
+        assert_eq!(span_human(&span(1.0, 5.0)), "1-5");
+    }
+
+    #[test]
+    fn coverage_renders_structured_json_and_compact_cell() {
+        let v = ExportValue::Spans(vec![span(1.0, 4.0), span(6.0, 9.0)]);
+        // JSON: structured NumericSpan[] (the feed's shape).
         assert_eq!(
-            SpanDto {
-                start: 3.0,
-                end: 3.0
-            }
-            .human(),
-            "3"
+            v.to_json(),
+            serde_json::json!([{"start": 1.0, "end": 4.0}, {"start": 6.0, "end": 9.0}])
         );
+        // CSV/Markdown: compact human ranges joined with "; ".
+        assert_eq!(v.to_cell(), "1-4; 6-9");
+    }
+
+    #[test]
+    fn empty_coverage_is_null() {
+        let v = spans_value(None);
+        assert!(matches!(v, ExportValue::Null));
+        assert_eq!(v.to_cell(), "");
+        assert_eq!(v.to_json(), serde_json::Value::Null);
+        // An empty stored array is also "no coverage".
+        assert!(matches!(spans_value(Some("[]")), ExportValue::Null));
+    }
+
+    #[test]
+    fn release_md_bullet_renders_disjoint_ranges() {
+        let r = ReleaseExport {
+            id: "nyaa:1".into(),
+            title: "Some Series".into(),
+            source: "nyaa".into(),
+            source_kind: "nyaa".into(),
+            link: "https://example.com/1".into(),
+            size_bytes: None,
+            posted_at: 0,
+            resolution_status: "resolved".into(),
+            volume_span: vec![span(1.0, 4.0), span(6.0, 9.0)],
+            chapter_span: vec![],
+        };
         assert_eq!(
-            SpanDto {
-                start: 1.0,
-                end: 5.0
-            }
-            .human(),
-            "1-5"
+            r.md_bullet(),
+            "Some Series (vol 1-4, 6-9) — https://example.com/1"
         );
     }
 

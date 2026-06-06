@@ -51,6 +51,9 @@ describe("AdminExportPage", () => {
     // Default-off bookkeeping fields.
     expect(fieldInput("id")).not.toBeChecked();
     expect(fieldInput("coverUrl")).not.toBeChecked();
+    // The verbose per-range coverage fields are present but default off.
+    expect(fieldInput("volumeCoverage")).not.toBeChecked();
+    expect(fieldInput("chapterCoverage")).not.toBeChecked();
     // Default-on agent-relevant fields.
     expect(fieldInput("genres")).toBeChecked();
     expect(fieldInput("codexStatus")).toBeChecked();

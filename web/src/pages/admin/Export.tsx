@@ -77,6 +77,8 @@ const FIELD_GROUPS: FieldGroup[] = [
       { key: "totalChapters", label: "Published Chapters" },
       { key: "highestVolume", label: "Available Volumes" },
       { key: "highestChapter", label: "Available Chapters" },
+      { key: "volumeCoverage", label: "Volume Coverage" },
+      { key: "chapterCoverage", label: "Chapter Coverage" },
       { key: "releaseCount", label: "Release Count" },
     ],
   },
@@ -95,9 +97,9 @@ const FIELD_GROUPS: FieldGroup[] = [
 
 const ALL_KEYS = FIELD_GROUPS.flatMap((g) => g.fields.map((f) => f.key));
 
-/// Fields off by default: ids, the cover URL, and the bookkeeping timestamps —
-/// noise for a recommendation feed. Everything else is on. `canonicalTitle` is
-/// always on regardless.
+/// Fields off by default: ids, the cover URL, the bookkeeping timestamps, and
+/// the verbose per-range coverage lists — noise for a recommendation feed.
+/// Everything else is on. `canonicalTitle` is always on regardless.
 const DEFAULT_OFF = new Set([
   "id",
   "coverUrl",
@@ -105,6 +107,8 @@ const DEFAULT_OFF = new Set([
   "firstSeenAt",
   "lastReleaseAt",
   "metadataFetchedAt",
+  "volumeCoverage",
+  "chapterCoverage",
 ]);
 
 function initialSelection(): Record<string, boolean> {

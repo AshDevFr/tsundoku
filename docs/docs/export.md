@@ -31,7 +31,11 @@ agent needs to reason about a title without a second lookup —
 - **Availability**: the published totals (`totalVolumes` / `totalChapters`)
   alongside the highest volume/chapter actually seen across linked releases —
   the difference between "this series has 12 volumes" and "12 volumes are
-  available to grab" — plus a release count.
+  available to grab" — plus a release count. The optional `volumeCoverage` /
+  `chapterCoverage` fields (off by default) carry the full *gap-preserving*
+  ranges: JSON exports them as a structured `[{start, end}]` list, CSV and
+  Markdown as a compact `1-4; 6-9`, so an agent can see exactly which volumes
+  are missing, not just how far a series goes.
 - **Rating** on the normalized 0–10 scale.
 - **Ownership**: whether the series is on Codex and, if so, its completion
   status — the field that lets an agent skip recommending what you already have.
