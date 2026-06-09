@@ -4885,7 +4885,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Narrow the page to series carrying one of these external-id mappings.\n\nEach entry is `provider:externalId` — the provider token, a colon, then\nthe id (e.g. `mangabaka:12345`, `mangaupdates:234`). Matching is **OR**:\na series is included if it carries *any* listed mapping, and is returned\nat most once. The `provider` half must match **exactly** (lowercase, no\naliases) — the tokens tsundoku stores are `mangabaka`, `mangaupdates`,\n`mal`, `anilist`, `kitsu`, so use the `provider` value from a feed\nitem's `externalIds` verbatim rather than guessing (`mangaupdates:234`,\nnot `mu:234`). Entries without a colon are ignored. Empty ⇒ no filter\n(identical to the `GET`).",
+            "description": "Narrow the page to series carrying one of these external-id mappings.\n\nEach entry is `provider:externalId` — the provider token, a colon, then\nthe id (e.g. `mangabaka:12345`, `mangaupdates:234`). Matching is **OR**:\na series is included if it carries *any* listed mapping, and is returned\nat most once. The `provider` half must match **exactly** (lowercase, no\naliases). The full set of tokens tsundoku stores is: `mangabaka`,\n`mangaupdates`, `mal`, `anilist`, `mangadex`, `kitsu`, `anime_planet`,\n`anime_news_network`, `shikimori`. Prefer round-tripping the `provider`\nvalue from a feed item's `externalIds` verbatim over guessing\n(`mangaupdates:234`, not `mu:234`). Entries without a colon are ignored.\nEmpty ⇒ no filter (identical to the `GET`).",
             "default": []
           },
           "limit": {
