@@ -2,6 +2,32 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.11.0] - 2026-06-09
+
+### Features
+
+- *(series)* Add admin catalog export endpoint
+- *(web)* Add admin catalog export page
+- *(series)* Finish catalog export — OpenAPI, docs, filter polish
+- *(spans)* Detect gap-preserving volume/chapter coverage
+- *(series)* Track merged release coverage and a change timestamp
+- *(series)* Add a cursor-paginated release feed endpoint
+- *(series)* Surface volume/chapter coverage in the catalog export
+- *(series)* Filter the release feed by external ids via POST
+
+### Bug Fixes
+
+- *(series)* Correct the OpenAPI path for the release feed
+
+### Documentation
+
+- *(series)* Document the externalIds pattern on the feed filter
+- *(series)* List the full provider token set on the feed filter
+
+### Miscellaneous Tasks
+
+- *(docker)* Shift host ports off Codex's defaults
+
 ## [1.10.2] - 2026-06-05
 
 ### Features
