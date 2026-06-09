@@ -310,22 +310,28 @@ pub async fn link_release(
         resolved_at,
         ..Default::default()
     };
-    releases::Entity::update(model).exec(db).await?;
+
+    // The release link and the coverage recompute it triggers must commit
+    // together or not at all. If they split — link persists, recompute fails —
+    // the series is left with a linked release but `updated_at = 0` and empty
+    // coverage, which silently drops it out of the release feed (the feed gates
+    // on `updated_at > 0`) with no automatic recovery. One transaction closes
+    // that gap: a recompute failure rolls back the link too, so the release
+    // stays in its prior state and the resolver retries it on the next tick.
+    let txn = db.begin().await?;
+    releases::Entity::update(model).exec(&txn).await?;
 
     // Rebuild the merged coverage + `highest_*` of every series this (re)link
     // touched, bumping each one's `updated_at` only when it actually moved. A
     // re-link affects two series (the one losing this release and the one
     // gaining it); a reject/keep affects only the old one. Unlike the previous
     // monotonic bump, this re-merges from scratch, so coverage *shrinks*
-    // correctly when a release moves away. Best-effort: the link already
-    // committed, so a failure here is logged, not propagated — the next link
-    // or a `recompute-spans` run repairs it.
+    // correctly when a release moves away.
     let old_series_id = current.as_ref().and_then(|r| r.series_id);
     for sid in affected_series(old_series_id, series_id) {
-        if let Err(e) = releases_repo::recompute_series_coverage(db, sid, attempted_at).await {
-            tracing::warn!(error = ?e, series_id = sid, release_id, "failed to recompute series coverage");
-        }
+        releases_repo::recompute_series_coverage(&txn, sid, attempted_at).await?;
     }
+    txn.commit().await?;
     Ok(())
 }
 
