@@ -2163,8 +2163,17 @@ export interface components {
              */
             cursor: string | null;
             /**
-             * @description Narrow the page to series carrying one of these `provider:externalId`
-             *     mappings (e.g. `mangabaka:12345`). Empty ⇒ no filter (same as `GET`).
+             * @description Narrow the page to series carrying one of these external-id mappings.
+             *
+             *     Each entry is `provider:externalId` — the provider token, a colon, then
+             *     the id (e.g. `mangabaka:12345`, `mangaupdates:234`). Matching is **OR**:
+             *     a series is included if it carries *any* listed mapping, and is returned
+             *     at most once. The `provider` half must match **exactly** (lowercase, no
+             *     aliases) — the tokens tsundoku stores are `mangabaka`, `mangaupdates`,
+             *     `mal`, `anilist`, `kitsu`, so use the `provider` value from a feed
+             *     item's `externalIds` verbatim rather than guessing (`mangaupdates:234`,
+             *     not `mu:234`). Entries without a colon are ignored. Empty ⇒ no filter
+             *     (identical to the `GET`).
              * @default []
              */
             externalIds: string[];
