@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.11.1] - 2026-06-09
+
+### Bug Fixes
+
+- *(resolution)* Commit release link and coverage recompute atomically
+
 ## [1.11.0] - 2026-06-09
 
 ### Features
