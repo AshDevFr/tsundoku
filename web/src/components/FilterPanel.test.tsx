@@ -76,6 +76,33 @@ describe("FilterPanel — Codex filter visibility", () => {
   });
 });
 
+describe("FilterPanel — kind / status multi-select", () => {
+  afterEach(() => useAdminAuth.getState().clear());
+
+  it("emits kind as an array when an option is picked", async () => {
+    const onChange = vi.fn();
+    renderPanel({}, onChange);
+    const control = await screen.findByTestId("filter-kind");
+    fireEvent.click(control);
+    fireEvent.click(await screen.findByText("manhwa"));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: ["manhwa"], page: 1 }),
+    );
+  });
+
+  it("OR-combines multiple status selections", async () => {
+    const onChange = vi.fn();
+    // Start with one selected so adding a second exercises the multi path.
+    renderPanel({ status: ["ongoing"] }, onChange);
+    const control = await screen.findByTestId("filter-status");
+    fireEvent.click(control);
+    fireEvent.click(await screen.findByText("completed"));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ status: ["ongoing", "completed"], page: 1 }),
+    );
+  });
+});
+
 describe("FilterPanel — manual/auto source filter", () => {
   afterEach(() => useAdminAuth.getState().clear());
 

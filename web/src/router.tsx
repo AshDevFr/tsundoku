@@ -58,8 +58,13 @@ const rootRoute = createRootRoute({
 /// exact filtered/paginated list the user came from.
 function validateFilterSearch(raw: Record<string, unknown>): FilterSearch {
   const search: FilterSearch = {};
-  if (typeof raw.kind === "string" && raw.kind) search.kind = raw.kind;
-  if (typeof raw.status === "string" && raw.status) search.status = raw.status;
+  // Kind / status are open-vocab multi-selects: accept a repeated param or a
+  // CSV string and keep the values verbatim (the backend doesn't restrict the
+  // vocabulary, so don't gate on a known-value list the way codexStatus does).
+  const kind = parseStringList(raw.kind);
+  if (kind.length > 0) search.kind = kind;
+  const status = parseStringList(raw.status);
+  if (status.length > 0) search.status = status;
   const genres = parseStringList(raw.genres);
   if (genres.length > 0) search.genres = genres;
   if (raw.genresMode === "all" || raw.genresMode === "any")

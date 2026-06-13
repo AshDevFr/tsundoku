@@ -30,8 +30,6 @@ function makeTestRouter(initialPath: string) {
     component: FeedPage,
     validateSearch: (raw: Record<string, unknown>) => {
       const out: Record<string, unknown> = {};
-      if (typeof raw.kind === "string") out.kind = raw.kind;
-      if (typeof raw.status === "string") out.status = raw.status;
       const splitList = (v: unknown): string[] | undefined => {
         if (Array.isArray(v))
           return (v as unknown[]).filter(
@@ -44,6 +42,10 @@ function makeTestRouter(initialPath: string) {
             .filter((s) => s.length > 0);
         return undefined;
       };
+      const kind = splitList(raw.kind);
+      if (kind && kind.length > 0) out.kind = kind;
+      const status = splitList(raw.status);
+      if (status && status.length > 0) out.status = status;
       const genres = splitList(raw.genres);
       if (genres && genres.length > 0) out.genres = genres;
       if (raw.genresMode === "all" || raw.genresMode === "any")
@@ -116,6 +118,18 @@ describe("FeedPage", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Chainsaw Man")).not.toBeInTheDocument();
     expect(screen.getByText("1 match")).toBeInTheDocument();
+  });
+
+  it("OR-combines multiple kinds via a CSV URL search param", async () => {
+    // Chainsaw Man is manga, Re:Zero is a novel, Solo Leveling is manhwa.
+    renderWithProviders("/?kind=manga,novel");
+    expect(
+      await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Re:Zero - Starting Life in Another World"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Solo Leveling")).not.toBeInTheDocument();
   });
 
   it("filters by genre via URL search param", async () => {

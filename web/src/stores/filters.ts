@@ -12,8 +12,13 @@ export interface FilterPreset {
 export type TagFilterMode = "any" | "all";
 
 export interface FilterSearch {
-  kind?: string;
-  status?: string;
+  /// Selected kind values (e.g. `manga`, `manhwa`), OR-combined: a series
+  /// is kept if its kind matches any selected value. Sent as a CSV the
+  /// backend re-splits and matches via `IN`.
+  kind?: string[];
+  /// Selected status values (e.g. `ongoing`, `completed`), OR-combined.
+  /// See [[kind]].
+  status?: string[];
   owned?: boolean;
   /// Has-releases filter: `true` keeps only series with ≥1 linked
   /// release, `false` keeps only orphans (zero releases, typically the

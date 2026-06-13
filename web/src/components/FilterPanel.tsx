@@ -135,8 +135,8 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     });
 
   const hasActiveFilters =
-    Boolean(search.kind) ||
-    Boolean(search.status) ||
+    (search.kind?.length ?? 0) > 0 ||
+    (search.status?.length ?? 0) > 0 ||
     (search.genres?.length ?? 0) > 0 ||
     (search.tags?.length ?? 0) > 0 ||
     Boolean(search.q) ||
@@ -267,24 +267,28 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
           data-testid="feed-search-input"
         />
 
-        <Select
+        <MultiSelect
           label="Kind"
-          placeholder="Any"
+          placeholder={search.kind?.length ? undefined : "Any"}
+          description="Matches any selected kind"
           data={KIND_OPTIONS}
-          value={search.kind ?? null}
-          onChange={(v) => merge({ kind: v ?? undefined })}
+          value={search.kind ?? []}
+          onChange={(v) => merge({ kind: v.length > 0 ? v : undefined })}
           clearable
           searchable
+          data-testid="filter-kind"
         />
 
-        <Select
+        <MultiSelect
           label="Status"
-          placeholder="Any"
+          placeholder={search.status?.length ? undefined : "Any"}
+          description="Matches any selected status"
           data={STATUS_OPTIONS}
-          value={search.status ?? null}
-          onChange={(v) => merge({ status: v ?? undefined })}
+          value={search.status ?? []}
+          onChange={(v) => merge({ status: v.length > 0 ? v : undefined })}
           clearable
           searchable
+          data-testid="filter-status"
         />
 
         <ComboFilterGroup

@@ -59,8 +59,11 @@ export type ProviderMetricsBucket =
   components["schemas"]["ProviderMetricsBucket"];
 
 export interface SeriesFilters {
-  kind?: string;
-  status?: string;
+  /// Selected kind values, OR-combined. Joined into a CSV before being sent —
+  /// the backend re-splits on the comma and matches via `IN`.
+  kind?: string[];
+  /// Selected status values, OR-combined. See [`SeriesFilters.kind`].
+  status?: string[];
   owned?: boolean;
   /// `true` keeps only series with ≥1 linked release; `false` keeps only
   /// orphans. Absent means "no constraint". Mirrors the backend filter.
@@ -94,6 +97,10 @@ export function useSeriesList(filters: SeriesFilters) {
   // responses — otherwise logging in/out would serve a stale payload.
   const hasAdmin = useAdminAuth((s) => Boolean(s.token));
   const trimmedQ = filters.q?.trim();
+  const kindCsv = filters.kind?.length ? filters.kind.join(",") : undefined;
+  const statusCsv = filters.status?.length
+    ? filters.status.join(",")
+    : undefined;
   const genresCsv = filters.genres?.length
     ? filters.genres.join(",")
     : undefined;
@@ -104,8 +111,8 @@ export function useSeriesList(filters: SeriesFilters) {
   const query = {
     page: filters.page ?? 1,
     pageSize: filters.pageSize ?? DEFAULT_PAGE_SIZE,
-    kind: filters.kind || undefined,
-    status: filters.status || undefined,
+    kind: kindCsv,
+    status: statusCsv,
     owned: typeof filters.owned === "boolean" ? filters.owned : undefined,
     hasReleases:
       typeof filters.hasReleases === "boolean"

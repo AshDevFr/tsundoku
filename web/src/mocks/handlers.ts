@@ -1267,9 +1267,25 @@ export const handlers = [
     const page = Number(url.searchParams.get("page") ?? "1");
     const pageSize = Number(url.searchParams.get("pageSize") ?? "24");
 
+    // Kind / status are comma-separated and OR-combined, mirroring the
+    // backend's `IN` filter (a single value is just a one-element set).
+    const splitOr = (s: string | null) =>
+      s
+        ?.split(",")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0) ?? [];
+    const kinds = splitOr(kind);
+    const statuses = splitOr(status);
+
     let filtered = SERIES.slice();
-    if (kind) filtered = filtered.filter((s) => s.kind === kind);
-    if (status) filtered = filtered.filter((s) => s.status === status);
+    if (kinds.length > 0)
+      filtered = filtered.filter(
+        (s) => s.kind != null && kinds.includes(s.kind),
+      );
+    if (statuses.length > 0)
+      filtered = filtered.filter(
+        (s) => s.status != null && statuses.includes(s.status),
+      );
     if (metadataSource === "manual")
       filtered = filtered.filter((s) => s.metadataSource === "manual");
     else if (metadataSource === "auto")
