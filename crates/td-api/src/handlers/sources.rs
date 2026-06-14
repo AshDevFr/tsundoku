@@ -6,7 +6,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 use td_config::SourceConfig;
-use td_db::repos::{run_metrics_repo, sources_repo};
+use td_db::repos::{releases_repo, run_metrics_repo, sources_repo};
 use td_scheduler::dispatch;
 use td_scheduler::jobs::backfill_source;
 use td_scheduler::jobs::poll_source;
@@ -14,6 +14,7 @@ use td_scheduler::jobs::reenrich_source;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
+use crate::handlers::tagging::{TagList, TagUsageDto};
 use crate::state::{AppState, InFlight, JobKind, JobResult};
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -143,6 +144,34 @@ pub async fn list(State(state): State<AppState>) -> ApiResult<Json<SourceList>> 
     // Stable ordering for snapshot tests / UI sort.
     items.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Json(SourceList { items }))
+}
+
+/// Discovery sources that have linked at least one release, with the count of
+/// distinct series each resolved to (sorted by descending count, then name).
+/// Powers the admin-only source filter's dropdown. Admin-only (lives in the
+/// `require_admin` group) since the filter it feeds is itself admin-only —
+/// there's no reason to expose the operator's feed names on a public read.
+#[utoipa::path(
+    get,
+    path = "/api/v1/sources/with-series-count",
+    tag = "sources",
+    operation_id = "list_sources_with_series_count",
+    responses((status = 200, body = TagList)),
+    security(("admin" = []))
+)]
+pub async fn list_with_series_counts(State(state): State<AppState>) -> ApiResult<Json<TagList>> {
+    let rows = releases_repo::list_sources_with_series_counts(&state.db)
+        .await
+        .map_err(ApiError::Internal)?;
+    Ok(Json(TagList {
+        items: rows
+            .into_iter()
+            .map(|r| TagUsageDto {
+                name: r.name,
+                series_count: r.series_count,
+            })
+            .collect(),
+    }))
 }
 
 /// Trigger a one-shot poll for the named source. Uses the same per-source

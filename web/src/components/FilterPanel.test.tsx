@@ -136,6 +136,31 @@ describe("FilterPanel — kind / status multi-select", () => {
   });
 });
 
+describe("FilterPanel — sources filter (admin-only)", () => {
+  afterEach(() => useAdminAuth.getState().clear());
+
+  it("hides the sources filter for non-admins", async () => {
+    useAdminAuth.getState().clear();
+    renderPanel();
+    expect(await screen.findByText("Filters")).toBeInTheDocument();
+    expect(screen.queryByTestId("filter-sources")).not.toBeInTheDocument();
+  });
+
+  it("shows the sources filter and emits the feed name on select", async () => {
+    useAdminAuth.getState().setToken("test-admin-token");
+    const onChange = vi.fn();
+    renderPanel({}, onChange);
+    const control = await screen.findByTestId("filter-sources");
+    fireEvent.click(control);
+    // Options carry the per-feed series count in the label; selecting one
+    // emits just the bare feed name (the value), OR-combined like kind/status.
+    fireEvent.click(await screen.findByText("english-manga-trusted (3)"));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ sources: ["english-manga-trusted"], page: 1 }),
+    );
+  });
+});
+
 describe("FilterPanel — manual/auto source filter", () => {
   afterEach(() => useAdminAuth.getState().clear());
 

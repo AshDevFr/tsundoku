@@ -191,6 +191,136 @@ async fn series_list_paginates_and_filters_by_kind() {
     }
 }
 
+/// Persist a release on `source_name` and link it to `series_id`, so the
+/// series counts as "has a release from that source". Returns the release id.
+async fn link_release_from_source(
+    db: &sea_orm::DatabaseConnection,
+    external_id: &str,
+    source_name: &str,
+    series_id: i32,
+) -> String {
+    let r = sample_release(external_id, source_name, "Linked Release");
+    let rid = releases_repo::persist_discovered(db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+    releases_repo::set_resolution(
+        db,
+        &rid,
+        Some(series_id),
+        None,
+        None,
+        "resolved",
+        Utc::now().timestamp(),
+    )
+    .await
+    .unwrap();
+    rid
+}
+
+#[tokio::test]
+async fn series_list_filters_by_source_admin_only() {
+    let db = fresh_db().await;
+    let a = seed_series(&db, "Alpha Series", "manga").await;
+    let b = seed_series(&db, "Beta Series", "manga").await;
+    link_release_from_source(&db, "a1", "alpha", a).await;
+    link_release_from_source(&db, "b1", "beta", b).await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    // Helper: GET /series with an optional admin bearer; returns the body.
+    let list = |query: &str, admin: bool| {
+        let app = app.clone();
+        let query = query.to_string();
+        async move {
+            let mut req = Request::builder().uri(format!("/api/v1/series?{query}"));
+            if admin {
+                req = req.header(header::AUTHORIZATION, "Bearer write-token");
+            }
+            let resp = app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_json(resp).await
+        }
+    };
+
+    // Admin, single source: only the series linked to that feed.
+    let body = list("source=alpha", true).await;
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["canonicalTitle"], "Alpha Series");
+
+    // Admin, two sources: OR-combined, both series.
+    let body = list("source=alpha,beta", true).await;
+    assert_eq!(body["total"], 2);
+
+    // Non-admin: the param is ignored server-side, so it can't probe the
+    // curated narrowing — both series come back.
+    let body = list("source=alpha", false).await;
+    assert_eq!(body["total"], 2);
+}
+
+#[tokio::test]
+async fn sources_with_series_count_is_admin_only_and_ranks_feeds() {
+    let db = fresh_db().await;
+    let a = seed_series(&db, "Alpha Series", "manga").await;
+    let b = seed_series(&db, "Beta Series", "manga").await;
+    // alpha links two distinct series; beta links one.
+    link_release_from_source(&db, "a1", "alpha", a).await;
+    link_release_from_source(&db, "a2", "alpha", b).await;
+    link_release_from_source(&db, "b1", "beta", a).await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    // Without an admin bearer the endpoint is rejected (it lives in the
+    // require_admin group, like /codex/status).
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/sources/with-series-count")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Admin: feeds ranked by distinct-series count, descending.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/sources/with-series-count")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items[0]["name"], "alpha");
+    assert_eq!(items[0]["seriesCount"], 2);
+    assert_eq!(items[1]["name"], "beta");
+    assert_eq!(items[1]["seriesCount"], 1);
+}
+
 #[tokio::test]
 async fn series_list_filters_by_metadata_source() {
     let db = fresh_db().await;

@@ -5,8 +5,10 @@ use chrono::DateTime;
 use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
-    QueryOrder, QuerySelect, Set, TransactionTrait,
+    QueryOrder, QuerySelect, Set, Statement, TransactionTrait,
 };
+
+use crate::repos::tagging_repo::NameUsage;
 use td_source::{
     DiscoveredRelease, Span, detect_formats, detect_spans, merge_spans, spans_from_json,
     spans_max_end, spans_to_json,
@@ -300,6 +302,23 @@ pub async fn set_resolution(
     };
     releases::Entity::update(model).exec(db).await?;
     Ok(())
+}
+
+/// Discovery sources that have surfaced at least one *linked* release, with
+/// the count of distinct series each one resolved to. Sorted by descending
+/// series count, then name. Powers the admin-only source filter's dropdown;
+/// a source with only unresolved releases (`series_id IS NULL`) never appears,
+/// since it can't narrow the series list anyway.
+pub async fn list_sources_with_series_counts(db: &DatabaseConnection) -> Result<Vec<NameUsage>> {
+    let backend = db.get_database_backend();
+    let sql = "SELECT source_name AS name, COUNT(DISTINCT series_id) AS series_count
+               FROM releases
+               WHERE series_id IS NOT NULL
+               GROUP BY source_name
+               ORDER BY series_count DESC, name ASC";
+    let stmt = Statement::from_sql_and_values(backend, sql, []);
+    let rows = NameUsage::find_by_statement(stmt).all(db).await?;
+    Ok(rows)
 }
 
 /// Record that a release was pushed to the operator's torrent client: stamp
@@ -792,6 +811,75 @@ mod tests {
         );
         assert_eq!(s1_rows[1].id, id_old);
         assert!(!map.contains_key(&s2));
+    }
+
+    #[tokio::test]
+    async fn list_sources_with_series_counts_ranks_by_distinct_series_and_skips_unlinked() {
+        use crate::entities::series;
+        use sea_orm::{ActiveModelTrait, Set};
+
+        let db = fresh_db().await;
+        let mk_series = |title: &str| {
+            let title = title.to_string();
+            let db = &db;
+            async move {
+                series::ActiveModel {
+                    canonical_title: Set(title),
+                    metadata_source: Set("test".into()),
+                    metadata_fetched_at: Set(1),
+                    first_seen_at: Set(1),
+                    last_release_at: Set(1),
+                    owned: Set(0),
+                    ..Default::default()
+                }
+                .insert(db)
+                .await
+                .unwrap()
+                .id
+            }
+        };
+        let s1 = mk_series("S1").await;
+        let s2 = mk_series("S2").await;
+
+        // Persist releases on three feeds, then link some to series:
+        //   alpha -> s1 and s2 (2 distinct series)
+        //   beta  -> s1 only   (1 series)
+        //   gamma -> unlinked  (must not appear at all)
+        let link = |external_id: &str, feed: &str, series_id: Option<i32>| {
+            let external_id = external_id.to_string();
+            let feed = feed.to_string();
+            let db = &db;
+            async move {
+                let mut r = sample(&feed);
+                r.external_id = external_id.clone();
+                r.link = format!("https://nyaa.si/view/{external_id}");
+                let id = persist_discovered(db, &r, 1).await.unwrap();
+                if let Some(sid) = series_id {
+                    releases::ActiveModel {
+                        id: Set(id.clone()),
+                        series_id: Set(Some(sid)),
+                        ..Default::default()
+                    }
+                    .update(db)
+                    .await
+                    .unwrap();
+                }
+                id
+            }
+        };
+        link("a1", "alpha", Some(s1)).await;
+        link("a2", "alpha", Some(s2)).await;
+        link("b1", "beta", Some(s1)).await;
+        link("g1", "gamma", None).await;
+
+        let rows = list_sources_with_series_counts(&db).await.unwrap();
+        assert_eq!(
+            rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            vec!["alpha", "beta"],
+            "alpha (2 series) ranks before beta (1); gamma (unlinked) is omitted"
+        );
+        assert_eq!(rows[0].series_count, 2);
+        assert_eq!(rows[1].series_count, 1);
     }
 
     #[tokio::test]

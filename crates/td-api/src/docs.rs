@@ -89,6 +89,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         releases::bulk_retry,
         releases::bulk_link,
         sources::list,
+        sources::list_with_series_counts,
         sources::poll,
         sources::backfill,
         sources::reenrich,

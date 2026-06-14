@@ -1048,6 +1048,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sources/with-series-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Discovery sources that have linked at least one release, with the count of
+         *     distinct series each resolved to (sorted by descending count, then name).
+         *     Powers the admin-only source filter's dropdown. Admin-only (lives in the
+         *     `require_admin` group) since the filter it feeds is itself admin-only —
+         *     there's no reason to expose the operator's feed names on a public read.
+         */
+        get: operations["list_sources_with_series_count"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sources/{name}/backfill": {
         parameters: {
             query?: never;
@@ -3660,6 +3683,14 @@ export interface operations {
                  */
                 hasReleases?: boolean;
                 /**
+                 * @description Comma-separated discovery-source names (the release `source_name`,
+                 *     e.g. `english-manga-trusted`), OR-combined: a series is kept if it
+                 *     has ≥1 linked release from *any* listed source. **Admin-only and
+                 *     enforced server-side**: ignored entirely for a non-admin request,
+                 *     like [`Self::codex_status`], so the curated narrowing can't be probed.
+                 */
+                source?: string;
+                /**
                  * @description Filter by metadata provenance: `manual` keeps only operator-authored
                  *     rows (`metadata_source = 'manual'`); `auto` keeps only provider-backed
                  *     rows (`api` or `offline_cache`). Any other value (or absence) applies
@@ -4227,6 +4258,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PollAllResponse"];
+                };
+            };
+        };
+    };
+    list_sources_with_series_count: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TagList"];
                 };
             };
         };

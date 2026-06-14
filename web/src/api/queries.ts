@@ -93,6 +93,10 @@ export interface SeriesFilters {
   /// the backend re-splits on the comma. Admin-only and enforced server-side;
   /// dropped for non-admins.
   codexStatus?: string[];
+  /// Selected discovery-source names, OR-combined. Joined into a CSV before
+  /// being sent (the backend re-splits on the comma). Admin-only and enforced
+  /// server-side; dropped for non-admins.
+  sources?: string[];
 }
 
 export function useSeriesList(filters: SeriesFilters) {
@@ -111,6 +115,9 @@ export function useSeriesList(filters: SeriesFilters) {
   const tagsCsv = filters.tags?.length ? filters.tags.join(",") : undefined;
   const codexStatusCsv = filters.codexStatus?.length
     ? filters.codexStatus.join(",")
+    : undefined;
+  const sourcesCsv = filters.sources?.length
+    ? filters.sources.join(",")
     : undefined;
   const query = {
     page: filters.page ?? 1,
@@ -140,6 +147,9 @@ export function useSeriesList(filters: SeriesFilters) {
     // Backend drops this for non-admins; send it regardless and let the
     // server enforce. Keeps the URL/cache key honest for admins.
     codexStatus: codexStatusCsv,
+    // Admin-only; backend drops it for non-admins. Sent regardless, like
+    // `codexStatus`, so the server is the single enforcement point.
+    source: sourcesCsv,
   };
   return useQuery({
     queryKey: ["series-list", query, { admin: hasAdmin }],
@@ -363,6 +373,26 @@ export function useTags() {
     queryFn: async () => {
       const { data, error } = await api.GET("/api/v1/tags");
       if (error) throw new Error("failed to load tags");
+      return data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+/// Discovery sources that have linked ≥1 release, with a per-source series
+/// count, for the admin-only source filter's dropdown. Admin-only on the
+/// server (it sits in the writes group), so it's disabled here unless a token
+/// is present — an anon session never fires it.
+export function useSourceCounts() {
+  const hasAdmin = useAdminAuth((s) => Boolean(s.token));
+  return useQuery({
+    queryKey: ["source-counts", { admin: hasAdmin }],
+    enabled: hasAdmin,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/api/v1/sources/with-series-count",
+      );
+      if (error) throw new Error("failed to load source counts");
       return data;
     },
     staleTime: 60_000,

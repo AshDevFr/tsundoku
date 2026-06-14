@@ -66,6 +66,9 @@ function validateFilterSearch(raw: Record<string, unknown>): FilterSearch {
   if (kind.length > 0) search.kind = kind;
   const status = parseStringList(raw.status);
   if (status.length > 0) search.status = status;
+  // Sources are open-vocab (feed names), like kind/status: keep them verbatim.
+  const sources = parseStringList(raw.sources);
+  if (sources.length > 0) search.sources = sources;
   const genres = parseStringList(raw.genres);
   if (genres.length > 0) search.genres = genres;
   if (raw.genresMode === "all" || raw.genresMode === "any")

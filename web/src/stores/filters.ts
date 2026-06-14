@@ -53,6 +53,11 @@ export interface FilterSearch {
   /// + `behind`). Admin-only — the control is hidden for non-admins and the
   /// backend ignores it without a valid admin token.
   codexStatus?: string[];
+  /// Selected discovery-source names (the release `source_name`), OR-combined:
+  /// a series is kept if it has ≥1 linked release from any selected source.
+  /// Admin-only — the control is hidden for non-admins and the backend ignores
+  /// it without a valid admin token.
+  sources?: string[];
 }
 
 interface PresetState {

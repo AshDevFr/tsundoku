@@ -296,6 +296,12 @@ pub struct SeriesListQuery {
     /// keeps only series with ≥1 release; `false` keeps only orphaned
     /// series (zero releases — often the residue of a manual re-link).
     pub has_releases: Option<bool>,
+    /// Comma-separated discovery-source names (the release `source_name`,
+    /// e.g. `english-manga-trusted`), OR-combined: a series is kept if it
+    /// has ≥1 linked release from *any* listed source. **Admin-only and
+    /// enforced server-side**: ignored entirely for a non-admin request,
+    /// like [`Self::codex_status`], so the curated narrowing can't be probed.
+    pub source: Option<String>,
     /// Filter by metadata provenance: `manual` keeps only operator-authored
     /// rows (`metadata_source = 'manual'`); `auto` keeps only provider-backed
     /// rows (`api` or `offline_cache`). Any other value (or absence) applies
@@ -346,6 +352,7 @@ impl Default for SeriesListQuery {
             owned: None,
             wishlisted: None,
             has_releases: None,
+            source: None,
             metadata_source: None,
             genres: None,
             genres_mode: None,
@@ -724,6 +731,21 @@ pub(crate) fn apply_series_filters(
         } else {
             select.filter(series::Column::Id.not_in_subquery(linked_ids))
         };
+    }
+    // Source filter: admin-only operator curation (a non-admin request never
+    // narrows by it, mirroring the wishlist / Codex filters). Same semi-join
+    // shape as `has_releases` above — a subquery rather than a JOIN keeps the
+    // outer pagination count correct — with the source-name predicate added.
+    let source_names = parse_csv(q.source.as_deref());
+    if is_admin && !source_names.is_empty() {
+        let linked_ids = sea_orm::sea_query::Query::select()
+            .column(releases::Column::SeriesId)
+            .from(releases::Entity)
+            .distinct()
+            .and_where(releases::Column::SeriesId.is_not_null())
+            .and_where(releases::Column::SourceName.is_in(source_names))
+            .take();
+        select = select.filter(series::Column::Id.in_subquery(linked_ids));
     }
     // Genre / tag filters: semi-joins via a subquery so the outer SELECT
     // never row-multiplies (which would break pagination counts) and so

@@ -293,6 +293,16 @@ export function resetSeries() {
   }
 }
 
+// Maps a discovery-source feed name to the mock series it has linked a release
+// to. The real backend derives this from the releases table (distinct
+// `source_name` over linked rows); the mock keeps a static map so the admin
+// source filter and its `with-series-count` enumeration have data to exercise.
+const SOURCE_SERIES: Record<string, number[]> = {
+  "english-manga-trusted": [1, 5, 9],
+  tsuna69: [3, 7],
+  "popular-uploads": [6, 8],
+};
+
 // Mutable review queue so tests can assert that a release leaves the queue
 // after a link / reject. Reset via `resetReviewQueue()`.
 const INITIAL_QUEUE: UnresolvedRelease[] = [
@@ -781,6 +791,22 @@ export const handlers = [
       ],
     }),
   ),
+
+  // Source-filter dropdown vocab. Registered before any `/sources/:param`
+  // sibling so MSW's first-match-wins can't shadow it (static-before-param
+  // convention). Admin-only on the real backend; the mock returns it
+  // unconditionally so component tests can render the control.
+  http.get("/api/v1/sources/with-series-count", () => {
+    const body: TagList = {
+      items: Object.entries(SOURCE_SERIES)
+        .map(([name, ids]) => ({ name, seriesCount: new Set(ids).size }))
+        .sort(
+          (a, b) =>
+            b.seriesCount - a.seriesCount || a.name.localeCompare(b.name),
+        ),
+    };
+    return HttpResponse.json(body);
+  }),
 
   http.post("/api/v1/sources/poll-all", ({ request }) => {
     const denied = requireAdmin(request);
@@ -1430,6 +1456,15 @@ export const handlers = [
       filtered = filtered.filter((s) => s.releaseCount > 0);
     if (hasReleases === "false")
       filtered = filtered.filter((s) => s.releaseCount === 0);
+    // Source filter (admin-only on the real backend): keep series with a
+    // linked release from any selected feed. OR-combined, like kind/status.
+    const sources = splitOr(url.searchParams.get("source"));
+    if (sources.length > 0) {
+      const allowed = new Set(
+        sources.flatMap((name) => SOURCE_SERIES[name] ?? []),
+      );
+      filtered = filtered.filter((s) => allowed.has(s.id));
+    }
     const wishlisted = url.searchParams.get("wishlisted");
     if (wishlisted === "true")
       filtered = filtered.filter((s) => s.wishlisted === true);

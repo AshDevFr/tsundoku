@@ -1516,6 +1516,15 @@
             }
           },
           {
+            "name": "source",
+            "in": "query",
+            "description": "Comma-separated discovery-source names (the release `source_name`,\ne.g. `english-manga-trusted`), OR-combined: a series is kept if it\nhas ≥1 linked release from *any* listed source. **Admin-only and\nenforced server-side**: ignored entirely for a non-admin request,\nlike [`Self::codex_status`], so the curated narrowing can't be probed.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "metadataSource",
             "in": "query",
             "description": "Filter by metadata provenance: `manual` keeps only operator-authored\nrows (`metadata_source = 'manual'`); `auto` keeps only provider-backed\nrows (`api` or `offline_cache`). Any other value (or absence) applies\nno constraint, matching the lenient handling of the other filters.",
@@ -2352,6 +2361,32 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PollAllResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/sources/with-series-count": {
+      "get": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "Discovery sources that have linked at least one release, with the count of\ndistinct series each resolved to (sorted by descending count, then name).\nPowers the admin-only source filter's dropdown. Admin-only (lives in the\n`require_admin` group) since the filter it feeds is itself admin-only —\nthere's no reason to expose the operator's feed names on a public read.",
+        "operationId": "list_sources_with_series_count",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagList"
                 }
               }
             }

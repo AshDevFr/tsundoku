@@ -60,6 +60,12 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/sources/{name}/backfill", post(sources::backfill))
         .route("/sources/{name}/re-enrich", post(sources::reenrich))
         .route("/sources/poll-all", post(sources::poll_all))
+        // Source-filter dropdown vocab. Admin-only (in this group) because the
+        // series-list `source` filter it feeds is itself admin-only.
+        .route(
+            "/sources/with-series-count",
+            get(sources::list_with_series_counts),
+        )
         .route(
             "/providers/{id}/refresh-cache",
             post(providers::refresh_cache),

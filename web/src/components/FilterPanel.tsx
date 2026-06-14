@@ -19,7 +19,7 @@ import {
 import { useDebouncedCallback, useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useMemo, useState } from "react";
-import { useGenres, useTags } from "@/api/queries";
+import { useGenres, useSourceCounts, useTags } from "@/api/queries";
 import {
   CODEX_STATUS_OPTIONS,
   KIND_OPTIONS,
@@ -113,6 +113,9 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
   }, [search.q]);
   const genres = useGenres();
   const tags = useTags();
+  // Admin-only; the hook self-disables for anon sessions, so this stays empty
+  // and the control below is never rendered.
+  const sourceCounts = useSourceCounts();
 
   const merge = (patch: Partial<FilterSearch>) =>
     onChange({ ...search, ...patch, page: 1 });
@@ -144,7 +147,8 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     typeof search.wishlisted === "boolean" ||
     typeof search.hasReleases === "boolean" ||
     Boolean(search.metadataSource) ||
-    (search.codexStatus?.length ?? 0) > 0;
+    (search.codexStatus?.length ?? 0) > 0 ||
+    (search.sources?.length ?? 0) > 0;
 
   const activeSort = search.sort ?? "last_release_at";
   const orderLabels = ORDER_LABELS_BY_SORT[activeSort] ?? DEFAULT_ORDER_LABELS;
@@ -169,6 +173,19 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
           a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
         ),
     [tags.data?.items],
+  );
+  // Feed names sorted alphabetically (the endpoint returns them usage-sorted,
+  // which reads as scrambled in a chip list), with the series count in the
+  // label so the operator can see each feed's reach at a glance.
+  const sourceData = useMemo(
+    () =>
+      (sourceCounts.data?.items ?? [])
+        .slice()
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+        )
+        .map((s) => ({ value: s.name, label: `${s.name} (${s.seriesCount})` })),
+    [sourceCounts.data?.items],
   );
 
   const trimmedName = presetName.trim();
@@ -332,6 +349,20 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
             }
             clearable
             data-testid="filter-codex-status"
+          />
+        )}
+
+        {isAdmin && (
+          <MultiSelect
+            label="Sources"
+            placeholder={search.sources?.length ? undefined : "Any"}
+            description="Series with a release from any selected source"
+            data={sourceData}
+            value={search.sources ?? []}
+            onChange={(v) => merge({ sources: v.length > 0 ? v : undefined })}
+            clearable
+            searchable
+            data-testid="filter-sources"
           />
         )}
 
