@@ -2,6 +2,15 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.12.0] - 2026-06-14
+
+### Features
+
+- *(series)* Add admin wishlist flag, toggle and from-provider endpoints
+- *(web)* Surface the series wishlist with a clip toggle, indicator and filter
+- *(web)* Add the wishlist page, MangaBaka add modal and app-bar shortcut
+- *(series)* Add an admin source filter to the series list
+
 ## [1.11.2] - 2026-06-14
 
 ### Features
