@@ -28,6 +28,7 @@ import { useState } from "react";
 import {
   useRefreshSeriesMetadata,
   useSetIgnoreCompletion,
+  useSetWishlisted,
 } from "@/api/mutations";
 import {
   type ReleaseDto,
@@ -88,6 +89,7 @@ export function SeriesDetailPage() {
   const isAdmin = useAdminAuth((s) => Boolean(s.token));
   const refresh = useRefreshSeriesMetadata();
   const ignoreToggle = useSetIgnoreCompletion();
+  const wishlistToggle = useSetWishlisted();
   const [tagsExpanded, setTagsExpanded] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
@@ -106,6 +108,26 @@ export function SeriesDetailPage() {
           message: (e as Error).message,
         }),
     });
+  };
+
+  const handleToggleWishlist = (wishlisted: boolean) => {
+    if (!Number.isFinite(id)) return;
+    wishlistToggle.mutate(
+      { id, wishlisted },
+      {
+        onSuccess: () =>
+          notifications.show({
+            color: "blue",
+            message: wishlisted ? "Added to wishlist" : "Removed from wishlist",
+          }),
+        onError: (e) =>
+          notifications.show({
+            color: "red",
+            title: "Update failed",
+            message: (e as Error).message,
+          }),
+      },
+    );
   };
 
   const handleToggleIgnore = (ignore: boolean) => {
@@ -296,6 +318,20 @@ export function SeriesDetailPage() {
                   {formatRelative(s.lastReleaseAt)} · metadata{" "}
                   {s.metadataSource} ({formatRelative(s.metadataFetchedAt)})
                 </Text>
+                {isAdmin && (
+                  <Tooltip label="Clip this series to your wishlist (a curated 'download later' list). Independent of Codex ownership; remove it the same way.">
+                    <Button
+                      size="compact-xs"
+                      variant={s.wishlisted ? "light" : "subtle"}
+                      color={s.wishlisted ? "yellow" : "gray"}
+                      onClick={() => handleToggleWishlist(!s.wishlisted)}
+                      loading={wishlistToggle.isPending}
+                      data-testid="toggle-wishlist"
+                    >
+                      {s.wishlisted ? "★ On wishlist" : "☆ Add to wishlist"}
+                    </Button>
+                  </Tooltip>
+                )}
                 {isAdmin && s.metadataSource === "manual" && (
                   <Tooltip label="Edit this manual series' title and metadata.">
                     <Button

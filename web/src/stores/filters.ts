@@ -20,6 +20,11 @@ export interface FilterSearch {
   /// See [[kind]].
   status?: string[];
   owned?: boolean;
+  /// Wishlist filter: `true` keeps only wishlisted series, `false` keeps only
+  /// non-wishlisted, absent means "no constraint". Admin-only — the control is
+  /// hidden for non-admins and the backend ignores it without a valid admin
+  /// token.
+  wishlisted?: boolean;
   /// Has-releases filter: `true` keeps only series with ≥1 linked
   /// release, `false` keeps only orphans (zero releases, typically the
   /// residue of a manual re-link). Absent means "no constraint".

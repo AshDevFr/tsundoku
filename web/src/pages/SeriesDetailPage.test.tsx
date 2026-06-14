@@ -161,6 +161,29 @@ describe("SeriesDetailPage", () => {
     ).toHaveTextContent("Resume tracking");
   });
 
+  it("hides the wishlist toggle without an admin token", async () => {
+    renderSeriesDetail(1);
+    await screen.findByText("Chainsaw Man");
+    expect(screen.queryByTestId("toggle-wishlist")).not.toBeInTheDocument();
+  });
+
+  it("clips a series to the wishlist and reflects the new state", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(1);
+    await screen.findByText("Chainsaw Man");
+    const toggle = await screen.findByTestId("toggle-wishlist");
+    expect(toggle).toHaveTextContent("Add to wishlist");
+
+    fireEvent.click(toggle);
+
+    // The mutation invalidates + refetches; the button flips to "on wishlist".
+    await waitFor(() =>
+      expect(screen.getByTestId("toggle-wishlist")).toHaveTextContent(
+        "On wishlist",
+      ),
+    );
+  });
+
   it("edits a manual series and reflects the change in the detail view", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderSeriesDetail(10);

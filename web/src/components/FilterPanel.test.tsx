@@ -76,6 +76,39 @@ describe("FilterPanel — Codex filter visibility", () => {
   });
 });
 
+describe("FilterPanel — wishlist filter", () => {
+  afterEach(() => useAdminAuth.getState().clear());
+
+  it("hides the wishlist filter for non-admins", async () => {
+    useAdminAuth.getState().clear();
+    renderPanel();
+    expect(await screen.findByText("Filters")).toBeInTheDocument();
+    expect(screen.queryByTestId("filter-wishlisted")).not.toBeInTheDocument();
+  });
+
+  it("selecting Wishlisted emits wishlisted=true", async () => {
+    useAdminAuth.getState().setToken("test-admin-token");
+    const onChange = vi.fn();
+    renderPanel({}, onChange);
+    const control = await screen.findByTestId("filter-wishlisted");
+    fireEvent.click(within(control).getByText("Wishlisted"));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ wishlisted: true, page: 1 }),
+    );
+  });
+
+  it("selecting Any clears the wishlist filter", async () => {
+    useAdminAuth.getState().setToken("test-admin-token");
+    const onChange = vi.fn();
+    renderPanel({ wishlisted: true }, onChange);
+    const control = await screen.findByTestId("filter-wishlisted");
+    fireEvent.click(within(control).getByText("Any"));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ wishlisted: undefined, page: 1 }),
+    );
+  });
+});
+
 describe("FilterPanel — kind / status multi-select", () => {
   afterEach(() => useAdminAuth.getState().clear());
 

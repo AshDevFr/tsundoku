@@ -1,4 +1,5 @@
 import { MantineProvider } from "@mantine/core";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -8,8 +9,9 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { SeriesListItem } from "@/api/queries";
+import { useAdminAuth } from "@/stores/auth";
 import { SeriesCard } from "./SeriesCard";
 
 function base(overrides: Partial<SeriesListItem>): SeriesListItem {
@@ -28,11 +30,13 @@ function base(overrides: Partial<SeriesListItem>): SeriesListItem {
     firstSeenAt: Math.floor(Date.now() / 1000),
     releaseCount: 1,
     owned: false,
+    wishlisted: false,
     ...overrides,
   };
 }
 
-// SeriesCard renders a <Link>, so it needs a router context to mount.
+// SeriesCard renders a <Link> (needs a router) and uses a mutation hook (needs
+// a QueryClient).
 function renderCard(series: SeriesListItem, codexSynced = false) {
   const root = createRootRoute({ component: Outlet });
   const index = createRoute({
@@ -44,15 +48,24 @@ function renderCard(series: SeriesListItem, codexSynced = false) {
     routeTree: root.addChildren([index]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <MantineProvider>
-      {/* biome-ignore lint/suspicious/noExplicitAny: test router shape */}
-      <RouterProvider router={router as any} />
+      <QueryClientProvider client={client}>
+        {/* biome-ignore lint/suspicious/noExplicitAny: test router shape */}
+        <RouterProvider router={router as any} />
+      </QueryClientProvider>
     </MantineProvider>,
   );
 }
 
 describe("SeriesCard", () => {
+  afterEach(() => {
+    useAdminAuth.getState().clear();
+  });
+
   it("shows a manual badge for operator-authored series", async () => {
     renderCard(base({ metadataSource: "manual" }));
     expect(await screen.findByText("manual")).toBeInTheDocument();
@@ -113,5 +126,27 @@ describe("SeriesCard", () => {
     renderCard(base({ codex: undefined }), true);
     expect(await screen.findByText("Test Series")).toBeInTheDocument();
     expect(screen.queryByTestId(/^codex-badge-/)).not.toBeInTheDocument();
+  });
+
+  it("shows the wishlist clip toggle for admins", async () => {
+    useAdminAuth.getState().setToken("test-token");
+    renderCard(base({ wishlisted: false }));
+    const toggle = await screen.findByTestId("wishlist-toggle-1");
+    expect(toggle).toHaveAttribute("aria-label", "Add to wishlist");
+    expect(toggle).toHaveTextContent("☆");
+  });
+
+  it("shows a filled star when the series is wishlisted", async () => {
+    useAdminAuth.getState().setToken("test-token");
+    renderCard(base({ wishlisted: true }));
+    const toggle = await screen.findByTestId("wishlist-toggle-1");
+    expect(toggle).toHaveAttribute("aria-label", "Remove from wishlist");
+    expect(toggle).toHaveTextContent("★");
+  });
+
+  it("hides the wishlist clip toggle without an admin token", async () => {
+    renderCard(base({ wishlisted: false }));
+    expect(await screen.findByText("Test Series")).toBeInTheDocument();
+    expect(screen.queryByTestId("wishlist-toggle-1")).not.toBeInTheDocument();
   });
 });

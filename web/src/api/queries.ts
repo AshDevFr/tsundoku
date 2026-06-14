@@ -65,6 +65,10 @@ export interface SeriesFilters {
   /// Selected status values, OR-combined. See [`SeriesFilters.kind`].
   status?: string[];
   owned?: boolean;
+  /// `true` keeps only wishlisted series; `false` keeps only non-wishlisted.
+  /// Absent means "no constraint". Admin-only and enforced server-side;
+  /// dropped for non-admins.
+  wishlisted?: boolean;
   /// `true` keeps only series with ≥1 linked release; `false` keeps only
   /// orphans. Absent means "no constraint". Mirrors the backend filter.
   hasReleases?: boolean;
@@ -114,6 +118,10 @@ export function useSeriesList(filters: SeriesFilters) {
     kind: kindCsv,
     status: statusCsv,
     owned: typeof filters.owned === "boolean" ? filters.owned : undefined,
+    // Backend drops this for non-admins; send it regardless and let the server
+    // enforce, like `codexStatus`.
+    wishlisted:
+      typeof filters.wishlisted === "boolean" ? filters.wishlisted : undefined,
     hasReleases:
       typeof filters.hasReleases === "boolean"
         ? filters.hasReleases

@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   AspectRatio,
   Badge,
   Card,
@@ -8,11 +9,15 @@ import {
   Stack,
   Text,
   Title,
+  Tooltip,
 } from "@mantine/core";
 import { Link } from "@tanstack/react-router";
+import type { MouseEvent } from "react";
+import { useSetWishlisted } from "@/api/mutations";
 import type { SeriesListItem } from "@/api/queries";
 import { coverProxyForSeries, formatRelative } from "@/api/utils";
 import { CodexBadge, codexBorderColor } from "@/components/CodexBadge";
+import { useAdminAuth } from "@/stores/auth";
 
 const COVER_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
@@ -59,6 +64,18 @@ export function SeriesCard({
     codexSynced && series.codex
       ? codexBorderColor(series.codex.status)
       : undefined;
+
+  // Wishlist clip is admin-only — the `wishlisted` flag is blanked for
+  // non-admins server-side, so the control only renders with a token.
+  const isAdmin = useAdminAuth((s) => Boolean(s.token));
+  const toggleWishlist = useSetWishlisted();
+  const clip = (e: MouseEvent) => {
+    // The whole card is a <Link>; keep the clip from navigating to detail.
+    e.preventDefault();
+    e.stopPropagation();
+    toggleWishlist.mutate({ id: series.id, wishlisted: !series.wishlisted });
+  };
+
   return (
     <Link
       to="/series/$id"
@@ -79,7 +96,7 @@ export function SeriesCard({
           codexBorder ? { borderColor: codexBorder, borderWidth: 2 } : undefined
         }
       >
-        <Card.Section>
+        <Card.Section pos="relative">
           <AspectRatio ratio={3 / 4}>
             <Image
               src={
@@ -92,6 +109,32 @@ export function SeriesCard({
               loading="lazy"
             />
           </AspectRatio>
+          {isAdmin && (
+            <Tooltip
+              label={
+                series.wishlisted ? "Remove from wishlist" : "Add to wishlist"
+              }
+              withinPortal
+            >
+              <ActionIcon
+                variant={series.wishlisted ? "filled" : "default"}
+                color="yellow"
+                radius="xl"
+                size="md"
+                pos="absolute"
+                top={6}
+                right={6}
+                onClick={clip}
+                loading={toggleWishlist.isPending}
+                aria-label={
+                  series.wishlisted ? "Remove from wishlist" : "Add to wishlist"
+                }
+                data-testid={`wishlist-toggle-${series.id}`}
+              >
+                {series.wishlisted ? "★" : "☆"}
+              </ActionIcon>
+            </Tooltip>
+          )}
         </Card.Section>
         <Stack gap={4} mt="xs">
           {/* Reserve a constant two-line height so single-line titles don't

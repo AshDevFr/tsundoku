@@ -141,6 +141,7 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     (search.tags?.length ?? 0) > 0 ||
     Boolean(search.q) ||
     typeof search.owned === "boolean" ||
+    typeof search.wishlisted === "boolean" ||
     typeof search.hasReleases === "boolean" ||
     Boolean(search.metadataSource) ||
     (search.codexStatus?.length ?? 0) > 0;
@@ -332,6 +333,26 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
             clearable
             data-testid="filter-codex-status"
           />
+        )}
+
+        {isAdmin && (
+          <Box>
+            <Text size="sm" fw={500} mb={4}>
+              Wishlist
+            </Text>
+            <SegmentedControl
+              size="xs"
+              fullWidth
+              value={triValue(search.wishlisted)}
+              onChange={(v) => merge({ wishlisted: triParse(v) })}
+              data={[
+                { label: "Any", value: "any" },
+                { label: "Not wishlisted", value: "false" },
+                { label: "Wishlisted", value: "true" },
+              ]}
+              data-testid="filter-wishlisted"
+            />
+          </Box>
         )}
 
         <Box>

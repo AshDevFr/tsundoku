@@ -77,6 +77,10 @@ function validateFilterSearch(raw: Record<string, unknown>): FilterSearch {
   if (typeof raw.order === "string" && raw.order) search.order = raw.order;
   if (raw.owned === true || raw.owned === "true") search.owned = true;
   else if (raw.owned === false || raw.owned === "false") search.owned = false;
+  if (raw.wishlisted === true || raw.wishlisted === "true")
+    search.wishlisted = true;
+  else if (raw.wishlisted === false || raw.wishlisted === "false")
+    search.wishlisted = false;
   if (raw.hasReleases === true || raw.hasReleases === "true")
     search.hasReleases = true;
   else if (raw.hasReleases === false || raw.hasReleases === "false")

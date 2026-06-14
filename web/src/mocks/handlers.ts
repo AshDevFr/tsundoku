@@ -20,246 +20,251 @@ type TagList = components["schemas"]["TagList"];
 const NOW = Math.floor(Date.now() / 1000);
 const ADMIN_TOKEN = "test-admin-token";
 
-const SERIES: (SeriesListItem & {
+type MockSeries = SeriesListItem & {
   genres: string[];
   tags: string[];
   alternateTitles: string[];
-})[] = [
-  {
-    id: 1,
-    canonicalTitle: "Chainsaw Man",
-    coverUrl: "mock",
-    firstSeenAt: NOW - 86_400 * 30,
-    lastReleaseAt: NOW - 3_600,
-    kind: "manga",
-    status: "ongoing",
-    year: 2018,
-    owned: false,
-    description:
-      "Denji has a simple dream: to live a happy and peaceful life. After his father's death he is left with a hefty debt to the yakuza. With his pet devil Pochita at his side he hunts devils to scrape by.",
-    genres: ["action", "horror"],
-    tags: ["devil hunter", "gore"],
-    alternateTitles: ["チェンソーマン"],
-    metadataSource: "offline_cache",
-    releaseCount: 5,
-  },
-  {
-    id: 2,
-    canonicalTitle: "Re:Zero - Starting Life in Another World",
-    coverUrl: "mock",
-    firstSeenAt: NOW - 86_400 * 90,
-    lastReleaseAt: NOW - 86_400,
-    kind: "novel",
-    status: "ongoing",
-    year: 2014,
-    owned: true,
-    description:
-      "Suddenly transported to a fantasy world, Subaru discovers that any time he dies he returns to a fixed save point.",
-    genres: ["isekai", "drama"],
-    tags: ["time loop"],
-    alternateTitles: ["リゼロ"],
-    metadataSource: "offline_cache",
-    // Zero releases linked so the "Orphans only" filter has something
-    // to surface in the mock UI.
-    releaseCount: 0,
-  },
-  {
-    id: 3,
-    canonicalTitle: "Solo Leveling",
-    coverUrl: "mock",
-    firstSeenAt: NOW - 86_400 * 120,
-    lastReleaseAt: NOW - 86_400 * 2,
-    kind: "manhwa",
-    status: "completed",
-    year: 2018,
-    owned: false,
-    description:
-      "The weakest hunter in the world levels up after a near-fatal dungeon raid and becomes the strongest.",
-    genres: ["action", "fantasy"],
-    tags: ["hunters", "leveling"],
-    alternateTitles: [],
-    metadataSource: "offline_cache",
-    releaseCount: 3,
-  },
-  // --- Codex ownership states, for previewing the badge/border treatment ---
-  // `owned` is derived from the presence of `codex` on the real backend, so
-  // every entry below keeps the two in sync.
-  // complete: owned on Codex and current. The state that should recede.
-  {
-    id: 4,
-    canonicalTitle: "Zero Damage Sword Saint",
-    coverUrl: "mock",
-    firstSeenAt: NOW - 86_400 * 10,
-    lastReleaseAt: NOW - 86_400 * 2,
-    kind: "manga",
-    status: "ongoing",
-    year: 2024,
-    owned: true,
-    description:
-      "A washed-up swordsman reincarnates as the weakest stat line imaginable and turns zero attack power into an unbeatable defense.",
-    genres: ["action", "fantasy"],
-    tags: ["reincarnation", "op protagonist"],
-    alternateTitles: ["攻撃力ゼロから始める剣聖譚"],
-    metadataSource: "offline_cache",
-    releaseCount: 1,
-    highestVolume: 3,
-    totalVolumes: 3,
-    codex: {
-      status: "complete",
-      deepLink: "https://codex.example/series/zero-damage-sword-saint",
-      linkKind: "auto",
-      seriesUuid: "00000000-0000-0000-0000-000000000004",
-      syncedAt: NOW - 1_800,
-      localMaxVolume: 3,
-      volumesOwned: 3,
+};
+// Literals omit `wishlisted` for brevity; the `.map` below defaults every
+// fixture row to not-wishlisted. The PUT /wishlist handler flips it in place.
+const SERIES: MockSeries[] = (
+  [
+    {
+      id: 1,
+      canonicalTitle: "Chainsaw Man",
+      coverUrl: "mock",
+      firstSeenAt: NOW - 86_400 * 30,
+      lastReleaseAt: NOW - 3_600,
+      kind: "manga",
+      status: "ongoing",
+      year: 2018,
+      owned: false,
+      description:
+        "Denji has a simple dream: to live a happy and peaceful life. After his father's death he is left with a hefty debt to the yakuza. With his pet devil Pochita at his side he hunts devils to scrape by.",
+      genres: ["action", "horror"],
+      tags: ["devil hunter", "gore"],
+      alternateTitles: ["チェンソーマン"],
+      metadataSource: "offline_cache",
+      releaseCount: 5,
     },
-  },
-  // behind: owned, but newer volumes/chapters have surfaced. The only
-  // genuinely actionable state; this is the one that should pop.
-  {
-    id: 5,
-    canonicalTitle: "Jujutsu Kaisen",
-    coverUrl: "mock",
-    firstSeenAt: NOW - 86_400 * 200,
-    lastReleaseAt: NOW - 86_400 * 2,
-    kind: "manga",
-    status: "completed",
-    year: 2018,
-    owned: true,
-    description:
-      "A high-schooler swallows a cursed finger to save his friends and is dragged into a world of jujutsu sorcerers and curses.",
-    genres: ["action", "supernatural"],
-    tags: ["curses", "shonen"],
-    alternateTitles: ["呪術廻戦"],
-    metadataSource: "offline_cache",
-    releaseCount: 10,
-    highestVolume: 30,
-    totalVolumes: 30,
-    highestChapter: 271,
-    totalChapters: 272,
-    codex: {
-      status: "behind",
-      deepLink: "https://codex.example/series/jujutsu-kaisen",
-      linkKind: "auto",
-      seriesUuid: "00000000-0000-0000-0000-000000000005",
-      syncedAt: NOW - 1_800,
-      localMaxVolume: 24,
-      localMaxChapter: 210,
-      volumesOwned: 24,
+    {
+      id: 2,
+      canonicalTitle: "Re:Zero - Starting Life in Another World",
+      coverUrl: "mock",
+      firstSeenAt: NOW - 86_400 * 90,
+      lastReleaseAt: NOW - 86_400,
+      kind: "novel",
+      status: "ongoing",
+      year: 2014,
+      owned: true,
+      description:
+        "Suddenly transported to a fantasy world, Subaru discovers that any time he dies he returns to a fixed save point.",
+      genres: ["isekai", "drama"],
+      tags: ["time loop"],
+      alternateTitles: ["リゼロ"],
+      metadataSource: "offline_cache",
+      // Zero releases linked so the "Orphans only" filter has something
+      // to surface in the mock UI.
+      releaseCount: 0,
     },
-  },
-  // present: owned on Codex, but we can't tell whether it's current (no
-  // numbered releases to compare against). Stays quiet.
-  {
-    id: 6,
-    canonicalTitle: "Owl Night",
-    coverUrl: "mock",
-    firstSeenAt: NOW - 86_400 * 5,
-    lastReleaseAt: NOW - 3_600 * 2,
-    kind: "manga",
-    status: "ongoing",
-    year: 2021,
-    owned: true,
-    description:
-      "A nocturnal courier ferries secrets across a city that never sleeps.",
-    genres: ["mystery", "drama"],
-    tags: ["urban"],
-    alternateTitles: ["アウルナイト"],
-    metadataSource: "offline_cache",
-    releaseCount: 3,
-    codex: {
-      status: "present",
-      deepLink: "https://codex.example/series/owl-night",
-      linkKind: "manual",
-      seriesUuid: "00000000-0000-0000-0000-000000000006",
-      syncedAt: NOW - 1_800,
-      volumesOwned: 4,
+    {
+      id: 3,
+      canonicalTitle: "Solo Leveling",
+      coverUrl: "mock",
+      firstSeenAt: NOW - 86_400 * 120,
+      lastReleaseAt: NOW - 86_400 * 2,
+      kind: "manhwa",
+      status: "completed",
+      year: 2018,
+      owned: false,
+      description:
+        "The weakest hunter in the world levels up after a near-fatal dungeon raid and becomes the strongest.",
+      genres: ["action", "fantasy"],
+      tags: ["hunters", "leveling"],
+      alternateTitles: [],
+      metadataSource: "offline_cache",
+      releaseCount: 3,
     },
-  },
-  // Un-owned context: the default state of a discovery feed. No codex
-  // overlay, no badge, no border accent.
-  {
-    id: 7,
-    canonicalTitle: "My Tiny Senpai",
-    coverUrl: "mock",
-    firstSeenAt: NOW - 86_400 * 6,
-    lastReleaseAt: NOW - 86_400 * 2,
-    kind: "manga",
-    status: "ongoing",
-    year: 2020,
-    owned: false,
-    description:
-      "A doting senpai and her hopeless kouhai, one office at a time.",
-    genres: ["romance", "comedy"],
-    tags: ["office", "slice of life"],
-    alternateTitles: ["うちの会社の小さい先輩の話"],
-    metadataSource: "offline_cache",
-    releaseCount: 1,
-    highestVolume: 5,
-    totalVolumes: 9,
-  },
-  {
-    id: 8,
-    canonicalTitle: "Destroy All Humans. They Can't Be Regenerated.",
-    coverUrl: "mock",
-    firstSeenAt: NOW - 86_400 * 8,
-    lastReleaseAt: NOW - 86_400 * 2,
-    kind: "manga",
-    status: "completed",
-    year: 2018,
-    owned: false,
-    description: "A deadpan office comedy with an unreasonably long title.",
-    genres: ["comedy"],
-    tags: ["office"],
-    alternateTitles: [],
-    metadataSource: "offline_cache",
-    releaseCount: 2,
-    highestVolume: 7,
-    totalVolumes: 18,
-  },
-  {
-    id: 9,
-    canonicalTitle: "Ichi the Witch",
-    coverUrl: "mock",
-    firstSeenAt: NOW - 86_400 * 4,
-    lastReleaseAt: NOW - 86_400 * 2,
-    kind: "manga",
-    status: "ongoing",
-    year: 2024,
-    owned: false,
-    description:
-      "A boy raised by witches hunts down the magic that wronged him.",
-    genres: ["action", "fantasy"],
-    tags: ["witches", "shonen"],
-    alternateTitles: ["魔男のイチ"],
-    metadataSource: "offline_cache",
-    releaseCount: 2,
-    highestVolume: 2,
-    totalVolumes: 8,
-    highestChapter: 68,
-    totalChapters: 83,
-  },
-  {
-    // A manual (operator-authored) series, used by the edit + manual/auto
-    // filter tests. The PATCH handler mutates this row in place, so the
-    // fixture is snapshot/restored by `resetSeries()`.
-    id: 10,
-    canonicalTitle: "Obscure Doujin Anthology",
-    coverUrl: null,
-    firstSeenAt: NOW - 86_400 * 3,
-    lastReleaseAt: NOW - 86_400,
-    kind: "manga",
-    status: null,
-    year: 2023,
-    owned: false,
-    description: "A manual catalog entry MangaBaka lacks.",
-    genres: [],
-    tags: [],
-    alternateTitles: [],
-    metadataSource: "manual",
-    releaseCount: 1,
-  },
-];
+    // --- Codex ownership states, for previewing the badge/border treatment ---
+    // `owned` is derived from the presence of `codex` on the real backend, so
+    // every entry below keeps the two in sync.
+    // complete: owned on Codex and current. The state that should recede.
+    {
+      id: 4,
+      canonicalTitle: "Zero Damage Sword Saint",
+      coverUrl: "mock",
+      firstSeenAt: NOW - 86_400 * 10,
+      lastReleaseAt: NOW - 86_400 * 2,
+      kind: "manga",
+      status: "ongoing",
+      year: 2024,
+      owned: true,
+      description:
+        "A washed-up swordsman reincarnates as the weakest stat line imaginable and turns zero attack power into an unbeatable defense.",
+      genres: ["action", "fantasy"],
+      tags: ["reincarnation", "op protagonist"],
+      alternateTitles: ["攻撃力ゼロから始める剣聖譚"],
+      metadataSource: "offline_cache",
+      releaseCount: 1,
+      highestVolume: 3,
+      totalVolumes: 3,
+      codex: {
+        status: "complete",
+        deepLink: "https://codex.example/series/zero-damage-sword-saint",
+        linkKind: "auto",
+        seriesUuid: "00000000-0000-0000-0000-000000000004",
+        syncedAt: NOW - 1_800,
+        localMaxVolume: 3,
+        volumesOwned: 3,
+      },
+    },
+    // behind: owned, but newer volumes/chapters have surfaced. The only
+    // genuinely actionable state; this is the one that should pop.
+    {
+      id: 5,
+      canonicalTitle: "Jujutsu Kaisen",
+      coverUrl: "mock",
+      firstSeenAt: NOW - 86_400 * 200,
+      lastReleaseAt: NOW - 86_400 * 2,
+      kind: "manga",
+      status: "completed",
+      year: 2018,
+      owned: true,
+      description:
+        "A high-schooler swallows a cursed finger to save his friends and is dragged into a world of jujutsu sorcerers and curses.",
+      genres: ["action", "supernatural"],
+      tags: ["curses", "shonen"],
+      alternateTitles: ["呪術廻戦"],
+      metadataSource: "offline_cache",
+      releaseCount: 10,
+      highestVolume: 30,
+      totalVolumes: 30,
+      highestChapter: 271,
+      totalChapters: 272,
+      codex: {
+        status: "behind",
+        deepLink: "https://codex.example/series/jujutsu-kaisen",
+        linkKind: "auto",
+        seriesUuid: "00000000-0000-0000-0000-000000000005",
+        syncedAt: NOW - 1_800,
+        localMaxVolume: 24,
+        localMaxChapter: 210,
+        volumesOwned: 24,
+      },
+    },
+    // present: owned on Codex, but we can't tell whether it's current (no
+    // numbered releases to compare against). Stays quiet.
+    {
+      id: 6,
+      canonicalTitle: "Owl Night",
+      coverUrl: "mock",
+      firstSeenAt: NOW - 86_400 * 5,
+      lastReleaseAt: NOW - 3_600 * 2,
+      kind: "manga",
+      status: "ongoing",
+      year: 2021,
+      owned: true,
+      description:
+        "A nocturnal courier ferries secrets across a city that never sleeps.",
+      genres: ["mystery", "drama"],
+      tags: ["urban"],
+      alternateTitles: ["アウルナイト"],
+      metadataSource: "offline_cache",
+      releaseCount: 3,
+      codex: {
+        status: "present",
+        deepLink: "https://codex.example/series/owl-night",
+        linkKind: "manual",
+        seriesUuid: "00000000-0000-0000-0000-000000000006",
+        syncedAt: NOW - 1_800,
+        volumesOwned: 4,
+      },
+    },
+    // Un-owned context: the default state of a discovery feed. No codex
+    // overlay, no badge, no border accent.
+    {
+      id: 7,
+      canonicalTitle: "My Tiny Senpai",
+      coverUrl: "mock",
+      firstSeenAt: NOW - 86_400 * 6,
+      lastReleaseAt: NOW - 86_400 * 2,
+      kind: "manga",
+      status: "ongoing",
+      year: 2020,
+      owned: false,
+      description:
+        "A doting senpai and her hopeless kouhai, one office at a time.",
+      genres: ["romance", "comedy"],
+      tags: ["office", "slice of life"],
+      alternateTitles: ["うちの会社の小さい先輩の話"],
+      metadataSource: "offline_cache",
+      releaseCount: 1,
+      highestVolume: 5,
+      totalVolumes: 9,
+    },
+    {
+      id: 8,
+      canonicalTitle: "Destroy All Humans. They Can't Be Regenerated.",
+      coverUrl: "mock",
+      firstSeenAt: NOW - 86_400 * 8,
+      lastReleaseAt: NOW - 86_400 * 2,
+      kind: "manga",
+      status: "completed",
+      year: 2018,
+      owned: false,
+      description: "A deadpan office comedy with an unreasonably long title.",
+      genres: ["comedy"],
+      tags: ["office"],
+      alternateTitles: [],
+      metadataSource: "offline_cache",
+      releaseCount: 2,
+      highestVolume: 7,
+      totalVolumes: 18,
+    },
+    {
+      id: 9,
+      canonicalTitle: "Ichi the Witch",
+      coverUrl: "mock",
+      firstSeenAt: NOW - 86_400 * 4,
+      lastReleaseAt: NOW - 86_400 * 2,
+      kind: "manga",
+      status: "ongoing",
+      year: 2024,
+      owned: false,
+      description:
+        "A boy raised by witches hunts down the magic that wronged him.",
+      genres: ["action", "fantasy"],
+      tags: ["witches", "shonen"],
+      alternateTitles: ["魔男のイチ"],
+      metadataSource: "offline_cache",
+      releaseCount: 2,
+      highestVolume: 2,
+      totalVolumes: 8,
+      highestChapter: 68,
+      totalChapters: 83,
+    },
+    {
+      // A manual (operator-authored) series, used by the edit + manual/auto
+      // filter tests. The PATCH handler mutates this row in place, so the
+      // fixture is snapshot/restored by `resetSeries()`.
+      id: 10,
+      canonicalTitle: "Obscure Doujin Anthology",
+      coverUrl: null,
+      firstSeenAt: NOW - 86_400 * 3,
+      lastReleaseAt: NOW - 86_400,
+      kind: "manga",
+      status: null,
+      year: 2023,
+      owned: false,
+      description: "A manual catalog entry MangaBaka lacks.",
+      genres: [],
+      tags: [],
+      alternateTitles: [],
+      metadataSource: "manual",
+      releaseCount: 1,
+    },
+  ] as Omit<MockSeries, "wishlisted">[]
+).map((s) => ({ ...s, wishlisted: false }));
 
 // Deep snapshot of the seed catalog. The series handlers (create, edit)
 // mutate `SERIES` in place, so tests restore it via `resetSeries()`.
@@ -1033,8 +1038,10 @@ export const handlers = [
       // Manually-created series start with no linked releases; the
       // operator may relink existing ones from the review queue.
       releaseCount: 0,
+      wishlisted: false,
     });
     const detail: SeriesDetail = {
+      wishlisted: false,
       id,
       canonicalTitle: title,
       alternateTitles: [],
@@ -1097,6 +1104,7 @@ export const handlers = [
     found.coverUrl = body.coverUrl?.trim() || null;
     found.description = body.description?.trim() || null;
     const detail: SeriesDetail = {
+      wishlisted: false,
       id: found.id,
       canonicalTitle: found.canonicalTitle,
       alternateTitles: found.alternateTitles,
@@ -1175,6 +1183,7 @@ export const handlers = [
     const found = SERIES.find((s) => s.id === id);
     if (!found) return new HttpResponse(null, { status: 404 });
     const body: SeriesDetail = {
+      wishlisted: found.wishlisted,
       id: found.id,
       canonicalTitle: found.canonicalTitle,
       alternateTitles: found.alternateTitles,
@@ -1227,6 +1236,7 @@ export const handlers = [
         };
       }
       const detail: SeriesDetail = {
+        wishlisted: found.wishlisted,
         id: found.id,
         canonicalTitle: found.canonicalTitle,
         alternateTitles: found.alternateTitles,
@@ -1250,6 +1260,41 @@ export const handlers = [
       return HttpResponse.json(detail);
     },
   ),
+
+  http.put("/api/v1/series/:id/wishlist", async ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const id = Number(params.id);
+    const found = SERIES.find((s) => s.id === id);
+    if (!found) return new HttpResponse(null, { status: 404 });
+    const body = (await request.json()) as { wishlisted: boolean };
+    found.wishlisted = body.wishlisted;
+    found.wishlistedAt = body.wishlisted ? NOW : null;
+    const detail: SeriesDetail = {
+      wishlisted: found.wishlisted,
+      wishlistedAt: found.wishlistedAt,
+      id: found.id,
+      canonicalTitle: found.canonicalTitle,
+      alternateTitles: found.alternateTitles,
+      coverUrl: found.coverUrl,
+      kind: found.kind,
+      status: found.status,
+      year: found.year,
+      description: found.description,
+      owned: found.owned,
+      genres: found.genres,
+      tags: found.tags,
+      externalIds: [],
+      firstSeenAt: found.firstSeenAt,
+      lastReleaseAt: found.lastReleaseAt,
+      metadataFetchedAt: NOW,
+      metadataSource: found.metadataSource,
+      highestVolume: null,
+      highestChapter: null,
+      codex: found.codex ?? null,
+    };
+    return HttpResponse.json(detail);
+  }),
 
   http.get("/api/v1/series", ({ request }) => {
     const url = new URL(request.url);
@@ -1296,6 +1341,11 @@ export const handlers = [
       filtered = filtered.filter((s) => s.releaseCount > 0);
     if (hasReleases === "false")
       filtered = filtered.filter((s) => s.releaseCount === 0);
+    const wishlisted = url.searchParams.get("wishlisted");
+    if (wishlisted === "true")
+      filtered = filtered.filter((s) => s.wishlisted === true);
+    if (wishlisted === "false")
+      filtered = filtered.filter((s) => s.wishlisted === false);
     const splitCsv = (s: string | null) =>
       s
         ?.split(",")
@@ -1412,6 +1462,7 @@ export const handlers = [
     const found = SERIES.find((s) => s.id === id);
     if (!found) return new HttpResponse(null, { status: 404 });
     const body: SeriesDetail = {
+      wishlisted: found.wishlisted,
       id: found.id,
       canonicalTitle: found.canonicalTitle,
       alternateTitles: found.alternateTitles,

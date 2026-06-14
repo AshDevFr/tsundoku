@@ -225,6 +225,30 @@ export function useSetIgnoreCompletion() {
   });
 }
 
+/// Clip or un-clip a series from the operator's wishlist (a curated "download
+/// later" list). Works on any series, provider-backed or manual; independent of
+/// Codex ownership. Invalidates the detail + list caches so the card star, the
+/// detail button, and any `wishlisted` filter update without a reload.
+export function useSetWishlisted() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { id: number; wishlisted: boolean }) => {
+      const { data, error } = await api.PUT("/api/v1/series/{id}/wishlist", {
+        params: { path: { id: args.id } },
+        body: { wishlisted: args.wishlisted },
+      });
+      if (error)
+        throw new Error(describeError(error, "failed to update wishlist"));
+      return data;
+    },
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: ["series-detail", id] });
+      qc.invalidateQueries({ queryKey: ["series-list"] });
+      qc.invalidateQueries({ queryKey: ["series-wishlist"] });
+    },
+  });
+}
+
 export function useKeepRelease() {
   const qc = useQueryClient();
   return useMutation({
