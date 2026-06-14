@@ -23,6 +23,7 @@ import { FeedPage } from "@/pages/FeedPage";
 import { KeptPage } from "@/pages/KeptPage";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { SeriesDetailPage } from "@/pages/SeriesDetailPage";
+import { WishlistPage } from "@/pages/WishlistPage";
 import type { FilterSearch } from "@/stores/filters";
 
 /// Accept either an array (from a repeated query param) or a CSV string
@@ -141,6 +142,12 @@ export const adminKeptRoute = createRoute({
   component: KeptPage,
 });
 
+export const adminWishlistRoute = createRoute({
+  getParentRoute: () => adminLayoutRoute,
+  path: "wishlist",
+  component: WishlistPage,
+});
+
 export const adminSourcesListRoute = createRoute({
   getParentRoute: () => adminLayoutRoute,
   path: "sources",
@@ -208,6 +215,7 @@ const routeTree = rootRoute.addChildren([
     adminOverviewRoute,
     adminReviewRoute,
     adminKeptRoute,
+    adminWishlistRoute,
     adminSourcesListRoute,
     adminSourceDetailRoute,
     adminProvidersListRoute,

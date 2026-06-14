@@ -6211,3 +6211,63 @@ async fn from_provider_creates_wishlisted_series_idempotently() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(body_json(resp).await["id"].as_i64().unwrap(), sid);
 }
+
+#[tokio::test]
+async fn wishlist_sort_orders_by_clip_time() {
+    let db = fresh_db().await;
+    let a = seed_series(&db, "Clipped First", "manga").await;
+    let b = seed_series(&db, "Clipped Later", "manga").await;
+    // Stamp explicit clip times so the order is deterministic (the toggle
+    // endpoint would stamp both within the same second).
+    td_db::repos::series_repo::set_wishlisted(&db, a, true, 100)
+        .await
+        .unwrap();
+    td_db::repos::series_repo::set_wishlisted(&db, b, true, 200)
+        .await
+        .unwrap();
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let ids = |body: &Value| -> Vec<i64> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_i64().unwrap())
+            .collect()
+    };
+
+    // desc: most-recently clipped first.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?wishlisted=true&sort=wishlisted_at&order=desc")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids(&body_json(resp).await), vec![b as i64, a as i64]);
+
+    // asc: oldest clip first.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?wishlisted=true&sort=wishlisted_at&order=asc")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids(&body_json(resp).await), vec![a as i64, b as i64]);
+}

@@ -8,6 +8,8 @@ type UpdateSeriesRequest = components["schemas"]["UpdateSeriesRequest"];
 type BulkReviewRequest = components["schemas"]["BulkReviewRequest"];
 type BulkLinkRequest = components["schemas"]["BulkLinkRequest"];
 type SendToClientRequest = components["schemas"]["SendToClientRequest"];
+type CreateSeriesFromProviderRequest =
+  components["schemas"]["CreateSeriesFromProviderRequest"];
 
 // Extract a useful error message from an openapi-fetch error payload, falling
 // back to a sentence the user can act on. The backend serializes errors as
@@ -244,7 +246,27 @@ export function useSetWishlisted() {
     onSuccess: (_data, { id }) => {
       qc.invalidateQueries({ queryKey: ["series-detail", id] });
       qc.invalidateQueries({ queryKey: ["series-list"] });
-      qc.invalidateQueries({ queryKey: ["series-wishlist"] });
+    },
+  });
+}
+
+/// Materialize a series from a metadata provider (the "add from MangaBaka"
+/// flow), optionally clipping it to the wishlist. Idempotent server-side on
+/// `(provider, externalId)`. Invalidates the series list (the wishlist page
+/// reads it) and stats so the new row shows without a reload.
+export function useCreateSeriesFromProvider() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: CreateSeriesFromProviderRequest) => {
+      const { data, error } = await api.POST("/api/v1/series/from-provider", {
+        body,
+      });
+      if (error) throw new Error(describeError(error, "failed to add series"));
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["series-list"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
     },
   });
 }

@@ -275,8 +275,14 @@ const INITIAL_SERIES = SERIES.map((s) => ({
   alternateTitles: [...s.alternateTitles],
 }));
 
+// Maps a `${provider}:${externalId}` add-from-provider request to the series id
+// it created, so a re-add is idempotent (mirrors the backend's
+// series_external_ids lookup). Reset alongside SERIES.
+const fromProviderIndex = new Map<string, number>();
+
 export function resetSeries() {
   SERIES.length = 0;
+  fromProviderIndex.clear();
   for (const s of INITIAL_SERIES) {
     SERIES.push({
       ...s,
@@ -1062,6 +1068,89 @@ export const handlers = [
       highestChapter: null,
     };
     return HttpResponse.json(detail, { status: 201 });
+  }),
+
+  // Add a series straight from a provider (the wishlist "Add from MangaBaka"
+  // flow). Idempotent on `${provider}:${externalId}` → 200 with the existing
+  // row, else 201 with a fresh one. Registered before the `:id` param siblings
+  // so the static `/from-provider` path isn't shadowed.
+  http.post("/api/v1/series/from-provider", async ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const body = (await request.json()) as {
+      provider: string;
+      externalId: string;
+      wishlist?: boolean;
+    };
+    const provider = (body.provider ?? "").trim();
+    const externalId = (body.externalId ?? "").trim();
+    if (!provider || !externalId) {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "bad_request",
+          message: "provider and externalId must not be empty",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    const key = `${provider}:${externalId}`;
+    const existingId = fromProviderIndex.get(key);
+    const wishlist = body.wishlist ?? true;
+    const makeDetail = (row: MockSeries): SeriesDetail => ({
+      wishlisted: row.wishlisted,
+      wishlistedAt: row.wishlistedAt,
+      id: row.id,
+      canonicalTitle: row.canonicalTitle,
+      alternateTitles: row.alternateTitles,
+      coverUrl: row.coverUrl,
+      kind: row.kind,
+      status: row.status,
+      year: row.year,
+      description: row.description,
+      owned: row.owned,
+      genres: row.genres,
+      tags: row.tags,
+      externalIds: [{ provider, externalId, fetchedAt: NOW }],
+      firstSeenAt: row.firstSeenAt,
+      lastReleaseAt: row.lastReleaseAt,
+      metadataFetchedAt: NOW,
+      metadataSource: row.metadataSource,
+      highestVolume: null,
+      highestChapter: null,
+    });
+    if (existingId != null) {
+      const row = SERIES.find((s) => s.id === existingId);
+      if (row) {
+        if (wishlist) {
+          row.wishlisted = true;
+          row.wishlistedAt = NOW;
+        }
+        return HttpResponse.json(makeDetail(row), { status: 200 });
+      }
+    }
+    const id = Math.max(0, ...SERIES.map((s) => s.id)) + 1;
+    const row: MockSeries = {
+      id,
+      canonicalTitle: `MangaBaka series ${externalId}`,
+      coverUrl: null,
+      firstSeenAt: NOW,
+      lastReleaseAt: NOW,
+      kind: "manga",
+      status: "ongoing",
+      year: null,
+      owned: false,
+      description: null,
+      genres: [],
+      tags: [],
+      alternateTitles: [],
+      metadataSource: "api",
+      releaseCount: 0,
+      wishlisted: wishlist,
+      wishlistedAt: wishlist ? NOW : null,
+    };
+    SERIES.push(row);
+    fromProviderIndex.set(key, id);
+    return HttpResponse.json(makeDetail(row), { status: 201 });
   }),
 
   // Edit a manual series. Mirrors the backend: 409 for provider-backed rows,

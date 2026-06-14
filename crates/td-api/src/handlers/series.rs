@@ -314,9 +314,10 @@ pub struct SeriesListQuery {
     pub tags_mode: Option<String>,
     /// Sort field. Supports `last_release_at` (default), `first_seen_at`,
     /// `total_volumes`, `total_chapters`, `highest_volume`,
-    /// `highest_chapter`, and `rating`. The count / highest / rating sorts
-    /// are nullable-aware: rows without a value sink to the end regardless
-    /// of direction.
+    /// `highest_chapter`, `rating`, and `wishlisted_at` (admin "recently
+    /// clipped" order for the wishlist view). The count / highest / rating /
+    /// wishlisted sorts are nullable-aware: rows without a value sink to the
+    /// end regardless of direction.
     /// Ignored when `q` is present (results are ranked by relevance instead).
     pub sort: Option<String>,
     /// `asc` or `desc` (default).
@@ -420,6 +421,11 @@ pub async fn list(
         Some("highest_volume") => series::Column::HighestVolume,
         Some("highest_chapter") => series::Column::HighestChapter,
         Some("rating") => series::Column::Rating,
+        // Admin-only "recently clipped" order for the wishlist view. The column
+        // is nullable (NULL = not wishlisted), so it joins the nullable-aware
+        // ordering below; the wishlist view also filters `wishlisted=true`, so
+        // in practice every row it sees has a value.
+        Some("wishlisted_at") => series::Column::WishlistedAt,
         _ => series::Column::LastReleaseAt,
     };
     let desc = !matches!(q.order.as_deref(), Some("asc"));
@@ -435,6 +441,7 @@ pub async fn list(
             | series::Column::HighestVolume
             | series::Column::HighestChapter
             | series::Column::Rating
+            | series::Column::WishlistedAt
     ) {
         select = select.order_by_asc(Expr::col(sort_col).is_null());
     }

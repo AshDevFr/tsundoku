@@ -360,14 +360,15 @@ export function ProviderSearchPanel({
 
 /// Provider search inputs + results, decoupled from what happens on pick.
 /// `onPick` receives the effective provider id so the host doesn't have to
-/// track which provider produced the hit. Shared by the single-release and
-/// bulk link flows.
-function ProviderSearchControls({
+/// track which provider produced the hit. Shared by the single-release link,
+/// bulk link, and "add from provider" (wishlist) flows.
+export function ProviderSearchControls({
   seedQuery,
   seedExternalId,
   seedIdSource,
   disabled,
   onPick,
+  actionLabel,
 }: {
   seedQuery: string;
   /** Pre-fill the External ID field (e.g. a comment-suggested link). */
@@ -376,6 +377,8 @@ function ProviderSearchControls({
   seedIdSource?: string;
   disabled: boolean;
   onPick: (provider: string, externalId: string, label: string) => void;
+  /** Per-hit action button label, forwarded to the results list. */
+  actionLabel?: string;
 }) {
   const providers = useProviders();
   const [provider, setProvider] = useState<string | null>(null);
@@ -497,6 +500,7 @@ function ProviderSearchControls({
           effectiveProvider && (debouncedTitle.trim() || externalId.trim()),
         )}
         disabled={disabled}
+        actionLabel={actionLabel}
         onPick={(extId, label) =>
           effectiveProvider && onPick(effectiveProvider, extId, label)
         }
@@ -607,6 +611,7 @@ function SearchResults({
   enabled,
   disabled,
   onPick,
+  actionLabel = "Link",
 }: {
   provider: string | null;
   hits: ProviderSearchHit[];
@@ -614,6 +619,8 @@ function SearchResults({
   enabled: boolean;
   disabled: boolean;
   onPick: (externalId: string, displayLabel: string) => void;
+  /** Per-hit action button label. Defaults to "Link" (the review flow). */
+  actionLabel?: string;
 }) {
   if (!enabled) {
     return (
@@ -732,7 +739,7 @@ function SearchResults({
                 disabled={disabled}
                 data-testid={`link-hit-${h.externalId}`}
               >
-                Link
+                {actionLabel}
               </Button>
             </Group>
           </Card>

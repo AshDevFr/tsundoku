@@ -26,6 +26,7 @@ interface NavEntry {
 const NAV: NavEntry[] = [
   { label: "Overview", to: "/admin" },
   { label: "Review", to: "/admin/review" },
+  { label: "Wishlist", to: "/admin/wishlist" },
   { label: "Kept", to: "/admin/kept" },
   { label: "Sources", to: "/admin/sources", matchPrefix: "/admin/sources" },
   {

@@ -3682,9 +3682,10 @@ export interface operations {
                 /**
                  * @description Sort field. Supports `last_release_at` (default), `first_seen_at`,
                  *     `total_volumes`, `total_chapters`, `highest_volume`,
-                 *     `highest_chapter`, and `rating`. The count / highest / rating sorts
-                 *     are nullable-aware: rows without a value sink to the end regardless
-                 *     of direction.
+                 *     `highest_chapter`, `rating`, and `wishlisted_at` (admin "recently
+                 *     clipped" order for the wishlist view). The count / highest / rating /
+                 *     wishlisted sorts are nullable-aware: rows without a value sink to the
+                 *     end regardless of direction.
                  *     Ignored when `q` is present (results are ranked by relevance instead).
                  */
                 sort?: string;

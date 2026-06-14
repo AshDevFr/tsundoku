@@ -117,6 +117,18 @@ export function AppShell({ children }: { children: ReactNode }) {
               </Badge>
               <Badge
                 component={Link}
+                to="/admin/wishlist"
+                color="yellow"
+                variant="default"
+                radius="sm"
+                style={{ cursor: "pointer", textDecoration: "none" }}
+                aria-label="Wishlist"
+                data-testid="appbar-wishlist"
+              >
+                ★ wishlist
+              </Badge>
+              <Badge
+                component={Link}
                 to="/admin"
                 color="grape"
                 variant="default"

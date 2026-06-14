@@ -1563,7 +1563,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "Sort field. Supports `last_release_at` (default), `first_seen_at`,\n`total_volumes`, `total_chapters`, `highest_volume`,\n`highest_chapter`, and `rating`. The count / highest / rating sorts\nare nullable-aware: rows without a value sink to the end regardless\nof direction.\nIgnored when `q` is present (results are ranked by relevance instead).",
+            "description": "Sort field. Supports `last_release_at` (default), `first_seen_at`,\n`total_volumes`, `total_chapters`, `highest_volume`,\n`highest_chapter`, `rating`, and `wishlisted_at` (admin \"recently\nclipped\" order for the wishlist view). The count / highest / rating /\nwishlisted sorts are nullable-aware: rows without a value sink to the\nend regardless of direction.\nIgnored when `q` is present (results are ranked by relevance instead).",
             "required": false,
             "schema": {
               "type": "string"
