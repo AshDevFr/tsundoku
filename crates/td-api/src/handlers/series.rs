@@ -78,6 +78,14 @@ pub struct SeriesListItem {
     /// Whether the operator owns this series on Codex. Derived from the
     /// presence of [`Self::codex`], so it is only ever `true` for admins.
     pub owned: bool,
+    /// Whether the series is on the operator's wishlist. Admin-only: always
+    /// `false` for non-admin requests (the curation list never reaches the
+    /// public read tier), exactly like [`Self::owned`].
+    pub wishlisted: bool,
+    /// Epoch seconds the series was clipped to the wishlist, or `null` when not
+    /// wishlisted / not admin. Drives the wishlist view's "recently clipped"
+    /// sort.
+    pub wishlisted_at: Option<i64>,
     /// Codex presence overlay. Present **only** for admin-authenticated
     /// requests and **only** when the series is on Codex; the key is absent
     /// (not null) otherwise, so the public read tier never learns library
@@ -254,6 +262,12 @@ pub struct SeriesDetail {
     /// Whether the operator owns this series on Codex. Derived from the
     /// presence of [`Self::codex`]; only ever `true` for admins.
     pub owned: bool,
+    /// Whether the series is on the operator's wishlist. Admin-only (always
+    /// `false` for non-admin requests), like [`Self::owned`].
+    pub wishlisted: bool,
+    /// Epoch seconds the series was clipped to the wishlist, or `null` when not
+    /// wishlisted / not admin.
+    pub wishlisted_at: Option<i64>,
     pub external_ids: Vec<ExternalIdDto>,
     /// Codex presence overlay. Admin-only; absent for non-admins and for
     /// series not on Codex.
@@ -273,6 +287,11 @@ pub struct SeriesListQuery {
     pub status: Option<String>,
     /// Filter by ownership flag (true = owned by Codex, false = discoverable).
     pub owned: Option<bool>,
+    /// Filter by wishlist flag: `true` keeps only wishlisted series, `false`
+    /// only non-wishlisted, absent applies no constraint. **Admin-only and
+    /// enforced server-side**: ignored entirely for a non-admin request, like
+    /// [`Self::codex_status`], so the curation list can't be probed.
+    pub wishlisted: Option<bool>,
     /// Filter by whether any releases are linked to the series. `true`
     /// keeps only series with ≥1 release; `false` keeps only orphaned
     /// series (zero releases — often the residue of a manual re-link).
@@ -324,6 +343,7 @@ impl Default for SeriesListQuery {
             kind: None,
             status: None,
             owned: None,
+            wishlisted: None,
             has_releases: None,
             metadata_source: None,
             genres: None,
@@ -387,7 +407,7 @@ pub async fn list(
         return search_list(state, q, &q_raw, is_admin).await;
     }
 
-    let mut select = apply_series_filters(series::Entity::find(), &q);
+    let mut select = apply_series_filters(series::Entity::find(), &q, is_admin);
     // Codex presence filter: admin-only and enforced here, so a non-admin
     // request with `codexStatus` set just gets the unfiltered feed.
     if let Some(filter) = codex_status_filter(&state, &q, is_admin).await? {
@@ -487,7 +507,7 @@ async fn decorate_list_items(
                     base_url.as_deref(),
                 )
             });
-            model_to_list_item(m, genres, tags, release_count, codex)
+            model_to_list_item(m, genres, tags, release_count, codex, is_admin)
         })
         .collect())
 }
@@ -638,6 +658,7 @@ async fn codex_synced_at(state: &AppState, is_admin: bool) -> ApiResult<Option<i
 pub(crate) fn apply_series_filters(
     mut select: sea_orm::Select<series::Entity>,
     q: &SeriesListQuery,
+    is_admin: bool,
 ) -> sea_orm::Select<series::Entity> {
     // Kind / status accept one or more comma-separated values
     // (e.g. `kind=manga,manhwa`), OR-combined via `IN`. A single value is the
@@ -654,6 +675,16 @@ pub(crate) fn apply_series_filters(
     if let Some(owned) = q.owned {
         let flag = if owned { 1 } else { 0 };
         select = select.filter(series::Column::Owned.eq(flag));
+    }
+    // Wishlist filter: admin-only operator curation, so a non-admin request
+    // never narrows by it (the field is also blanked in the DTO). `true` keeps
+    // rows with a clip timestamp, `false` keeps those without.
+    if is_admin && let Some(wishlisted) = q.wishlisted {
+        select = if wishlisted {
+            select.filter(series::Column::WishlistedAt.is_not_null())
+        } else {
+            select.filter(series::Column::WishlistedAt.is_null())
+        };
     }
     // Manual/auto provenance filter. `auto` is "any provider-backed row",
     // expressed as `!= manual` so it stays correct as new provider sources
@@ -854,7 +885,7 @@ async fn search_list(
     let allowed: HashSet<i32> = if candidate_ids.is_empty() {
         HashSet::new()
     } else {
-        let mut select = apply_series_filters(series::Entity::find(), &q)
+        let mut select = apply_series_filters(series::Entity::find(), &q, is_admin)
             .filter(series::Column::Id.is_in(candidate_ids));
         // Same admin-only codex status filter as the no-query path.
         if let Some(filter) = codex_status_filter(&state, &q, is_admin).await? {
@@ -970,6 +1001,7 @@ pub async fn get(
         genres_for_series,
         tags_for_series,
         codex,
+        is_admin,
     )))
 }
 
@@ -1207,6 +1239,9 @@ pub async fn create(
             Vec::new(),
             Vec::new(),
             None,
+            // Admin-gated route: the caller is always an admin, so surface the
+            // wishlist flag.
+            true,
         )),
     ))
 }
@@ -1325,6 +1360,7 @@ pub async fn update(
         genres_for_series,
         tags_for_series,
         codex,
+        true,
     )))
 }
 
@@ -1404,7 +1440,209 @@ pub async fn set_ignore_completion(
         genres_for_series,
         tags_for_series,
         codex,
+        true,
     )))
+}
+
+/// Hydrate a series row into the admin `SeriesDetail` shape (provider mappings +
+/// genres + tags + Codex overlay). For the admin-only write endpoints, which
+/// always surface the operator-only fields, so `is_admin` is hard-coded `true`.
+async fn load_admin_detail(state: &AppState, id: i32) -> ApiResult<SeriesDetail> {
+    let row = series::Entity::find_by_id(id)
+        .one(&state.db)
+        .await
+        .map_err(anyhow_err)?
+        .ok_or_else(|| ApiError::NotFound(format!("series {id}")))?;
+    let mappings = series_external_ids_repo::list_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    let tags_for_series = tagging_repo::list_tags_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    let genres_for_series = tagging_repo::list_genres_for_series(&state.db, id)
+        .await
+        .map_err(anyhow_err)?;
+    let codex = codex_link_repo::get(&state.db, id)
+        .await
+        .map_err(anyhow_err)?
+        .map(|l| {
+            build_codex_info(
+                &l,
+                row.ignore_completion,
+                row.highest_volume,
+                row.highest_chapter,
+                state.codex.normalized_base_url().as_deref(),
+            )
+        });
+    Ok(model_to_detail(
+        row,
+        mappings,
+        genres_for_series,
+        tags_for_series,
+        codex,
+        true,
+    ))
+}
+
+/// Body for `PUT /api/v1/series/{id}/wishlist`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetWishlistedRequest {
+    /// `true` to clip the series to the operator's wishlist, `false` to remove
+    /// it. Re-clipping an already-wishlisted series refreshes its "clipped at".
+    pub wishlisted: bool,
+}
+
+/// Clip or un-clip a series from the operator's wishlist — a curated "download
+/// later" list. Works on **any** series (provider-backed or manual): the flag
+/// is operator-owned and a metadata refresh never touches it. Independent of
+/// Codex ownership; clipping a series the operator already owns is allowed and
+/// import never auto-clears it (removal is manual).
+#[utoipa::path(
+    put,
+    path = "/api/v1/series/{id}/wishlist",
+    tag = "series",
+    params(("id" = i32, Path, description = "Internal series id")),
+    request_body = SetWishlistedRequest,
+    responses(
+        (status = 200, body = SeriesDetail),
+        (status = 404, description = "No series with that id")
+    ),
+    security(("admin" = []))
+)]
+pub async fn set_wishlisted(
+    State(state): State<AppState>,
+    Path(id): Path<i32>,
+    Json(req): Json<SetWishlistedRequest>,
+) -> ApiResult<Json<SeriesDetail>> {
+    let now = Utc::now().timestamp();
+    match series_repo::set_wishlisted(&state.db, id, req.wishlisted, now)
+        .await
+        .map_err(anyhow_err)?
+    {
+        series_repo::SetWishlistedOutcome::Updated(_) => {}
+        series_repo::SetWishlistedOutcome::NotFound => {
+            return Err(ApiError::NotFound(format!("series {id}")));
+        }
+    }
+    // Re-hydrate via the read-path helper so the response matches GET.
+    Ok(Json(load_admin_detail(&state, id).await?))
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Body for `POST /api/v1/series/from-provider`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSeriesFromProviderRequest {
+    /// Provider id the series is fetched from (e.g. `mangabaka`). Must be a
+    /// registered provider.
+    pub provider: String,
+    /// The provider's own external id for the series.
+    pub external_id: String,
+    /// Whether to clip the created/looked-up series to the wishlist. Defaults
+    /// to `true` — the add-from-search flow's whole reason to exist; pass
+    /// `false` to just materialize the catalog row without wishlisting it.
+    #[serde(default = "default_true")]
+    pub wishlist: bool,
+}
+
+/// Add a series straight from a metadata provider, for series with no
+/// discovered release yet. Reuses the resolver's `upsert_series_from_metadata`
+/// (the same path the review link-by-provider flow uses), so the row is
+/// provider-backed and carries its `series_external_ids` mapping — future
+/// discovered releases auto-resolve to it. Idempotent on `(provider,
+/// externalId)`: an existing mapping returns `200` with the existing row; a
+/// fresh fetch returns `201`. When `wishlist` is set (the default) the series
+/// is clipped to the wishlist.
+#[utoipa::path(
+    post,
+    path = "/api/v1/series/from-provider",
+    tag = "series",
+    request_body = CreateSeriesFromProviderRequest,
+    responses(
+        (status = 201, body = SeriesDetail, description = "Series created from provider metadata"),
+        (status = 200, body = SeriesDetail, description = "Series already existed for this (provider, externalId)"),
+        (status = 400, description = "Empty fields or unregistered provider"),
+        (status = 404, description = "Provider has no record for that external id")
+    ),
+    security(("admin" = []))
+)]
+pub async fn create_from_provider(
+    State(state): State<AppState>,
+    Json(req): Json<CreateSeriesFromProviderRequest>,
+) -> ApiResult<(StatusCode, Json<SeriesDetail>)> {
+    let provider = req.provider.trim();
+    let external_id = req.external_id.trim();
+    if provider.is_empty() || external_id.is_empty() {
+        return Err(ApiError::BadRequest(
+            "provider and externalId must not be empty".into(),
+        ));
+    }
+    let now = Utc::now();
+
+    // Idempotent: a series already mapped to this (provider, externalId) is
+    // reused rather than re-fetched, so a double-add can't fork the catalog.
+    let (series_id, created) =
+        match series_external_ids_repo::find_series_id(&state.db, provider, external_id)
+            .await
+            .map_err(anyhow_err)?
+        {
+            Some(sid) => (sid, false),
+            None => {
+                let target = state.metadata.get(provider).ok_or_else(|| {
+                    ApiError::BadRequest(format!("provider {provider:?} not registered"))
+                })?;
+                let metadata: SeriesMetadata = target
+                    .get(external_id)
+                    .await
+                    .map_err(|e| ApiError::Internal(anyhow::anyhow!("provider.get failed: {e}")))?
+                    .ok_or_else(|| {
+                        ApiError::NotFound(format!(
+                            "provider {provider:?} has no record for {external_id:?}"
+                        ))
+                    })?;
+                // No release yet, so seed last_release_at from `now`. Conservative
+                // default (`false`): if the foreign-id chain lands on a pre-existing
+                // manual row, don't clobber it.
+                let sid = persist::upsert_series_from_metadata(
+                    &state.db,
+                    provider,
+                    &metadata,
+                    now.timestamp(),
+                    now,
+                    false,
+                )
+                .await
+                .map_err(ApiError::Internal)?
+                .series_id;
+                (sid, true)
+            }
+        };
+
+    if req.wishlist {
+        match series_repo::set_wishlisted(&state.db, series_id, true, now.timestamp())
+            .await
+            .map_err(anyhow_err)?
+        {
+            series_repo::SetWishlistedOutcome::Updated(_) => {}
+            series_repo::SetWishlistedOutcome::NotFound => {
+                return Err(ApiError::Internal(anyhow::anyhow!(
+                    "series {series_id} vanished before wishlist stamp"
+                )));
+            }
+        }
+    }
+
+    let detail = load_admin_detail(&state, series_id).await?;
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(detail)))
 }
 
 /// Re-fetch metadata for a series from the active provider and re-persist.
@@ -1500,6 +1738,7 @@ pub async fn refresh_metadata(
         genres_for_series,
         tags_for_series,
         codex,
+        true,
     )))
 }
 
@@ -1705,7 +1944,11 @@ fn model_to_list_item(
     tags: Vec<String>,
     release_count: i64,
     codex: Option<CodexInfo>,
+    is_admin: bool,
 ) -> SeriesListItem {
+    // Wishlist is operator curation — gate it behind admin like `owned`, so the
+    // public read tier never learns what's on the list.
+    let wishlisted_at = if is_admin { m.wishlisted_at } else { None };
     SeriesListItem {
         id: m.id,
         canonical_title: m.canonical_title,
@@ -1728,6 +1971,8 @@ fn model_to_list_item(
         // `owned` now reflects Codex ownership, surfaced only to admins (the
         // legacy `series.owned` column was never populated).
         owned: codex.is_some(),
+        wishlisted: wishlisted_at.is_some(),
+        wishlisted_at,
         codex,
     }
 }
@@ -1738,7 +1983,10 @@ fn model_to_detail(
     join_genres: Vec<String>,
     join_tags: Vec<String>,
     codex: Option<CodexInfo>,
+    is_admin: bool,
 ) -> SeriesDetail {
+    // Admin-gated, same rationale as `model_to_list_item`.
+    let wishlisted_at = if is_admin { m.wishlisted_at } else { None };
     let alternate_titles = m
         .alternate_titles_json
         .as_deref()
@@ -1765,6 +2013,8 @@ fn model_to_detail(
         total_chapters: m.total_chapters,
         rating: m.rating,
         owned: codex.is_some(),
+        wishlisted: wishlisted_at.is_some(),
+        wishlisted_at,
         external_ids: mappings
             .into_iter()
             .map(|x| ExternalIdDto {

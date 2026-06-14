@@ -782,6 +782,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/series/from-provider": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a series straight from a metadata provider, for series with no
+         *     discovered release yet. Reuses the resolver's `upsert_series_from_metadata`
+         *     (the same path the review link-by-provider flow uses), so the row is
+         *     provider-backed and carries its `series_external_ids` mapping — future
+         *     discovered releases auto-resolve to it. Idempotent on `(provider,
+         *     externalId)`: an existing mapping returns `200` with the existing row; a
+         *     fresh fetch returns `201`. When `wishlist` is set (the default) the series
+         *     is clipped to the wishlist.
+         */
+        post: operations["create_from_provider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series/invalidate-metadata-hashes": {
         parameters: {
             query?: never;
@@ -955,6 +981,29 @@ export interface paths {
         put?: never;
         /** Re-fetch metadata for a series from the active provider and re-persist. */
         post: operations["refresh_metadata"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/series/{id}/wishlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Clip or un-clip a series from the operator's wishlist — a curated "download
+         *     later" list. Works on **any** series (provider-backed or manual): the flag
+         *     is operator-owned and a metadata refresh never touches it. Independent of
+         *     Codex ownership; clipping a series the operator already owns is allowed and
+         *     import never auto-clears it (removal is manual).
+         */
+        put: operations["set_wishlisted"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1305,6 +1354,22 @@ export interface components {
             end: number;
             /** Format: double */
             start: number;
+        };
+        /** @description Body for `POST /api/v1/series/from-provider`. */
+        CreateSeriesFromProviderRequest: {
+            /** @description The provider's own external id for the series. */
+            externalId: string;
+            /**
+             * @description Provider id the series is fetched from (e.g. `mangabaka`). Must be a
+             *     registered provider.
+             */
+            provider: string;
+            /**
+             * @description Whether to clip the created/looked-up series to the wishlist. Defaults
+             *     to `true` — the add-from-search flow's whole reason to exist; pass
+             *     `false` to just materialize the catalog row without wishlisting it.
+             */
+            wishlist?: boolean;
         };
         /**
          * @description Body for creating a manual series. Only `canonicalTitle` is required;
@@ -2113,6 +2178,17 @@ export interface components {
              *     across releases. `None` if the provider has no value for this row.
              */
             totalVolumes?: number | null;
+            /**
+             * @description Whether the series is on the operator's wishlist. Admin-only (always
+             *     `false` for non-admin requests), like [`Self::owned`].
+             */
+            wishlisted: boolean;
+            /**
+             * Format: int64
+             * @description Epoch seconds the series was clipped to the wishlist, or `null` when not
+             *     wishlisted / not admin.
+             */
+            wishlistedAt?: number | null;
             /** Format: int32 */
             year?: number | null;
         };
@@ -2270,6 +2346,19 @@ export interface components {
              *     the list view so sort-by-volume results have a number to display.
              */
             totalVolumes?: number | null;
+            /**
+             * @description Whether the series is on the operator's wishlist. Admin-only: always
+             *     `false` for non-admin requests (the curation list never reaches the
+             *     public read tier), exactly like [`Self::owned`].
+             */
+            wishlisted: boolean;
+            /**
+             * Format: int64
+             * @description Epoch seconds the series was clipped to the wishlist, or `null` when not
+             *     wishlisted / not admin. Drives the wishlist view's "recently clipped"
+             *     sort.
+             */
+            wishlistedAt?: number | null;
             /** Format: int32 */
             year?: number | null;
         };
@@ -2297,6 +2386,14 @@ export interface components {
              *     status becomes `ignored`), `false` to resume tracking.
              */
             ignore: boolean;
+        };
+        /** @description Body for `PUT /api/v1/series/{id}/wishlist`. */
+        SetWishlistedRequest: {
+            /**
+             * @description `true` to clip the series to the operator's wishlist, `false` to remove
+             *     it. Re-clipping an already-wishlisted series refreshes its "clipped at".
+             */
+            wishlisted: boolean;
         };
         /**
          * @description Operator-facing snapshot of the per-source config (the bits visible in
@@ -3550,6 +3647,13 @@ export interface operations {
                 /** @description Filter by ownership flag (true = owned by Codex, false = discoverable). */
                 owned?: boolean;
                 /**
+                 * @description Filter by wishlist flag: `true` keeps only wishlisted series, `false`
+                 *     only non-wishlisted, absent applies no constraint. **Admin-only and
+                 *     enforced server-side**: ignored entirely for a non-admin request, like
+                 *     [`Self::codex_status`], so the curation list can't be probed.
+                 */
+                wishlisted?: boolean;
+                /**
                  * @description Filter by whether any releases are linked to the series. `true`
                  *     keeps only series with ≥1 release; `false` keeps only orphaned
                  *     series (zero releases — often the residue of a manual re-link).
@@ -3736,6 +3840,53 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SeriesFeedResponse"];
                 };
+            };
+        };
+    };
+    create_from_provider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSeriesFromProviderRequest"];
+            };
+        };
+        responses: {
+            /** @description Series already existed for this (provider, externalId) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Series created from provider metadata */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Empty fields or unregistered provider */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Provider has no record for that external id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -4001,6 +4152,39 @@ export interface operations {
             };
             /** @description No mapping for the active provider on this series */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    set_wishlisted: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Internal series id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetWishlistedRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description No series with that id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

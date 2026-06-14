@@ -5983,3 +5983,231 @@ async fn series_feed_post_filters_by_external_ids() {
     );
     assert_eq!(body["hasMore"], false);
 }
+
+// ---------------------------------------------------------------------------
+// Wishlist
+// ---------------------------------------------------------------------------
+
+/// Build an app with a `mb` stub that serves `sample_metadata` for any id.
+fn wishlist_app(db: sea_orm::DatabaseConnection) -> axum::Router {
+    build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: Some(sample_metadata("mb", "1677", "Chainsaw Man")),
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    )
+}
+
+#[tokio::test]
+async fn wishlist_toggle_sets_and_clears_flag() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "Wishable", "manga").await;
+    let app = wishlist_app(db.clone());
+
+    // Clip it.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/series/{sid}/wishlist"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"wishlisted":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["wishlisted"], true);
+    assert!(body["wishlistedAt"].as_i64().unwrap() > 0);
+
+    // Un-clip it.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/series/{sid}/wishlist"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"wishlisted":false}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["wishlisted"], false);
+    assert!(body["wishlistedAt"].is_null());
+}
+
+#[tokio::test]
+async fn wishlist_toggle_404_for_unknown_series() {
+    let db = fresh_db().await;
+    let app = wishlist_app(db);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/series/999999/wishlist")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"wishlisted":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn wishlist_filter_partitions_for_admin() {
+    let db = fresh_db().await;
+    let wished = seed_series(&db, "Wished", "manga").await;
+    let plain = seed_series(&db, "Plain", "manga").await;
+    let app = wishlist_app(db.clone());
+
+    // Clip one.
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/series/{wished}/wishlist"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"wishlisted":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let ids = |body: &Value| -> Vec<i64> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_i64().unwrap())
+            .collect()
+    };
+
+    // wishlisted=true keeps only the clipped series.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?wishlisted=true")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids(&body_json(resp).await), vec![wished as i64]);
+
+    // wishlisted=false keeps only the other.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?wishlisted=false")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids(&body_json(resp).await), vec![plain as i64]);
+}
+
+#[tokio::test]
+async fn wishlist_is_hidden_from_non_admin() {
+    let db = fresh_db().await;
+    let wished = seed_series(&db, "Wished", "manga").await;
+    let _plain = seed_series(&db, "Plain", "manga").await;
+    let app = wishlist_app(db.clone());
+
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/series/{wished}/wishlist"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"wishlisted":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Non-admin list: the flag is blanked and the filter is ignored (returns
+    // both series, neither flagged).
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?wishlisted=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "filter ignored without admin token");
+    for item in items {
+        assert_eq!(item["wishlisted"], false, "flag blanked for non-admin");
+    }
+}
+
+#[tokio::test]
+async fn from_provider_creates_wishlisted_series_idempotently() {
+    let db = fresh_db().await;
+    let app = wishlist_app(db.clone());
+    let body = serde_json::json!({ "provider": "mb", "externalId": "1677" });
+
+    // First add creates the series + mapping and clips it.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/from-provider")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = body_json(resp).await;
+    let sid = created["id"].as_i64().unwrap();
+    assert!(sid > 0);
+    assert_eq!(created["wishlisted"], true);
+    assert_eq!(created["canonicalTitle"], "Chainsaw Man");
+
+    // The provider mapping was persisted.
+    let mapping = series_external_ids_repo::find_series_id(&db, "mb", "1677")
+        .await
+        .unwrap();
+    assert_eq!(mapping, Some(sid as i32));
+
+    // Re-adding the same (provider, externalId) reuses the row → 200, same id.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/from-provider")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["id"].as_i64().unwrap(), sid);
+}

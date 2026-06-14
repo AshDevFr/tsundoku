@@ -27,6 +27,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
 
     let writes = Router::new()
         .route("/series", post(series::create))
+        .route("/series/from-provider", post(series::create_from_provider))
         .route("/series/{id}", patch(series::update))
         .route("/series/refresh-all", post(series::refresh_all))
         // Catalog export: admin-only (exposes Codex ownership), so it lives in
@@ -46,6 +47,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
             "/series/{id}/ignore-completion",
             put(series::set_ignore_completion),
         )
+        .route("/series/{id}/wishlist", put(series::set_wishlisted))
         .route("/releases/{id}/link", post(releases::link))
         .route("/releases/{id}/reject", post(releases::reject))
         .route("/releases/{id}/keep", post(releases::keep))

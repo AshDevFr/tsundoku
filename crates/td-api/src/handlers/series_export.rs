@@ -438,7 +438,7 @@ pub async fn export(
 
     // Same filter pipeline as `GET /series`. The caller is always an admin
     // (admin-gated route), so the codex-status filter is enabled.
-    let mut select = apply_series_filters(series::Entity::find(), &list_query);
+    let mut select = apply_series_filters(series::Entity::find(), &list_query, true);
     if let Some(filter) = codex_status_filter(&state, &list_query, true).await? {
         select = apply_codex_id_filter(select, &filter);
     }

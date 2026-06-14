@@ -35,10 +35,10 @@ use crate::handlers::releases::{
     UnresolvedRelease,
 };
 use crate::handlers::series::{
-    CoverageSpanDto, CreateSeriesRequest, ExternalIdDto, InvalidateMetadataHashesResponse,
-    RecomputeSpansResponse, RefreshAllSeriesResponse, SeriesDetail, SeriesFeedItem,
-    SeriesFeedRequest, SeriesFeedResponse, SeriesListItem, SeriesListPage,
-    SetIgnoreCompletionRequest, UpdateSeriesRequest,
+    CoverageSpanDto, CreateSeriesFromProviderRequest, CreateSeriesRequest, ExternalIdDto,
+    InvalidateMetadataHashesResponse, RecomputeSpansResponse, RefreshAllSeriesResponse,
+    SeriesDetail, SeriesFeedItem, SeriesFeedRequest, SeriesFeedResponse, SeriesListItem,
+    SeriesListPage, SetIgnoreCompletionRequest, SetWishlistedRequest, UpdateSeriesRequest,
 };
 use crate::handlers::sources::{
     ManualBackfillResponse, ManualPollResponse, ManualReenrichResponse, PollAllResponse,
@@ -68,9 +68,11 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         series::feed,
         series::feed_query,
         series::create,
+        series::create_from_provider,
         series::update,
         series::refresh_metadata,
         series::set_ignore_completion,
+        series::set_wishlisted,
         series::refresh_all,
         series::recompute_spans,
         series::invalidate_metadata_hashes,
@@ -130,8 +132,10 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         SeriesFeedRequest,
         CoverageSpanDto,
         CreateSeriesRequest,
+        CreateSeriesFromProviderRequest,
         UpdateSeriesRequest,
         SetIgnoreCompletionRequest,
+        SetWishlistedRequest,
         RefreshAllSeriesResponse,
         RecomputeSpansResponse,
         InvalidateMetadataHashesResponse,

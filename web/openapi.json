@@ -1498,6 +1498,15 @@
             }
           },
           {
+            "name": "wishlisted",
+            "in": "query",
+            "description": "Filter by wishlist flag: `true` keeps only wishlisted series, `false`\nonly non-wishlisted, absent applies no constraint. **Admin-only and\nenforced server-side**: ignored entirely for a non-admin request, like\n[`Self::codex_status`], so the curation list can't be probed.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "hasReleases",
             "in": "query",
             "description": "Filter by whether any releases are linked to the series. `true`\nkeeps only series with ≥1 release; `false` keeps only orphaned\nseries (zero releases — often the residue of a manual re-link).",
@@ -1838,6 +1847,58 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/series/from-provider": {
+      "post": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Add a series straight from a metadata provider, for series with no\ndiscovered release yet. Reuses the resolver's `upsert_series_from_metadata`\n(the same path the review link-by-provider flow uses), so the row is\nprovider-backed and carries its `series_external_ids` mapping — future\ndiscovered releases auto-resolve to it. Idempotent on `(provider,\nexternalId)`: an existing mapping returns `200` with the existing row; a\nfresh fetch returns `201`. When `wishlist` is set (the default) the series\nis clipped to the wishlist.",
+        "operationId": "create_from_provider",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSeriesFromProviderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Series already existed for this (provider, externalId)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesDetail"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Series created from provider metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty fields or unregistered provider"
+          },
+          "404": {
+            "description": "Provider has no record for that external id"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
       }
     },
     "/api/v1/series/invalidate-metadata-hashes": {
@@ -2196,6 +2257,57 @@
           },
           "409": {
             "description": "No mapping for the active provider on this series"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/series/{id}/wishlist": {
+      "put": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Clip or un-clip a series from the operator's wishlist — a curated \"download\nlater\" list. Works on **any** series (provider-backed or manual): the flag\nis operator-owned and a metadata refresh never touches it. Independent of\nCodex ownership; clipping a series the operator already owns is allowed and\nimport never auto-clears it (removal is manual).",
+        "operationId": "set_wishlisted",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Internal series id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetWishlistedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No series with that id"
           }
         },
         "security": [
@@ -2848,6 +2960,28 @@
           "start": {
             "type": "number",
             "format": "double"
+          }
+        }
+      },
+      "CreateSeriesFromProviderRequest": {
+        "type": "object",
+        "description": "Body for `POST /api/v1/series/from-provider`.",
+        "required": [
+          "provider",
+          "externalId"
+        ],
+        "properties": {
+          "externalId": {
+            "type": "string",
+            "description": "The provider's own external id for the series."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Provider id the series is fetched from (e.g. `mangabaka`). Must be a\nregistered provider."
+          },
+          "wishlist": {
+            "type": "boolean",
+            "description": "Whether to clip the created/looked-up series to the wishlist. Defaults\nto `true` — the add-from-search flow's whole reason to exist; pass\n`false` to just materialize the catalog row without wishlisting it."
           }
         }
       },
@@ -4670,6 +4804,7 @@
           "firstSeenAt",
           "lastReleaseAt",
           "owned",
+          "wishlisted",
           "externalIds"
         ],
         "properties": {
@@ -4795,6 +4930,18 @@
             ],
             "format": "int32",
             "description": "Published total volume count from provider metadata. Distinct from\n[`Self::highest_volume`], which tracks the highest span observed\nacross releases. `None` if the provider has no value for this row."
+          },
+          "wishlisted": {
+            "type": "boolean",
+            "description": "Whether the series is on the operator's wishlist. Admin-only (always\n`false` for non-admin requests), like [`Self::owned`]."
+          },
+          "wishlistedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch seconds the series was clipped to the wishlist, or `null` when not\nwishlisted / not admin."
           },
           "year": {
             "type": [
@@ -4938,7 +5085,8 @@
           "lastReleaseAt",
           "firstSeenAt",
           "releaseCount",
-          "owned"
+          "owned",
+          "wishlisted"
         ],
         "properties": {
           "canonicalTitle": {
@@ -5057,6 +5205,18 @@
             "format": "int32",
             "description": "Published total volume count from provider metadata; surfaced on\nthe list view so sort-by-volume results have a number to display."
           },
+          "wishlisted": {
+            "type": "boolean",
+            "description": "Whether the series is on the operator's wishlist. Admin-only: always\n`false` for non-admin requests (the curation list never reaches the\npublic read tier), exactly like [`Self::owned`]."
+          },
+          "wishlistedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Epoch seconds the series was clipped to the wishlist, or `null` when not\nwishlisted / not admin. Drives the wishlist view's \"recently clipped\"\nsort."
+          },
           "year": {
             "type": [
               "integer",
@@ -5116,6 +5276,19 @@
           "ignore": {
             "type": "boolean",
             "description": "`true` to mute Codex completion tracking for this series (its Codex\nstatus becomes `ignored`), `false` to resume tracking."
+          }
+        }
+      },
+      "SetWishlistedRequest": {
+        "type": "object",
+        "description": "Body for `PUT /api/v1/series/{id}/wishlist`.",
+        "required": [
+          "wishlisted"
+        ],
+        "properties": {
+          "wishlisted": {
+            "type": "boolean",
+            "description": "`true` to clip the series to the operator's wishlist, `false` to remove\nit. Re-clipping an already-wishlisted series refreshes its \"clipped at\"."
           }
         }
       },

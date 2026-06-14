@@ -23,6 +23,7 @@ mod m20260603_000002_download_status_history;
 mod m20260603_000003_codex_health_checks;
 mod m20260603_000004_codex_sync_runs;
 mod m20260608_000001_series_coverage_and_updated_at;
+mod m20260613_000001_series_wishlisted;
 
 pub struct Migrator;
 
@@ -55,6 +56,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260603_000003_codex_health_checks::Migration),
             Box::new(m20260603_000004_codex_sync_runs::Migration),
             Box::new(m20260608_000001_series_coverage_and_updated_at::Migration),
+            Box::new(m20260613_000001_series_wishlisted::Migration),
         ];
         m.extend(td_metadata_mangabaka::migration::migrations());
         m

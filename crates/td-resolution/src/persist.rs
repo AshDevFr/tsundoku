@@ -165,9 +165,10 @@ pub async fn upsert_series_from_metadata(
                     chapter_coverage_json: NotSet,
                     updated_at: NotSet,
                     owned: NotSet,
-                    // Operator-owned flag: leave it alone so a provider
-                    // re-fetch never resets a manually-set ignore.
+                    // Operator-owned flags: leave them alone so a provider
+                    // re-fetch never resets a manually-set ignore or wishlist.
                     ignore_completion: NotSet,
+                    wishlisted_at: NotSet,
                 };
                 series::Entity::update(model).exec(&txn).await?;
             }
@@ -201,6 +202,9 @@ pub async fn upsert_series_from_metadata(
                 updated_at: Set(0),
                 owned: Set(0),
                 ignore_completion: Set(false),
+                // Not wishlisted on creation; the from-provider add path stamps
+                // it afterward via `series_repo::set_wishlisted`.
+                wishlisted_at: Set(None),
             };
             let inserted = series::Entity::insert(model).exec(&txn).await?;
             (inserted.last_insert_id, false, false)

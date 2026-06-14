@@ -172,6 +172,39 @@ pub async fn set_ignore_completion(
     Ok(SetIgnoreCompletionOutcome::Updated(Box::new(updated)))
 }
 
+/// Outcome of [`set_wishlisted`].
+pub enum SetWishlistedOutcome {
+    /// The flag was written; the boxed model reflects the new value.
+    Updated(Box<Model>),
+    /// No series row with this id.
+    NotFound,
+}
+
+/// Set or clear the operator `wishlisted_at` flag on *any* series, provider-
+/// backed or manual.
+///
+/// `wishlisted = true` stamps the column with `now` (epoch seconds);
+/// `false` clears it to NULL. Like [`set_ignore_completion`], only the one
+/// operator-owned column is written — every provider/descriptive field is left
+/// as-is, and a metadata refresh never clobbers it. Setting an already-set flag
+/// re-stamps the timestamp (idempotent in effect, fresh "clipped at").
+pub async fn set_wishlisted(
+    db: &DatabaseConnection,
+    id: i32,
+    wishlisted: bool,
+    now: i64,
+) -> Result<SetWishlistedOutcome> {
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set};
+
+    let Some(row) = series::Entity::find_by_id(id).one(db).await? else {
+        return Ok(SetWishlistedOutcome::NotFound);
+    };
+    let mut active: series::ActiveModel = row.into();
+    active.wishlisted_at = Set(wishlisted.then_some(now));
+    let updated = active.update(db).await?;
+    Ok(SetWishlistedOutcome::Updated(Box::new(updated)))
+}
+
 pub async fn find_by_id(db: &DatabaseConnection, id: i32) -> Result<Option<Model>> {
     Ok(series::Entity::find_by_id(id).one(db).await?)
 }
@@ -586,6 +619,36 @@ mod tests {
         assert!(matches!(
             set_ignore_completion(&db, 9999, true).await.unwrap(),
             SetIgnoreCompletionOutcome::NotFound
+        ));
+    }
+
+    #[tokio::test]
+    async fn set_wishlisted_stamps_and_clears_for_any_source() {
+        let db = fresh().await;
+        let id = seed(&db, "Provider Backed", "api", Some("hash")).await;
+
+        let model = match set_wishlisted(&db, id, true, 1234).await.unwrap() {
+            SetWishlistedOutcome::Updated(m) => *m,
+            SetWishlistedOutcome::NotFound => panic!("expected Updated"),
+        };
+        assert_eq!(model.wishlisted_at, Some(1234), "stamps the clip time");
+        // Provider provenance is untouched.
+        assert_eq!(model.metadata_source, "api");
+        assert_eq!(model.metadata_hash.as_deref(), Some("hash"));
+
+        // Clearing nulls the column back out.
+        match set_wishlisted(&db, id, false, 5678).await.unwrap() {
+            SetWishlistedOutcome::Updated(m) => assert_eq!(m.wishlisted_at, None),
+            SetWishlistedOutcome::NotFound => panic!("expected Updated"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_wishlisted_reports_not_found() {
+        let db = fresh().await;
+        assert!(matches!(
+            set_wishlisted(&db, 9999, true, 1).await.unwrap(),
+            SetWishlistedOutcome::NotFound
         ));
     }
 

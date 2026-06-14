@@ -44,6 +44,12 @@ pub struct Model {
     /// counts; not used by the resolver.
     pub rating: Option<f64>,
     pub owned: i32,
+    /// Admin-only wishlist flag, stored as the epoch-second timestamp the
+    /// series was clipped (NULL ⇒ not wishlisted). `IS NOT NULL` is the flag;
+    /// the value drives the wishlist view's "recently clipped" sort. Operator-
+    /// owned: a metadata refresh never touches it, and it is independent of
+    /// `owned` (removal is manual only).
+    pub wishlisted_at: Option<i64>,
     /// Operator opt-out of Codex completion tracking. When set, the series'
     /// Codex status is forced to `Ignored` regardless of discovered vs owned
     /// maxima — used for series read in omnibus, where source (single-volume)
