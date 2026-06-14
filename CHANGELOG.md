@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.11.2] - 2026-06-14
+
+### Features
+
+- *(web)* Make the feed kind and status filters multi-select
+
 ## [1.11.1] - 2026-06-09
 
 ### Bug Fixes
