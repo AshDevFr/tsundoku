@@ -43,6 +43,13 @@ export function coverProxyForUrl(coverUrl: string): string {
 // stored server-side because they're fully derivable from these two fields
 // and decouple us from upstream URL-scheme changes (e.g. mangabaka.dev →
 // mangabaka.org).
+/// Build a Nyaa search URL pre-scoped to the "Literature - English-translated"
+/// category (`c=3_1`, `f=0` = no filter) for a series title, so the operator can
+/// jump straight from a series to its candidate releases on Nyaa.
+export function nyaaSearchUrl(title: string): string {
+  return `https://nyaa.si/?f=0&c=3_1&q=${encodeURIComponent(title)}`;
+}
+
 export function providerUrl(
   provider: string,
   externalId: string,

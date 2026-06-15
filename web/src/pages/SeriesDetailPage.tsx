@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   Center,
+  Checkbox,
   Container,
   CopyButton,
   Grid,
@@ -23,15 +24,17 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import {
   useRefreshSeriesMetadata,
+  useSendToClient,
   useSetIgnoreCompletion,
   useSetWishlisted,
 } from "@/api/mutations";
 import {
   type ReleaseDto,
+  useDownloadStatus,
   useSeriesDetail,
   useSeriesReleases,
 } from "@/api/queries";
@@ -39,6 +42,7 @@ import {
   coverProxyForSeries,
   formatAbsolute,
   formatRelative,
+  nyaaSearchUrl,
   providerUrl,
 } from "@/api/utils";
 import { CodexBadge } from "@/components/CodexBadge";
@@ -56,6 +60,7 @@ import {
 import { SendToClientButton, SentBadge } from "@/components/SendToClientButton";
 import { seriesDetailRoute } from "@/router";
 import { useAdminAuth } from "@/stores/auth";
+import type { FilterSearch } from "@/stores/filters";
 
 const COVER_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
@@ -81,6 +86,22 @@ function spanCount(
   return null;
 }
 
+// A release can be bulk-sent when it carries a magnet or `.torrent` and hasn't
+// already been pushed to the client.
+function isSendable(r: ReleaseDto): boolean {
+  return (
+    (Boolean(r.magnet) || Boolean(r.torrentUrl)) &&
+    typeof r.sentToClientAt !== "number"
+  );
+}
+
+// Threaded into the release list when the bulk-send affordance is active. Each
+// row consults it to render (or skip) its selection checkbox.
+type BulkSelect = {
+  selected: Set<string>;
+  onToggle: (id: string) => void;
+};
+
 export function SeriesDetailPage() {
   const { id: idStr } = seriesDetailRoute.useParams();
   const id = Number(idStr);
@@ -92,6 +113,55 @@ export function SeriesDetailPage() {
   const wishlistToggle = useSetWishlisted();
   const [tagsExpanded, setTagsExpanded] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const navigate = useNavigate();
+  const downloadStatus = useDownloadStatus();
+  const send = useSendToClient();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkSending, setBulkSending] = useState(false);
+
+  // Jump to the feed pre-filtered by a clicked genre/tag badge. "any" mode and
+  // page 1 match how the filter panel seeds a fresh single-value selection.
+  const filterFeedBy = (next: FilterSearch) =>
+    navigate({ to: "/", search: () => ({ ...next, page: 1 }) });
+
+  // The bulk "send to client" affordance shares the SendToClientButton's
+  // gating: admin + integration enabled. A release is selectable only when it
+  // has something to send and hasn't already been sent.
+  const bulkEnabled = isAdmin && Boolean(downloadStatus.data?.enabled);
+
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // Send each selected release through the existing per-release endpoint, one at
+  // a time (gentle on the seedbox XML-RPC), and report a single aggregated
+  // result. The loop never throws: a failed send is tallied, not fatal.
+  const handleBulkSend = async () => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setBulkSending(true);
+    let ok = 0;
+    let failed = 0;
+    for (const releaseId of ids) {
+      try {
+        await send.mutateAsync({ releaseId, body: {} });
+        ok += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    setBulkSending(false);
+    setSelected(new Set());
+    notifications.show({
+      color: failed === 0 ? "blue" : ok === 0 ? "red" : "yellow",
+      message:
+        failed === 0 ? `${ok} sent to client` : `${ok} sent, ${failed} failed`,
+    });
+  };
 
   const handleRefresh = () => {
     if (!Number.isFinite(id)) return;
@@ -272,7 +342,17 @@ export function SeriesDetailPage() {
             {s.genres.length > 0 && (
               <Group gap={4}>
                 {s.genres.map((g) => (
-                  <Badge key={g} size="sm" variant="outline" color="grape">
+                  <Badge
+                    key={g}
+                    size="sm"
+                    variant="outline"
+                    color="grape"
+                    style={{ cursor: "pointer" }}
+                    onClick={() =>
+                      filterFeedBy({ genres: [g], genresMode: "any" })
+                    }
+                    data-testid={`genre-badge-${g}`}
+                  >
                     {g}
                   </Badge>
                 ))}
@@ -285,7 +365,15 @@ export function SeriesDetailPage() {
                   ? s.tags
                   : s.tags.slice(0, MAX_VISIBLE_TAGS)
                 ).map((t) => (
-                  <Badge key={t} size="sm" variant="light" color="blue">
+                  <Badge
+                    key={t}
+                    size="sm"
+                    variant="light"
+                    color="blue"
+                    style={{ cursor: "pointer" }}
+                    onClick={() => filterFeedBy({ tags: [t], tagsMode: "any" })}
+                    data-testid={`tag-badge-${t}`}
+                  >
                     {t}
                   </Badge>
                 ))}
@@ -318,6 +406,20 @@ export function SeriesDetailPage() {
                   {formatRelative(s.lastReleaseAt)} · metadata{" "}
                   {s.metadataSource} ({formatRelative(s.metadataFetchedAt)})
                 </Text>
+                <Tooltip label="Search Nyaa (English-translated manga) for this title.">
+                  <Button
+                    size="compact-xs"
+                    variant="subtle"
+                    color="gray"
+                    component="a"
+                    href={nyaaSearchUrl(s.canonicalTitle)}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    data-testid="search-nyaa"
+                  >
+                    ⌕ Search on Nyaa
+                  </Button>
+                </Tooltip>
                 {isAdmin && (
                   <Tooltip label="Clip this series to your wishlist (a curated 'download later' list). Independent of Codex ownership; remove it the same way.">
                     <Button
@@ -411,15 +513,47 @@ export function SeriesDetailPage() {
       </Grid>
 
       <Box mt="xl">
-        <Title order={3} mb="sm">
-          Releases
-        </Title>
+        <Group justify="space-between" align="center" mb="sm">
+          <Title order={3}>Releases</Title>
+          {bulkEnabled && selected.size > 0 && (
+            <Group gap="xs">
+              <Text size="sm" c="dimmed">
+                {selected.size} selected
+              </Text>
+              <Button
+                size="compact-sm"
+                color="blue"
+                onClick={handleBulkSend}
+                loading={bulkSending}
+                data-testid="bulk-send"
+              >
+                Send {selected.size} to client
+              </Button>
+              <Button
+                size="compact-sm"
+                variant="subtle"
+                color="gray"
+                onClick={() => setSelected(new Set())}
+                data-testid="bulk-clear"
+              >
+                Clear
+              </Button>
+            </Group>
+          )}
+        </Group>
         {releases.isLoading && (
           <Center py="md">
             <Loader size="sm" />
           </Center>
         )}
-        {releases.data && <ReleaseList items={releases.data.items} />}
+        {releases.data && (
+          <ReleaseList
+            items={releases.data.items}
+            bulk={
+              bulkEnabled ? { selected, onToggle: toggleSelected } : undefined
+            }
+          />
+        )}
       </Box>
 
       {editOpen && (
@@ -429,7 +563,13 @@ export function SeriesDetailPage() {
   );
 }
 
-function ReleaseList({ items }: { items: ReleaseDto[] }) {
+function ReleaseList({
+  items,
+  bulk,
+}: {
+  items: ReleaseDto[];
+  bulk?: BulkSelect;
+}) {
   if (items.length === 0) {
     return (
       <Text c="dimmed" size="sm">
@@ -461,7 +601,18 @@ function ReleaseList({ items }: { items: ReleaseDto[] }) {
           </Group>
           <Stack gap={6}>
             {rs.map((r) => (
-              <ReleaseRow key={r.id} release={r} />
+              <ReleaseRow
+                key={r.id}
+                release={r}
+                select={
+                  bulk && isSendable(r)
+                    ? {
+                        checked: bulk.selected.has(r.id),
+                        onToggle: () => bulk.onToggle(r.id),
+                      }
+                    : undefined
+                }
+              />
             ))}
           </Stack>
         </Box>
@@ -525,7 +676,13 @@ function CopyLinkButton({ value, label }: { value: string; label: string }) {
   );
 }
 
-function ReleaseRow({ release }: { release: ReleaseDto }) {
+function ReleaseRow({
+  release,
+  select,
+}: {
+  release: ReleaseDto;
+  select?: { checked: boolean; onToggle: () => void };
+}) {
   // The relink ("Move") action calls a write endpoint, so only offer it when
   // an admin token is present — the series detail page is otherwise a public
   // browse view.
@@ -535,6 +692,15 @@ function ReleaseRow({ release }: { release: ReleaseDto }) {
   return (
     <Card withBorder padding="xs" radius="sm">
       <Group justify="space-between" wrap="nowrap" align="flex-start">
+        {select && (
+          <Checkbox
+            checked={select.checked}
+            onChange={select.onToggle}
+            aria-label={`Select release ${release.title}`}
+            data-testid={`select-release-${release.id}`}
+            mt={2}
+          />
+        )}
         <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
           <Anchor
             href={release.link}

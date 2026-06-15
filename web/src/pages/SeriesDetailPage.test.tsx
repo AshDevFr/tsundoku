@@ -10,12 +10,14 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ADMIN_TEST_TOKEN,
   resetReviewQueue,
   resetSeries,
 } from "@/mocks/handlers";
+import { server } from "@/mocks/server";
 import { useAdminAuth } from "@/stores/auth";
 import { SeriesDetailPage } from "./SeriesDetailPage";
 
@@ -47,7 +49,7 @@ function renderSeriesDetail(id: number, initialEntry = `/series/${id}`) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const view = render(
     <MantineProvider>
       <Notifications />
       <QueryClientProvider client={client}>
@@ -56,6 +58,7 @@ function renderSeriesDetail(id: number, initialEntry = `/series/${id}`) {
       </QueryClientProvider>
     </MantineProvider>,
   );
+  return { ...view, router };
 }
 
 describe("SeriesDetailPage", () => {
@@ -217,5 +220,87 @@ describe("SeriesDetailPage", () => {
     if (!titleInput) throw new Error("title input not rendered");
     fireEvent.change(titleInput, { target: { value: "  " } });
     expect(screen.getByTestId("edit-series-submit")).toBeDisabled();
+  });
+
+  it("offers a Nyaa search link scoped to the series title", async () => {
+    renderSeriesDetail(1);
+    const link = await screen.findByTestId("search-nyaa");
+    const href = link.getAttribute("href") ?? "";
+    expect(href).toContain("https://nyaa.si/?f=0&c=3_1&q=");
+    expect(href).toContain(encodeURIComponent("Chainsaw Man"));
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  it("navigates to the feed filtered by a clicked genre badge", async () => {
+    const { router } = renderSeriesDetail(1);
+    fireEvent.click(await screen.findByTestId("genre-badge-action"));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/");
+    });
+    expect(router.state.location.search).toMatchObject({
+      genres: ["action"],
+      genresMode: "any",
+      page: 1,
+    });
+  });
+
+  it("navigates to the feed filtered by a clicked tag badge", async () => {
+    const { router } = renderSeriesDetail(1);
+    fireEvent.click(await screen.findByTestId("tag-badge-gore"));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/");
+    });
+    expect(router.state.location.search).toMatchObject({
+      tags: ["gore"],
+      tagsMode: "any",
+      page: 1,
+    });
+  });
+
+  it("hides bulk-select checkboxes without an admin token", async () => {
+    renderSeriesDetail(1);
+    await screen.findByText(/Chainsaw Man v01/);
+    expect(
+      screen.queryByTestId("select-release-nyaa:111"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("excludes already-sent releases from bulk selection", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(1);
+    // v01 + v02 are selectable; v03 was already sent, so no checkbox.
+    await screen.findByTestId("select-release-nyaa:111");
+    await screen.findByTestId("select-release-nyaa:112");
+    expect(
+      screen.queryByTestId("select-release-nyaa:113"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("bulk-sends selected releases and reports an aggregated result", async () => {
+    // One id succeeds, the other fails, so the toast tallies both.
+    server.use(
+      http.post("/api/v1/releases/:id/send-to-client", ({ params }) => {
+        if (String(params.id) === "nyaa:112") {
+          return new HttpResponse(
+            JSON.stringify({ error: "send_failed", message: "boom" }),
+            { status: 500, headers: { "content-type": "application/json" } },
+          );
+        }
+        return HttpResponse.json({ id: String(params.id) });
+      }),
+    );
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(1);
+
+    fireEvent.click(await screen.findByTestId("select-release-nyaa:111"));
+    fireEvent.click(await screen.findByTestId("select-release-nyaa:112"));
+
+    const sendBtn = await screen.findByTestId("bulk-send");
+    expect(sendBtn).toHaveTextContent("Send 2 to client");
+    fireEvent.click(sendBtn);
+
+    expect(
+      await screen.findByText(/1 sent, 1 failed/, undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
   });
 });
