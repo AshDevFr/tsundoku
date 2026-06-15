@@ -2,6 +2,16 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.13.0] - 2026-06-15
+
+### Features
+
+- *(web)* Add Nyaa search, clickable badges and bulk send on series detail
+- *(web)* Show a detail tooltip on hovering a feed card title
+- *(web)* Enrich and enlarge MangaBaka search result cards
+- *(web)* Support shift-click range select on series release bulk-send
+- *(series)* Carry MangaBaka publication dates and sort the feed by them
+
 ## [1.12.0] - 2026-06-14
 
 ### Features
