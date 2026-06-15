@@ -8,7 +8,7 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SeriesListItem } from "@/api/queries";
 import { useAdminAuth } from "@/stores/auth";
@@ -148,5 +148,24 @@ describe("SeriesCard", () => {
     renderCard(base({ wishlisted: false }));
     expect(await screen.findByText("Test Series")).toBeInTheDocument();
     expect(screen.queryByTestId("wishlist-toggle-1")).not.toBeInTheDocument();
+  });
+
+  it("surfaces the full title, rating and description in a hover tooltip", async () => {
+    renderCard(
+      base({
+        canonicalTitle: "A Very Long Clamped Title",
+        rating: 8.5,
+        description:
+          "A sweeping synopsis the card has no room to show in full.",
+      }),
+    );
+    const title = await screen.findByText("A Very Long Clamped Title");
+    fireEvent.mouseEnter(title);
+    expect(await screen.findByText("★ 8.5 / 10")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "A sweeping synopsis the card has no room to show in full.",
+      ),
+    ).toBeInTheDocument();
   });
 });

@@ -139,16 +139,39 @@ export function SeriesCard({
         <Stack gap={4} mt="xs">
           {/* Reserve a constant two-line height so single-line titles don't
               pull the date / divider / badge rows up: keeps those rows aligned
-              across every card in the grid. `lh` * 2 == `minHeight`. */}
-          <Title
-            order={5}
-            lineClamp={2}
-            lh={1.25}
-            title={series.canonicalTitle}
-            style={{ minHeight: "2.5em" }}
+              across every card in the grid. `lh` * 2 == `minHeight`. The title
+              clamps to two lines, so a hover tooltip surfaces the full title
+              plus rating and a synopsis excerpt the card has no room for. */}
+          <Tooltip
+            multiline
+            w={320}
+            withinPortal
+            openDelay={250}
+            label={
+              <Stack gap={2}>
+                <Text fw={600} size="sm">
+                  {series.canonicalTitle}
+                </Text>
+                {typeof series.rating === "number" && (
+                  <Text size="xs">★ {series.rating.toFixed(1)} / 10</Text>
+                )}
+                {series.description && (
+                  <Text size="xs" lineClamp={8}>
+                    {series.description}
+                  </Text>
+                )}
+              </Stack>
+            }
           >
-            {series.canonicalTitle}
-          </Title>
+            <Title
+              order={5}
+              lineClamp={2}
+              lh={1.25}
+              style={{ minHeight: "2.5em" }}
+            >
+              {series.canonicalTitle}
+            </Title>
+          </Tooltip>
           {/* Ownership rides the (otherwise near-empty) timestamp line,
               right-aligned, so it reads as a distinct signal rather than
               getting lost among the metadata badges below. */}
