@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.13.1] - 2026-06-15
+
+### Features
+
+- *(series)* Add a full-drain mode to the manual series-metadata refresh
+
 ## [1.13.0] - 2026-06-15
 
 ### Features
