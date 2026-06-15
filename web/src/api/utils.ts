@@ -50,6 +50,14 @@ export function nyaaSearchUrl(title: string): string {
   return `https://nyaa.si/?f=0&c=3_1&q=${encodeURIComponent(title)}`;
 }
 
+/// Build a MangaBaka search URL for a title, so the operator can browse the
+/// source site directly when the in-app provider search misses. The
+/// per-series page is `providerUrl("mangabaka", id)` (`mangabaka.org/<id>`);
+/// `mangabaka.dev` redirects there.
+export function mangabakaSearchUrl(title: string): string {
+  return `https://mangabaka.org/search?q=${encodeURIComponent(title)}`;
+}
+
 export function providerUrl(
   provider: string,
   externalId: string,

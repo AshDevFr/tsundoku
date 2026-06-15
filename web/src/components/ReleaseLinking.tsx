@@ -27,6 +27,7 @@ import {
 import {
   coverProxyForSeries,
   coverProxyForUrl,
+  mangabakaSearchUrl,
   providerUrl,
 } from "@/api/utils";
 
@@ -491,6 +492,17 @@ export function ProviderSearchControls({
         disabled={externalId.trim().length > 0}
         data-testid="search-title"
       />
+      {effectiveProvider === "mangabaka" && title.trim().length > 0 && (
+        <Anchor
+          href={mangabakaSearchUrl(title.trim())}
+          target="_blank"
+          rel="noreferrer noopener"
+          size="xs"
+          data-testid="mangabaka-search-link"
+        >
+          Search “{title.trim()}” on MangaBaka ↗
+        </Anchor>
+      )}
 
       <SearchResults
         provider={effectiveProvider}
@@ -658,89 +670,106 @@ function SearchResults({
             data-testid={`search-hit-${h.externalId}`}
             style={{ flexShrink: 0 }}
           >
-            <Group justify="space-between" wrap="nowrap" align="center">
-              <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
-                <Box w={42} miw={42} h={56}>
-                  <Image
-                    src={
-                      h.coverUrl
-                        ? coverProxyForUrl(h.coverUrl)
-                        : CANDIDATE_PLACEHOLDER
-                    }
-                    fallbackSrc={CANDIDATE_PLACEHOLDER}
-                    alt={h.title}
-                    radius="sm"
-                    h={56}
-                    fit="cover"
+            <Group gap="sm" wrap="nowrap" align="flex-start">
+              <Box w={64} miw={64} h={86}>
+                <Image
+                  src={
+                    h.coverUrl
+                      ? coverProxyForUrl(h.coverUrl)
+                      : CANDIDATE_PLACEHOLDER
+                  }
+                  fallbackSrc={CANDIDATE_PLACEHOLDER}
+                  alt={h.title}
+                  radius="sm"
+                  h={86}
+                  fit="cover"
+                />
+              </Box>
+              <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+                {/* Title, the "view" link, and the action button share one row
+                    so the link and button line up on the same baseline. */}
+                <Group
+                  gap={6}
+                  wrap="nowrap"
+                  align="center"
+                  style={{ minWidth: 0 }}
+                >
+                  <Text
+                    size="sm"
+                    fw={500}
+                    lineClamp={1}
+                    title={h.title}
+                    style={{ minWidth: 0, flex: 1 }}
+                  >
+                    {h.title}
+                  </Text>
+                  {provider &&
+                    (() => {
+                      const href = providerUrl(provider, h.externalId);
+                      return href ? (
+                        <Anchor
+                          href={href}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          size="xs"
+                          title="Open on provider"
+                        >
+                          view ↗
+                        </Anchor>
+                      ) : null;
+                    })()}
+                  <Button
+                    size="xs"
+                    variant="light"
+                    onClick={() => onPick(h.externalId, h.title)}
+                    disabled={disabled}
+                    data-testid={`link-hit-${h.externalId}`}
+                  >
+                    {actionLabel}
+                  </Button>
+                </Group>
+                {h.nativeTitle && (
+                  <Text size="xs" c="dimmed" lineClamp={1}>
+                    {h.nativeTitle}
+                  </Text>
+                )}
+                <Group gap={6} wrap="wrap">
+                  <Badge size="xs" variant="default">
+                    score {h.score.toFixed(2)}
+                  </Badge>
+                  <MetadataCounts
+                    totalVolumes={h.totalVolumes}
+                    totalChapters={h.totalChapters}
                   />
-                </Box>
-                <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
-                  <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-                    <Text
-                      size="sm"
-                      fw={500}
-                      lineClamp={1}
-                      title={h.title}
-                      style={{ minWidth: 0, flex: 1 }}
-                    >
-                      {h.title}
-                    </Text>
-                    {provider &&
-                      (() => {
-                        const href = providerUrl(provider, h.externalId);
-                        return href ? (
-                          <Anchor
-                            href={href}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                            size="xs"
-                            title="Open on provider"
-                          >
-                            view ↗
-                          </Anchor>
-                        ) : null;
-                      })()}
-                  </Group>
-                  {h.nativeTitle && (
-                    <Text size="xs" c="dimmed" lineClamp={1}>
-                      {h.nativeTitle}
-                    </Text>
-                  )}
-                  <Group gap={6} wrap="wrap">
-                    <Badge size="xs" variant="default">
-                      score {h.score.toFixed(2)}
+                  {h.year && (
+                    <Badge size="xs" variant="light" color="gray">
+                      {h.year}
                     </Badge>
-                    <MetadataCounts
-                      totalVolumes={h.totalVolumes}
-                      totalChapters={h.totalChapters}
-                    />
-                    {h.year && (
-                      <Badge size="xs" variant="light" color="gray">
-                        {h.year}
-                      </Badge>
-                    )}
-                    {h.kind && (
-                      <Badge size="xs" variant="light" color="indigo">
-                        {h.kind}
-                      </Badge>
-                    )}
-                    {h.status && (
-                      <Badge size="xs" variant="light" color="teal">
-                        {h.status}
-                      </Badge>
-                    )}
-                  </Group>
-                </Stack>
-              </Group>
-              <Button
-                size="xs"
-                variant="light"
-                onClick={() => onPick(h.externalId, h.title)}
-                disabled={disabled}
-                data-testid={`link-hit-${h.externalId}`}
-              >
-                {actionLabel}
-              </Button>
+                  )}
+                  {h.kind && (
+                    <Badge size="xs" variant="light" color="indigo">
+                      {h.kind}
+                    </Badge>
+                  )}
+                  {h.status && (
+                    <Badge size="xs" variant="light" color="teal">
+                      {h.status}
+                    </Badge>
+                  )}
+                  {/* Genres mirror the codex hit card: a few category badges
+                      so a series is recognizable at a glance. */}
+                  {h.genres.slice(0, 4).map((g) => (
+                    <Badge key={g} size="xs" variant="outline" color="grape">
+                      {g}
+                    </Badge>
+                  ))}
+                </Group>
+                {h.description && (
+                  <Text size="xs" c="dimmed" lineClamp={2}>
+                    {h.description}
+                  </Text>
+                )}
+              </Stack>
             </Group>
           </Card>
         ))}

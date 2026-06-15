@@ -359,6 +359,9 @@ pub struct ProviderSearchHit {
     /// First alternate title, if any. Useful for showing the
     /// romaji/Japanese form alongside the canonical English title.
     pub native_title: Option<String>,
+    /// Short synopsis from provider metadata, shown clamped under each hit so
+    /// the operator can recognize the series without opening it.
+    pub description: Option<String>,
     pub genres: Vec<String>,
     pub tags: Vec<String>,
     pub score: f32,
@@ -517,6 +520,7 @@ fn enrich(m: td_metadata::SeriesMetadata, score: f32) -> ProviderSearchHit {
         kind: m.kind.as_ref().map(series_kind_str),
         status: m.status.as_ref().map(series_status_str),
         native_title: m.alternate_titles.into_iter().next(),
+        description: m.description,
         genres: m.genres,
         tags: m.tags,
         score,
@@ -536,6 +540,7 @@ fn stub_hit(hit: td_metadata::SearchHit, score: f32) -> ProviderSearchHit {
         kind: hit.kind.as_ref().map(series_kind_str),
         status: None,
         native_title: None,
+        description: None,
         genres: Vec::new(),
         tags: Vec::new(),
         score,

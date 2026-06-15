@@ -1812,6 +1812,11 @@ export interface components {
          */
         ProviderSearchHit: {
             coverUrl?: string | null;
+            /**
+             * @description Short synopsis from provider metadata, shown clamped under each hit so
+             *     the operator can recognize the series without opening it.
+             */
+            description?: string | null;
             externalId: string;
             genres: string[];
             kind?: string | null;

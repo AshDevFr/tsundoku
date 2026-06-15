@@ -4027,6 +4027,13 @@
               "null"
             ]
           },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Short synopsis from provider metadata, shown clamped under each hit so\nthe operator can recognize the series without opening it."
+          },
           "externalId": {
             "type": "string"
           },

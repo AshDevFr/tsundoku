@@ -103,4 +103,48 @@ describe("WishlistPage", () => {
     );
     expect(screen.getByText(/Added "Berserk" to the wishlist/)).toBeTruthy();
   });
+
+  it("links each result and the search box out to MangaBaka", async () => {
+    renderWishlist();
+    await screen.findByText(/Nothing on the wishlist yet/, undefined, {
+      timeout: 3000,
+    });
+
+    fireEvent.click(screen.getByTestId("wishlist-add-open"));
+    const titleInput = await screen.findByTestId("search-title");
+    fireEvent.change(titleInput, { target: { value: "Berserk" } });
+
+    // A "Search on MangaBaka" link reflects the typed title.
+    const searchLink = await screen.findByTestId("mangabaka-search-link");
+    expect(searchLink).toHaveAttribute(
+      "href",
+      "https://mangabaka.org/search?q=Berserk",
+    );
+
+    // Each result keeps its per-series "view" link to mangabaka.org/<id>.
+    await screen.findByTestId("link-hit-mb-1", undefined, { timeout: 3000 });
+    const viewLink = screen
+      .getByTestId("search-hit-mb-1")
+      .querySelector('a[href="https://mangabaka.org/mb-1"]');
+    expect(viewLink).not.toBeNull();
+  });
+
+  it("shows the synopsis and genres on a search hit", async () => {
+    renderWishlist();
+    await screen.findByText(/Nothing on the wishlist yet/, undefined, {
+      timeout: 3000,
+    });
+
+    fireEvent.click(screen.getByTestId("wishlist-add-open"));
+    fireEvent.change(await screen.findByTestId("search-title"), {
+      target: { value: "Berserk" },
+    });
+
+    const hit = await screen.findByTestId("search-hit-mb-1", undefined, {
+      timeout: 3000,
+    });
+    expect(hit).toHaveTextContent("A canned synopsis for the first hit.");
+    expect(hit).toHaveTextContent("Action");
+    expect(hit).toHaveTextContent("Horror");
+  });
 });
