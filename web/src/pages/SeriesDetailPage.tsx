@@ -95,11 +95,35 @@ function isSendable(r: ReleaseDto): boolean {
   );
 }
 
+// Group releases by source (kind/name), preserving first-seen order. Shared by
+// the rendered list and the shift-select range so the two never drift.
+function groupReleases(items: ReleaseDto[]): Map<string, ReleaseDto[]> {
+  const groups = new Map<string, ReleaseDto[]>();
+  for (const r of items) {
+    const key = `${r.sourceKind}:${r.sourceName}`;
+    const arr = groups.get(key);
+    if (arr) arr.push(r);
+    else groups.set(key, [r]);
+  }
+  return groups;
+}
+
+// The sendable release ids in the exact order they render (group by group),
+// so a shift-click can select the contiguous visible range between two rows.
+function orderedSendableIds(items: ReleaseDto[]): string[] {
+  const out: string[] = [];
+  for (const rs of groupReleases(items).values()) {
+    for (const r of rs) if (isSendable(r)) out.push(r.id);
+  }
+  return out;
+}
+
 // Threaded into the release list when the bulk-send affordance is active. Each
-// row consults it to render (or skip) its selection checkbox.
+// row consults it to render (or skip) its selection checkbox. `range` is true
+// when the click was shift-held (select the span since the last click).
 type BulkSelect = {
   selected: Set<string>;
-  onToggle: (id: string) => void;
+  onToggle: (id: string, range: boolean) => void;
 };
 
 export function SeriesDetailPage() {
@@ -117,6 +141,8 @@ export function SeriesDetailPage() {
   const downloadStatus = useDownloadStatus();
   const send = useSendToClient();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // The last row toggled, anchoring a shift-click range select.
+  const [anchorId, setAnchorId] = useState<string | null>(null);
   const [bulkSending, setBulkSending] = useState(false);
 
   // Jump to the feed pre-filtered by a clicked genre/tag badge. "any" mode and
@@ -129,13 +155,36 @@ export function SeriesDetailPage() {
   // has something to send and hasn't already been sent.
   const bulkEnabled = isAdmin && Boolean(downloadStatus.data?.enabled);
 
-  const toggleSelected = (id: string) =>
+  // Toggle one release, or — on a shift-click with a prior anchor — set the
+  // whole visible span between the anchor and this row to the clicked row's new
+  // state (standard range-select). Either way, this row becomes the new anchor.
+  const toggleSelected = (id: string, range: boolean) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const willSelect = !prev.has(id);
+      const order = orderedSendableIds(releases.data?.items ?? []);
+      const a = anchorId ? order.indexOf(anchorId) : -1;
+      const b = order.indexOf(id);
+      if (range && a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        for (let i = lo; i <= hi; i += 1) {
+          if (willSelect) next.add(order[i]);
+          else next.delete(order[i]);
+        }
+      } else if (willSelect) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
       return next;
     });
+    setAnchorId(id);
+  };
+
+  const clearSelection = () => {
+    setSelected(new Set());
+    setAnchorId(null);
+  };
 
   // Send each selected release through the existing per-release endpoint, one at
   // a time (gentle on the seedbox XML-RPC), and report a single aggregated
@@ -155,7 +204,7 @@ export function SeriesDetailPage() {
       }
     }
     setBulkSending(false);
-    setSelected(new Set());
+    clearSelection();
     notifications.show({
       color: failed === 0 ? "blue" : ok === 0 ? "red" : "yellow",
       message:
@@ -533,7 +582,7 @@ export function SeriesDetailPage() {
                 size="compact-sm"
                 variant="subtle"
                 color="gray"
-                onClick={() => setSelected(new Set())}
+                onClick={clearSelection}
                 data-testid="bulk-clear"
               >
                 Clear
@@ -608,7 +657,8 @@ function ReleaseList({
                   bulk && isSendable(r)
                     ? {
                         checked: bulk.selected.has(r.id),
-                        onToggle: () => bulk.onToggle(r.id),
+                        onToggle: (range: boolean) =>
+                          bulk.onToggle(r.id, range),
                       }
                     : undefined
                 }
@@ -681,7 +731,7 @@ function ReleaseRow({
   select,
 }: {
   release: ReleaseDto;
-  select?: { checked: boolean; onToggle: () => void };
+  select?: { checked: boolean; onToggle: (range: boolean) => void };
 }) {
   // The relink ("Move") action calls a write endpoint, so only offer it when
   // an admin token is present — the series detail page is otherwise a public
@@ -695,7 +745,11 @@ function ReleaseRow({
         {select && (
           <Checkbox
             checked={select.checked}
-            onChange={select.onToggle}
+            // Toggling is driven from onClick so we can read the shift key for
+            // range select (the change event's nativeEvent doesn't carry it).
+            // The controlled `checked` resyncs the box after the click.
+            onChange={() => {}}
+            onClick={(e) => select.onToggle(e.shiftKey)}
             aria-label={`Select release ${release.title}`}
             data-testid={`select-release-${release.id}`}
             mt={2}

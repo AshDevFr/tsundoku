@@ -276,6 +276,25 @@ describe("SeriesDetailPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shift-clicking selects the span of sendable releases, skipping sent ones", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(1);
+
+    // Anchor on v01, then shift-click v04: the range covers v01, v02, v04 but
+    // skips the already-sent v03 (no checkbox), so 3 end up selected.
+    fireEvent.click(await screen.findByTestId("select-release-nyaa:111"));
+    fireEvent.click(await screen.findByTestId("select-release-nyaa:114"), {
+      shiftKey: true,
+    });
+
+    const sendBtn = await screen.findByTestId("bulk-send");
+    expect(sendBtn).toHaveTextContent("Send 3 to client");
+    expect(
+      (screen.getByTestId("select-release-nyaa:112") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+  });
+
   it("bulk-sends selected releases and reports an aggregated result", async () => {
     // One id succeeds, the other fails, so the toast tallies both.
     server.use(

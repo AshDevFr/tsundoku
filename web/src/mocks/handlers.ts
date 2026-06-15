@@ -1705,6 +1705,31 @@ export const handlers = [
         sentToClientAt: NOW - 3_000,
         sentToClientLabel: "manga",
       },
+      {
+        // A third sendable release after the already-sent one, so a shift-click
+        // range (111 → 114) must skip 113.
+        id: "nyaa:114",
+        sourceKind: "nyaa",
+        sourceName: "english-manga-trusted",
+        externalId: "114",
+        title: `${SERIES[0]?.canonicalTitle} v04 (Digital) (CBZ)`,
+        link: "https://nyaa.si/view/114",
+        magnet: "magnet:?xt=urn:btih:dummy4",
+        torrentUrl: null,
+        ddlUrl: null,
+        infoHash: null,
+        sizeBytes: 12_345_681,
+        files: ["chainsaw_man_v04.cbz"],
+        formats: ["cbz"],
+        postedAt: NOW - 6_900,
+        observedAt: NOW - 5_700,
+        seriesId: 1,
+        resolutionPath: "fuzzy_title",
+        resolutionConfidence: 0.92,
+        resolutionStatus: "resolved",
+        resolutionAttempts: 1,
+        lastResolveAttemptAt: NOW - 5_700,
+      },
     ];
     const items = Number.isFinite(seriesId)
       ? all.filter((r) => r.seriesId === seriesId)
