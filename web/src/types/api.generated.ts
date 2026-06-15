@@ -2185,6 +2185,12 @@ export interface components {
              *     presence of [`Self::codex`]; only ever `true` for admins.
              */
             owned: boolean;
+            publishedEndDate?: string | null;
+            /**
+             * @description Official publication start/end dates from provider metadata, ISO
+             *     `YYYY-MM-DD` (nullable). See [`SeriesListItem::published_start_date`].
+             */
+            publishedStartDate?: string | null;
             /**
              * Format: double
              * @description Provider rating on a 0-10 scale (normalized in the provider's
@@ -2346,6 +2352,14 @@ export interface components {
              *     presence of [`Self::codex`], so it is only ever `true` for admins.
              */
             owned: boolean;
+            publishedEndDate?: string | null;
+            /**
+             * @description Official publication start/end dates from provider metadata, ISO
+             *     `YYYY-MM-DD` (nullable). `publishedStartDate` backs the "Publication
+             *     date" sort; distinct from [`Self::last_release_at`] (last *discovered*
+             *     release).
+             */
+            publishedStartDate?: string | null;
             /**
              * Format: double
              * @description Provider rating on a 0-10 scale; surfaced on the list view so a
@@ -3718,10 +3732,11 @@ export interface operations {
                 /**
                  * @description Sort field. Supports `last_release_at` (default), `first_seen_at`,
                  *     `total_volumes`, `total_chapters`, `highest_volume`,
-                 *     `highest_chapter`, `rating`, and `wishlisted_at` (admin "recently
-                 *     clipped" order for the wishlist view). The count / highest / rating /
-                 *     wishlisted sorts are nullable-aware: rows without a value sink to the
-                 *     end regardless of direction.
+                 *     `highest_chapter`, `rating`, `published_start_date` (official
+                 *     publication date, distinct from `last_release_at`), and `wishlisted_at`
+                 *     (admin "recently clipped" order for the wishlist view). The count /
+                 *     highest / rating / publication / wishlisted sorts are nullable-aware:
+                 *     rows without a value sink to the end regardless of direction.
                  *     Ignored when `q` is present (results are ranked by relevance instead).
                  */
                 sort?: string;

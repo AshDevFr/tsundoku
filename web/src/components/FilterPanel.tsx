@@ -45,6 +45,7 @@ interface FilterPanelProps {
 // `@/constants/series` so the manual-series editor shares the exact vocab.
 const SORT_OPTIONS = [
   { value: "last_release_at", label: "Last release" },
+  { value: "published_start_date", label: "Publication date" },
   { value: "first_seen_at", label: "First seen" },
   { value: "total_volumes", label: "Volume count" },
   { value: "total_chapters", label: "Chapter count" },
@@ -60,6 +61,7 @@ const SORT_OPTIONS = [
 type OrderLabels = { desc: string; asc: string };
 const ORDER_LABELS_BY_SORT: Record<string, OrderLabels> = {
   last_release_at: { desc: "Newest first", asc: "Oldest first" },
+  published_start_date: { desc: "Newest first", asc: "Oldest first" },
   first_seen_at: { desc: "Newest first", asc: "Oldest first" },
   total_volumes: { desc: "Highest first", asc: "Lowest first" },
   total_chapters: { desc: "Highest first", asc: "Lowest first" },
@@ -431,6 +433,7 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
           value={search.sort ?? "last_release_at"}
           onChange={(v) => merge({ sort: v ?? undefined })}
           allowDeselect={false}
+          data-testid="filter-sort"
         />
         <Select
           label="Order"

@@ -193,7 +193,9 @@ fn raw_row_columns(prefix: &str) -> String {
     let p = prefix;
     format!(
         "{p}id, {p}title, {p}native_title, {p}romanized_title, \
-        {p}titles, {p}type AS kind, {p}status, {p}year, {p}final_volume, {p}total_chapters, \
+        {p}titles, {p}type AS kind, {p}status, {p}year, \
+        {p}published_start_date, {p}published_end_date, \
+        {p}final_volume, {p}total_chapters, \
         CAST({p}rating AS REAL) AS rating, \
         {p}description, {p}state, {p}genres, {p}tags, \
         {p}cover_x350_x2, {p}cover_x350_x1, {p}cover_x250_x2, {p}cover_x250_x1, {p}cover_raw_url, \
@@ -278,6 +280,9 @@ struct RawRow {
     kind: Option<String>,
     status: Option<String>,
     year: Option<i32>,
+    /// Official publication start/end dates, ISO `YYYY-MM-DD` TEXT (nullable).
+    published_start_date: Option<String>,
+    published_end_date: Option<String>,
     /// Last/final volume number, stored as TEXT in the dump (nullable).
     final_volume: Option<String>,
     /// Total chapter count, stored as TEXT in the dump (nullable).
@@ -340,6 +345,8 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
         kind: row.kind.clone(),
         status: row.status.clone(),
         year: row.year,
+        published_start_date: row.published_start_date.clone(),
+        published_end_date: row.published_end_date.clone(),
         description: row.description.clone(),
         cover_url: cover_url.clone(),
         total_volumes,
@@ -361,6 +368,8 @@ fn row_to_canonical(row: RawRow) -> SeriesMetadata {
         kind,
         status,
         year: row.year,
+        published_start_date: row.published_start_date.filter(|s| !s.is_empty()),
+        published_end_date: row.published_end_date.filter(|s| !s.is_empty()),
         cover_url,
         total_volumes,
         total_chapters,
@@ -393,6 +402,8 @@ struct SerializedRow {
     kind: Option<String>,
     status: Option<String>,
     year: Option<i32>,
+    published_start_date: Option<String>,
+    published_end_date: Option<String>,
     description: Option<String>,
     cover_url: Option<String>,
     total_volumes: Option<i32>,
@@ -506,6 +517,8 @@ mod tests {
                 type TEXT,
                 status TEXT,
                 year INTEGER,
+                published_start_date TEXT,
+                published_end_date TEXT,
                 final_volume TEXT,
                 total_chapters TEXT,
                 rating REAL,
@@ -535,6 +548,7 @@ mod tests {
             backend,
             "INSERT INTO series (
                 id, title, native_title, romanized_title, titles, type, status, year,
+                published_start_date, published_end_date,
                 final_volume, total_chapters, rating, state,
                 genres, tags,
                 cover_x350_x2, source_anilist_id, source_my_anime_list_id,
@@ -542,7 +556,7 @@ mod tests {
             ) VALUES (
                 1677, 'Chainsaw Man', 'チェンソーマン', 'Chainsaw Man',
                 '[{\"title\":\"Chainsaw-Man\",\"language\":\"en\"},{\"title\":\"CSM\",\"language\":\"en\"}]',
-                'manga', 'releasing', 2018, '24', '232', 85.0, 'active',
+                'manga', 'releasing', 2018, '2018-12-03', NULL, '24', '232', 85.0, 'active',
                 '[\"Action\", \"Horror\"]', '[\"Chainsaws\", \"Devils\"]',
                 'https://mb/350@2x.jpg', 105778, 116778,
                 'ylx5wzn', 54139, 'chainsaw-man'
@@ -615,6 +629,41 @@ mod tests {
         assert_eq!(m.total_chapters, Some(232));
         // Rating is normalized from MangaBaka's 0-100 scale to 0-10.
         assert_eq!(m.rating, Some(8.5));
+        // Publication start carries through; the NULL end becomes `None`.
+        assert_eq!(m.published_start_date.as_deref(), Some("2018-12-03"));
+        assert_eq!(m.published_end_date, None);
+    }
+
+    #[tokio::test]
+    async fn publication_dates_enter_the_content_hash() {
+        // Including the dates in `SerializedRow` is what makes a refresh
+        // re-persist existing rows (the hash changes), so guard it: the hash
+        // must differ when the dates differ.
+        let with_date = fixture_db().await;
+        let m1 = store_from(with_date)
+            .find_by_id("1677")
+            .await
+            .unwrap()
+            .unwrap();
+
+        let no_date = fixture_db().await;
+        no_date
+            .execute(Statement::from_string(
+                no_date.get_database_backend(),
+                "UPDATE series SET published_start_date = NULL WHERE id = 1677".to_string(),
+            ))
+            .await
+            .unwrap();
+        let m2 = store_from(no_date)
+            .find_by_id("1677")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_ne!(
+            m1.content_hash, m2.content_hash,
+            "publication date must participate in the content hash"
+        );
     }
 
     #[test]

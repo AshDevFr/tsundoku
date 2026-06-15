@@ -109,6 +109,20 @@ describe("FilterPanel — wishlist filter", () => {
   });
 });
 
+describe("FilterPanel — sort", () => {
+  afterEach(() => useAdminAuth.getState().clear());
+
+  it("selecting Publication date emits sort=published_start_date", async () => {
+    const onChange = vi.fn();
+    renderPanel({}, onChange);
+    fireEvent.click(await screen.findByTestId("filter-sort"));
+    fireEvent.click(await screen.findByText("Publication date"));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: "published_start_date", page: 1 }),
+    );
+  });
+});
+
 describe("FilterPanel — kind / status multi-select", () => {
   afterEach(() => useAdminAuth.getState().clear());
 

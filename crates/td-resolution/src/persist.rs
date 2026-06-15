@@ -144,6 +144,8 @@ pub async fn upsert_series_from_metadata(
                     kind: Set(metadata.kind.as_ref().map(kind_to_db)),
                     status: Set(metadata.status.as_ref().map(status_to_db)),
                     year: Set(metadata.year),
+                    published_start_date: Set(metadata.published_start_date.clone()),
+                    published_end_date: Set(metadata.published_end_date.clone()),
                     description: Set(metadata.description.clone()),
                     total_volumes: Set(metadata.total_volumes),
                     total_chapters: Set(metadata.total_chapters),
@@ -183,6 +185,8 @@ pub async fn upsert_series_from_metadata(
                 kind: Set(metadata.kind.as_ref().map(kind_to_db)),
                 status: Set(metadata.status.as_ref().map(status_to_db)),
                 year: Set(metadata.year),
+                published_start_date: Set(metadata.published_start_date.clone()),
+                published_end_date: Set(metadata.published_end_date.clone()),
                 description: Set(metadata.description.clone()),
                 total_volumes: Set(metadata.total_volumes),
                 total_chapters: Set(metadata.total_chapters),
@@ -517,6 +521,8 @@ mod tests {
                 },
             ],
             raw: serde_json::json!({"id": 12345, "title": "Chainsaw Man"}),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "hash-v1".into(),
         }
     }
@@ -602,6 +608,8 @@ mod tests {
         let pseudo = SeriesMetadata {
             external_id: "105778".into(),
             canonical_title: "Chainsaw Man (anilist row)".into(),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "hash-anilist".into(),
             ..sample_metadata()
         };
@@ -637,6 +645,8 @@ mod tests {
         let aaa = SeriesMetadata {
             external_id: "AAA".into(),
             canonical_title: "Series One".into(),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "hash-aaa".into(),
             foreign_ids: vec![ForeignId {
                 provider: "anilist".into(),
@@ -652,6 +662,8 @@ mod tests {
         let bbb = SeriesMetadata {
             external_id: "BBB".into(),
             canonical_title: "Series Two".into(),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "hash-bbb".into(),
             foreign_ids: vec![ForeignId {
                 provider: "anilist".into(),
@@ -737,6 +749,8 @@ mod tests {
         // is acceptable, but content stays put).
         let m2 = SeriesMetadata {
             canonical_title: "Provider Title".into(),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "new-hash".into(),
             ..m.clone()
         };
@@ -777,6 +791,8 @@ mod tests {
         // `true` and gets the new metadata.
         let m2 = SeriesMetadata {
             canonical_title: "Provider Title".into(),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "new-hash".into(),
             ..m.clone()
         };
@@ -819,6 +835,8 @@ mod tests {
         // because the refresh UPDATE leaves `ignore_completion` `NotSet`.
         let refreshed = SeriesMetadata {
             canonical_title: "Refreshed Title".into(),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "refreshed-hash".into(),
             ..m.clone()
         };
@@ -1216,6 +1234,8 @@ mod tests {
             alternate_titles: vec![],
             foreign_ids: vec![],
             raw: serde_json::json!({"id": 67890}),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "hash-other".into(),
             ..sample_metadata()
         }
@@ -1364,6 +1384,8 @@ mod tests {
         // provider-cache cycle.
         let refreshed = SeriesMetadata {
             description: Some("Updated synopsis.".into()),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "hash-v2".into(),
             ..sample_metadata()
         };

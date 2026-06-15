@@ -20,6 +20,14 @@ pub struct SeriesMetadata {
     pub kind: Option<SeriesKind>,
     pub status: Option<SeriesStatus>,
     pub year: Option<i32>,
+    /// Official publication start/end dates as ISO `YYYY-MM-DD` strings, when
+    /// the provider exposes them (MangaBaka's `published_start_date` /
+    /// `published_end_date`). Display + sort only; not used for matching.
+    /// `year` remains the coarse fallback the provider always sets.
+    #[serde(default)]
+    pub published_start_date: Option<String>,
+    #[serde(default)]
+    pub published_end_date: Option<String>,
     pub cover_url: Option<String>,
     /// Highest/last volume number the series reached, when the provider knows
     /// it (MangaBaka's `final_volume`). Display-only: lets the review UI

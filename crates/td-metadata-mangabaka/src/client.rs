@@ -70,6 +70,13 @@ pub struct MbSeries {
     pub description: Option<String>,
     #[serde(default)]
     pub year: Option<i32>,
+    /// Official publication start/end dates, ISO `YYYY-MM-DD` strings. Match the
+    /// offline dump's column names; `#[serde(default)]` tolerates absence if the
+    /// live API ever omits or renames them (the offline dump is the active path).
+    #[serde(default)]
+    pub published_start_date: Option<String>,
+    #[serde(default)]
+    pub published_end_date: Option<String>,
     /// Last/final volume number. MangaBaka returns this as a nullable string.
     #[serde(default)]
     pub final_volume: Option<String>,

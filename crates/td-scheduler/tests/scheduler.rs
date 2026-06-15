@@ -594,6 +594,8 @@ fn series_metadata(external_id: &str, title: &str, content_hash: &str) -> Series
         tags: Vec::new(),
         foreign_ids: Vec::new(),
         raw: serde_json::json!({"id": external_id, "title": title}),
+        published_start_date: None,
+        published_end_date: None,
         content_hash: content_hash.into(),
     }
 }

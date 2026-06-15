@@ -40,6 +40,8 @@ pub fn series_to_canonical(series: MbSeries) -> SeriesMetadata {
         kind,
         status,
         year: series.year,
+        published_start_date: series.published_start_date.filter(|s| !s.is_empty()),
+        published_end_date: series.published_end_date.filter(|s| !s.is_empty()),
         cover_url,
         total_volumes: parse_count(series.final_volume.as_deref()),
         total_chapters: parse_count(series.total_chapters.as_deref()),

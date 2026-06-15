@@ -13,6 +13,13 @@ pub struct Model {
     pub kind: Option<String>,
     pub status: Option<String>,
     pub year: Option<i32>,
+    /// Official publication start/end dates from provider metadata, ISO
+    /// `YYYY-MM-DD` strings (nullable). Stored as TEXT so `ORDER BY` sorts
+    /// them lexicographically; the feed's "Publication date" sort uses
+    /// `published_start_date`. Distinct from `last_release_at` (the last
+    /// *discovered* release).
+    pub published_start_date: Option<String>,
+    pub published_end_date: Option<String>,
     pub description: Option<String>,
     /// Gap-preserving merged volume coverage across all linked releases: a JSON
     /// array of `{start,end}` (`td_source::Span`), or NULL when none parsed.

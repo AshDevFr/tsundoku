@@ -405,6 +405,8 @@ pub fn sample_metadata(provider: &str, id: &str, title: &str) -> SeriesMetadata 
         tags: vec![],
         foreign_ids: vec![],
         raw: serde_json::json!({"provider": provider, "id": id, "title": title}),
+        published_start_date: None,
+        published_end_date: None,
         content_hash: format!("hash-{id}"),
     }
 }

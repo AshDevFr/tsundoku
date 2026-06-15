@@ -218,6 +218,8 @@ fn sample_metadata() -> SeriesMetadata {
             },
         ],
         raw: serde_json::json!({"id": 12345}),
+        published_start_date: None,
+        published_end_date: None,
         content_hash: "hash-12345".into(),
     }
 }
@@ -239,6 +241,8 @@ fn novel_metadata() -> SeriesMetadata {
         tags: vec![],
         foreign_ids: vec![],
         raw: serde_json::json!({"id": 99999}),
+        published_start_date: None,
+        published_end_date: None,
         content_hash: "hash-99999".into(),
     }
 }
@@ -652,6 +656,8 @@ async fn fuzzy_title_resolves_noisy_raw_title_via_cleaned_query() {
         tags: vec![],
         foreign_ids: vec![],
         raw: serde_json::json!({"id": 77777}),
+        published_start_date: None,
+        published_end_date: None,
         content_hash: "hash-77777".into(),
     };
     provider.register_get(metadata.clone());
@@ -731,6 +737,8 @@ async fn fuzzy_title_with_multi_title_separator_searches_all_halves() {
         tags: vec![],
         foreign_ids: vec![],
         raw: serde_json::json!({"id": 88888}),
+        published_start_date: None,
+        published_end_date: None,
         content_hash: "hash-88888".into(),
     };
     provider.register_get(metadata.clone());
@@ -904,6 +912,8 @@ async fn fuzzy_title_with_cbz_prefers_manga_over_same_titled_novel() {
         external_id: "manga-1".into(),
         canonical_title: "Vampire Princess".into(),
         kind: Some(SeriesKind::Manga),
+        published_start_date: None,
+        published_end_date: None,
         content_hash: "h-m".into(),
         ..sample_metadata()
     };
@@ -911,6 +921,8 @@ async fn fuzzy_title_with_cbz_prefers_manga_over_same_titled_novel() {
         external_id: "novel-1".into(),
         canonical_title: "Vampire Princess".into(),
         kind: Some(SeriesKind::Novel),
+        published_start_date: None,
+        published_end_date: None,
         content_hash: "h-n".into(),
         ..novel_metadata()
     };
@@ -974,6 +986,8 @@ async fn mixed_format_release_with_candidates_in_two_kinds_goes_to_review() {
         external_id: "manga-2".into(),
         canonical_title: "Dual Form".into(),
         kind: Some(SeriesKind::Manga),
+        published_start_date: None,
+        published_end_date: None,
         content_hash: "h-mm".into(),
         ..sample_metadata()
     };
@@ -981,6 +995,8 @@ async fn mixed_format_release_with_candidates_in_two_kinds_goes_to_review() {
         external_id: "novel-2".into(),
         canonical_title: "Dual Form".into(),
         kind: Some(SeriesKind::Novel),
+        published_start_date: None,
+        published_end_date: None,
         content_hash: "h-nn".into(),
         ..novel_metadata()
     };
@@ -1042,6 +1058,8 @@ async fn fuzzy_title_with_only_incompatible_candidate_demotes_to_ambiguous() {
         external_id: "novel-3".into(),
         canonical_title: "Only Novel".into(),
         kind: Some(SeriesKind::Novel),
+        published_start_date: None,
+        published_end_date: None,
         content_hash: "h-only".into(),
         ..novel_metadata()
     };
@@ -1083,6 +1101,8 @@ async fn swapping_active_provider_changes_who_drives_resolution() {
         "x",
         SeriesMetadata {
             external_id: "from-a".into(),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "h-a".into(),
             ..sample_metadata()
         },
@@ -1092,6 +1112,8 @@ async fn swapping_active_provider_changes_who_drives_resolution() {
         "x",
         SeriesMetadata {
             external_id: "from-b".into(),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "h-b".into(),
             ..sample_metadata()
         },
@@ -1372,6 +1394,8 @@ mod legacy_mu {
                 url: None,
             }],
             raw: serde_json::json!({"id": 55555}),
+            published_start_date: None,
+            published_end_date: None,
             content_hash: "hash-55555".into(),
         }
     }

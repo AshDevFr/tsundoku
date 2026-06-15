@@ -42,6 +42,12 @@ pub struct SeriesListItem {
     pub kind: Option<String>,
     pub status: Option<String>,
     pub year: Option<i32>,
+    /// Official publication start/end dates from provider metadata, ISO
+    /// `YYYY-MM-DD` (nullable). `publishedStartDate` backs the "Publication
+    /// date" sort; distinct from [`Self::last_release_at`] (last *discovered*
+    /// release).
+    pub published_start_date: Option<String>,
+    pub published_end_date: Option<String>,
     /// Short synopsis. The list UI clamps this to a few lines; the detail
     /// page shows it in full.
     pub description: Option<String>,
@@ -240,6 +246,10 @@ pub struct SeriesDetail {
     pub kind: Option<String>,
     pub status: Option<String>,
     pub year: Option<i32>,
+    /// Official publication start/end dates from provider metadata, ISO
+    /// `YYYY-MM-DD` (nullable). See [`SeriesListItem::published_start_date`].
+    pub published_start_date: Option<String>,
+    pub published_end_date: Option<String>,
     pub description: Option<String>,
     pub genres: Vec<String>,
     pub tags: Vec<String>,
@@ -320,10 +330,11 @@ pub struct SeriesListQuery {
     pub tags_mode: Option<String>,
     /// Sort field. Supports `last_release_at` (default), `first_seen_at`,
     /// `total_volumes`, `total_chapters`, `highest_volume`,
-    /// `highest_chapter`, `rating`, and `wishlisted_at` (admin "recently
-    /// clipped" order for the wishlist view). The count / highest / rating /
-    /// wishlisted sorts are nullable-aware: rows without a value sink to the
-    /// end regardless of direction.
+    /// `highest_chapter`, `rating`, `published_start_date` (official
+    /// publication date, distinct from `last_release_at`), and `wishlisted_at`
+    /// (admin "recently clipped" order for the wishlist view). The count /
+    /// highest / rating / publication / wishlisted sorts are nullable-aware:
+    /// rows without a value sink to the end regardless of direction.
     /// Ignored when `q` is present (results are ranked by relevance instead).
     pub sort: Option<String>,
     /// `asc` or `desc` (default).
@@ -428,6 +439,9 @@ pub async fn list(
         Some("highest_volume") => series::Column::HighestVolume,
         Some("highest_chapter") => series::Column::HighestChapter,
         Some("rating") => series::Column::Rating,
+        // Official publication start date (ISO `YYYY-MM-DD` TEXT, lexicographic
+        // order == chronological). Nullable, so it joins the NULL-last set.
+        Some("published_start_date") => series::Column::PublishedStartDate,
         // Admin-only "recently clipped" order for the wishlist view. The column
         // is nullable (NULL = not wishlisted), so it joins the nullable-aware
         // ordering below; the wishlist view also filters `wishlisted=true`, so
@@ -449,6 +463,7 @@ pub async fn list(
             | series::Column::HighestChapter
             | series::Column::Rating
             | series::Column::WishlistedAt
+            | series::Column::PublishedStartDate
     ) {
         select = select.order_by_asc(Expr::col(sort_col).is_null());
     }
@@ -1985,6 +2000,8 @@ fn model_to_list_item(
         kind: m.kind,
         status: m.status,
         year: m.year,
+        published_start_date: m.published_start_date,
+        published_end_date: m.published_end_date,
         description: m.description,
         genres,
         tags,
@@ -2029,6 +2046,8 @@ fn model_to_detail(
         kind: m.kind,
         status: m.status,
         year: m.year,
+        published_start_date: m.published_start_date,
+        published_end_date: m.published_end_date,
         description: m.description,
         genres: join_genres,
         tags: join_tags,
