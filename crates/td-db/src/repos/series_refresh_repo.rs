@@ -81,6 +81,35 @@ pub async fn select_stale_for_active_provider(
     Ok(StaleSeriesRow::find_by_statement(stmt).all(db).await?)
 }
 
+/// Count the series rows a drain-style refresh would touch: mapped to
+/// `active_provider`, non-manual, and `metadata_fetched_at` older than
+/// `cutoff`. Used to seed the live progress total before a drain loop;
+/// the loop still re-selects each batch, so a count that drifts slightly
+/// (concurrent inserts have `metadata_fetched_at >= cutoff` anyway) only
+/// affects the displayed percentage, never correctness.
+pub async fn count_stale_for_active_provider(
+    db: &DatabaseConnection,
+    active_provider: &str,
+    cutoff: i64,
+) -> Result<u64> {
+    #[derive(FromQueryResult)]
+    struct CountRow {
+        n: i64,
+    }
+    let backend = db.get_database_backend();
+    let sql = "SELECT COUNT(*) AS n
+               FROM series s
+               INNER JOIN series_external_ids e
+                 ON e.series_id = s.id
+                AND e.provider = ?1
+               WHERE s.metadata_source != 'manual'
+                 AND s.metadata_fetched_at < ?2";
+    let stmt =
+        Statement::from_sql_and_values(backend, sql, [active_provider.into(), cutoff.into()]);
+    let row = CountRow::find_by_statement(stmt).one(db).await?;
+    Ok(row.map(|r| r.n.max(0) as u64).unwrap_or(0))
+}
+
 /// Advance `series.metadata_fetched_at` on a single row without touching
 /// the metadata content. Used by the bulk refresh tick when the provider
 /// returns `Ok(None)` (series vanished upstream) so that row rotates out
@@ -255,6 +284,30 @@ mod tests {
             .await
             .unwrap();
         assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn count_stale_matches_selection_filters() {
+        let db = fresh_db().await;
+        let now = 100 * DAY;
+        // Eligible: provider-mapped, non-manual, older than cutoff.
+        let s_old = insert_series(&db, "old", "api", 80 * DAY).await;
+        let s_mid = insert_series(&db, "mid", "api", 90 * DAY).await;
+        map_external(&db, s_old, "mangabaka", "ext-old").await;
+        map_external(&db, s_mid, "mangabaka", "ext-mid").await;
+        // Excluded: manual, unmapped-for-provider, and newer than cutoff.
+        let s_manual = insert_series(&db, "manual", "manual", 10 * DAY).await;
+        map_external(&db, s_manual, "mangabaka", "ext-manual").await;
+        let s_other = insert_series(&db, "anilist-only", "api", 10 * DAY).await;
+        map_external(&db, s_other, "anilist", "anilist-1").await;
+        let s_fresh = insert_series(&db, "fresh", "api", 99 * DAY).await;
+        map_external(&db, s_fresh, "mangabaka", "ext-fresh").await;
+
+        let n = count_stale_for_active_provider(&db, "mangabaka", 95 * DAY)
+            .await
+            .unwrap();
+        assert_eq!(n, 2, "only the two old non-manual mapped rows count");
+        let _ = now;
     }
 
     #[tokio::test]

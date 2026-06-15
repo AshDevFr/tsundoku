@@ -1275,12 +1275,14 @@ export const handlers = [
   http.post("/api/v1/series/refresh-all", ({ request }) => {
     const denied = requireAdmin(request);
     if (denied) return denied;
+    const all = new URL(request.url).searchParams.get("all") === "true";
     return HttpResponse.json({
       provider: "mangabaka",
       triggered: true,
       skipped: false,
       batchSize: 25,
-      minAgeDays: 7,
+      minAgeDays: all ? 0 : 7,
+      scope: all ? "all" : "settings",
     });
   }),
 

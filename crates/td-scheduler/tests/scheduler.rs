@@ -928,6 +928,235 @@ async fn series_refresh_tick_does_not_overwrite_manual_rows() {
 }
 
 // -----------------------------------------------------------------------------
+// refresh_series_metadata::run_drain
+// -----------------------------------------------------------------------------
+
+#[tokio::test]
+async fn series_drain_walks_every_row_across_multiple_batches() {
+    let db = fresh_db().await;
+    let mut provider = FakeProvider::new("mangabaka", RefreshStatus::NotSupported);
+    for i in 0..5 {
+        let ext = format!("mb-{i}");
+        seed_stale_series(
+            &db,
+            &format!("Old {i}"),
+            (10 + i) as i64,
+            Some(&format!("h-old{i}")),
+            "api",
+            "mangabaka",
+            &ext,
+        )
+        .await;
+        provider = provider.with_get(
+            &ext,
+            GetOutcome::Some(Box::new(series_metadata(
+                &ext,
+                &format!("Fresh {i}"),
+                &format!("h-fresh{i}"),
+            ))),
+        );
+    }
+    let provider = Arc::new(provider);
+
+    // chunk = 2 forces three batches (2 + 2 + 1) over the five rows.
+    jobs::refresh_series_metadata::run_drain(
+        provider.clone() as Arc<dyn MetadataProvider>,
+        db.clone(),
+        2,
+        detached_events(),
+        "manual",
+    )
+    .await;
+
+    assert_eq!(
+        provider.gets(),
+        5,
+        "every eligible row fetched exactly once"
+    );
+
+    // One run row aggregates the whole drain.
+    let runs = td_db::entities::series_refresh_runs::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(runs.len(), 1, "the drain writes a single run row");
+    let run = &runs[0];
+    assert_eq!(run.status, "success");
+    assert_eq!(run.considered_count, Some(5));
+    assert_eq!(run.refreshed_count, Some(5));
+    assert_eq!(run.trigger, "manual");
+    assert_eq!(run.progress_total, Some(5));
+    assert_eq!(run.progress_current, Some(5));
+}
+
+/// Regression: hash-unchanged rows are NOT bumped by persist, so a drain
+/// against a fixed cutoff must advance them itself or loop forever. Seed
+/// rows whose provider payload matches the stored hash and assert the drain
+/// terminates, touches each row once, and rolls them past the cutoff.
+#[tokio::test]
+async fn series_drain_terminates_on_unchanged_rows() {
+    let db = fresh_db().await;
+    let mut provider = FakeProvider::new("mangabaka", RefreshStatus::NotSupported);
+    let mut ids = Vec::new();
+    for i in 0..3 {
+        let ext = format!("mb-{i}");
+        let hash = format!("h-same{i}");
+        let sid = seed_stale_series(
+            &db,
+            &format!("Same {i}"),
+            10,
+            Some(&hash),
+            "api",
+            "mangabaka",
+            &ext,
+        )
+        .await;
+        ids.push(sid);
+        // Same content_hash → persist short-circuits the UPDATE.
+        provider = provider.with_get(
+            &ext,
+            GetOutcome::Some(Box::new(series_metadata(&ext, "Renamed but same", &hash))),
+        );
+    }
+    let provider = Arc::new(provider);
+
+    let before = chrono::Utc::now().timestamp();
+    // chunk = 1: without the bump this would re-select row 0 endlessly.
+    jobs::refresh_series_metadata::run_drain(
+        provider.clone() as Arc<dyn MetadataProvider>,
+        db.clone(),
+        1,
+        detached_events(),
+        "manual",
+    )
+    .await;
+
+    assert_eq!(
+        provider.gets(),
+        3,
+        "each unchanged row fetched exactly once"
+    );
+
+    let runs = td_db::entities::series_refresh_runs::Entity::find()
+        .all(&db)
+        .await
+        .unwrap();
+    let run = &runs[0];
+    assert_eq!(run.status, "success");
+    assert_eq!(run.unchanged_count, Some(3));
+    assert_eq!(run.refreshed_count, Some(0));
+
+    // Every row rolled past the cutoff so a re-run would skip them.
+    for sid in ids {
+        let row = td_db::entities::series::Entity::find_by_id(sid)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            row.metadata_fetched_at >= before,
+            "unchanged row {sid} should have metadata_fetched_at bumped"
+        );
+        // Hash is untouched (the whole point of "unchanged"); only
+        // metadata_fetched_at moved.
+        assert!(
+            row.metadata_hash
+                .as_deref()
+                .is_some_and(|h| h.starts_with("h-same")),
+            "unchanged row {sid} keeps its original hash"
+        );
+    }
+}
+
+/// A drain ignores `min_age`: rows fresh enough that a bounded tick would
+/// skip them are still refreshed.
+#[tokio::test]
+async fn series_drain_ignores_min_age_floor() {
+    let db = fresh_db().await;
+    // fetched_at just one second in the past — a bounded tick with any
+    // positive min_age would skip it.
+    let recent = chrono::Utc::now().timestamp() - 1;
+    let sid = seed_stale_series(
+        &db,
+        "Recently fetched",
+        recent,
+        Some("h-recent"),
+        "api",
+        "mangabaka",
+        "mb-recent",
+    )
+    .await;
+    let provider = Arc::new(
+        FakeProvider::new("mangabaka", RefreshStatus::NotSupported).with_get(
+            "mb-recent",
+            GetOutcome::Some(Box::new(series_metadata(
+                "mb-recent",
+                "Recent Fresh",
+                "h-recent-new",
+            ))),
+        ),
+    );
+
+    jobs::refresh_series_metadata::run_drain(
+        provider.clone() as Arc<dyn MetadataProvider>,
+        db.clone(),
+        50,
+        detached_events(),
+        "manual",
+    )
+    .await;
+
+    assert_eq!(provider.gets(), 1, "the recent row is still drained");
+    let row = td_db::entities::series::Entity::find_by_id(sid)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.canonical_title, "Recent Fresh");
+}
+
+/// A drain leaves manual rows alone, same as a bounded tick.
+#[tokio::test]
+async fn series_drain_skips_manual_rows() {
+    let db = fresh_db().await;
+    seed_stale_series(
+        &db,
+        "Operator-curated",
+        10,
+        Some("operator-stamp"),
+        "manual",
+        "mangabaka",
+        "mb-manual",
+    )
+    .await;
+    let provider = Arc::new(
+        FakeProvider::new("mangabaka", RefreshStatus::NotSupported).with_get(
+            "mb-manual",
+            GetOutcome::Some(Box::new(series_metadata("mb-manual", "Override", "h-bad"))),
+        ),
+    );
+
+    jobs::refresh_series_metadata::run_drain(
+        provider.clone() as Arc<dyn MetadataProvider>,
+        db.clone(),
+        50,
+        detached_events(),
+        "manual",
+    )
+    .await;
+
+    assert_eq!(provider.gets(), 0, "drain selection excludes manual rows");
+    let row = td_db::entities::series::Entity::find()
+        .all(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.canonical_title == "Operator-curated")
+        .unwrap();
+    assert_eq!(row.metadata_hash.as_deref(), Some("operator-stamp"));
+}
+
+// -----------------------------------------------------------------------------
 // End-to-end: a real Scheduler driving a real cron schedule.
 // -----------------------------------------------------------------------------
 

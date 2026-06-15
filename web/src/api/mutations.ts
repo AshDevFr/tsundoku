@@ -570,17 +570,24 @@ export function useInvalidateCoverCache() {
   });
 }
 
-/// Manually trigger a series-metadata refresh tick against the active
-/// provider. Same locking semantics as the scheduled job: an in-flight
-/// tick causes the request to no-op with `triggered: false, skipped: true`.
-/// Paired with [`useInvalidateMetadataHashes`] from the Maintenance page
-/// so the operator can clear hashes and immediately rewrite the rows
-/// instead of waiting for the next cron tick.
+/// Manually trigger a series-metadata refresh against the active provider.
+/// Same locking semantics as the scheduled job: an in-flight tick causes
+/// the request to no-op with `triggered: false, skipped: true`.
+///
+/// Pass `all: false` (the default) for a single settings-bounded tick
+/// (honors `batch_size` + `min_age_days`), or `all: true` to drain every
+/// eligible row in repeated batches, ignoring the min-age floor. The
+/// pending mutation's `variables` carries the `all` flag so the caller can
+/// show per-button loading state. Paired with [`useInvalidateMetadataHashes`]
+/// from the Maintenance page so the operator can clear hashes and rewrite
+/// rows without waiting for the next cron tick.
 export function useRefreshAllSeries() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => {
-      const { data, error } = await api.POST("/api/v1/series/refresh-all", {});
+    mutationFn: async (all: boolean) => {
+      const { data, error } = await api.POST("/api/v1/series/refresh-all", {
+        params: { query: { all } },
+      });
       if (error)
         throw new Error(
           describeError(error, "failed to refresh series metadata"),

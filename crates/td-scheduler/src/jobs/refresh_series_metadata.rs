@@ -183,104 +183,335 @@ pub async fn run_tick(
     );
     progress.set_total(considered as u64).await;
 
-    let mut refreshed = 0i32;
-    let mut unchanged = 0i32;
-    let mut not_found = 0i32;
-    let mut errored = 0i32;
-    let mut error_message: Option<String> = None;
-    let mut error_kind_class: Option<&'static str> = None;
+    let mut tally = Tally::default();
     let fetch_started = Instant::now();
 
     for (idx, row) in batch.iter().enumerate() {
-        let fetch_one_started = Instant::now();
-        let outcome = provider.get(&row.external_id).await;
-        let elapsed_ms = fetch_one_started.elapsed().as_millis() as u64;
-        tracing::debug!(
-            series_id = row.series_id,
-            external_id = %row.external_id,
-            elapsed_ms,
-            "provider.get returned"
-        );
-        match outcome {
-            Ok(Some(meta)) => {
-                let now = Utc::now();
-                match persist::upsert_series_from_metadata(
-                    &db,
-                    &provider_id,
-                    &meta,
-                    row.metadata_fetched_at,
-                    now,
-                    false,
-                )
-                .await
-                {
-                    Ok(result) => {
-                        if result.unchanged {
-                            unchanged += 1;
-                        } else {
-                            refreshed += 1;
-                        }
-                    }
-                    Err(e) => {
-                        // A persist error doesn't poison the loop: the
-                        // row's metadata_fetched_at is unchanged so it
-                        // stays eligible for next tick. Count it as
-                        // errored so the metrics row reflects reality.
-                        errored += 1;
-                        tracing::warn!(
-                            error = ?e,
-                            series_id = row.series_id,
-                            external_id = %row.external_id,
-                            "persist failed during series refresh; continuing"
-                        );
-                        if error_message.is_none() {
-                            error_message =
-                                Some(format!("persist failed for series {}: {e}", row.series_id));
-                            error_kind_class = Some(error_kind::classify_anyhow(&e));
-                        }
-                    }
-                }
-            }
-            Ok(None) => {
-                not_found += 1;
-                if let Err(e) =
-                    series_refresh_repo::bump_metadata_fetched_at(&db, row.series_id, now_ts).await
-                {
-                    tracing::warn!(
-                        error = ?e,
-                        series_id = row.series_id,
-                        "failed to bump metadata_fetched_at after Ok(None); row will reappear in next batch"
-                    );
-                }
-                tracing::debug!(
-                    series_id = row.series_id,
-                    external_id = %row.external_id,
-                    "provider returned Ok(None); rotating row out of next batch"
-                );
-            }
-            Err(e) => {
-                errored += 1;
-                let err: anyhow::Error =
-                    anyhow::Error::new(e).context(format!("series refresh for {provider_id}"));
-                tracing::warn!(
-                    error = ?err,
-                    provider = %provider_id,
-                    series_id = row.series_id,
-                    external_id = %row.external_id,
-                    "provider.get failed; aborting batch"
-                );
-                error_message = Some(format!("error: {err}"));
-                error_kind_class = Some(error_kind::classify_anyhow(&err));
-                progress.tick_to((idx + 1) as u64).await;
-                break;
-            }
-        }
+        let keep_going = process_row(&provider, &db, &provider_id, row, false, &mut tally).await;
         progress.tick_to((idx + 1) as u64).await;
+        if !keep_going {
+            break;
+        }
     }
     progress.flush().await;
 
     let fetch_duration_ms = fetch_started.elapsed().as_millis() as i64;
-    let status = if errored == 0 {
+    finalize_tally(
+        &db,
+        metrics_id,
+        considered,
+        fetch_duration_ms,
+        &tally,
+        "series-refresh tick complete",
+        &provider_id,
+    )
+    .await;
+}
+
+/// Running per-row counts for one refresh pass. Shared by [`run_tick`] and
+/// [`run_drain`] so both surfaces classify outcomes identically.
+#[derive(Default)]
+struct Tally {
+    refreshed: i32,
+    unchanged: i32,
+    not_found: i32,
+    errored: i32,
+    error_message: Option<String>,
+    error_kind_class: Option<&'static str>,
+}
+
+/// Fetch + persist a single stale row, updating `tally`. Returns `true` to
+/// continue the batch, `false` when a provider error means the caller must
+/// abort (burning the rest of the batch against a dead provider helps no
+/// one).
+///
+/// `force_bump` is the drain switch. A single bounded tick relies on the
+/// `min_age` floor to keep hash-unchanged rows out of the next batch, so it
+/// leaves their `metadata_fetched_at` alone (`force_bump = false`). A drain
+/// runs against a fixed cutoff with no floor, so any row persist leaves
+/// untouched (hash-unchanged, or a persist error) must have its
+/// `metadata_fetched_at` advanced past the cutoff here, or the drain would
+/// re-select it forever.
+async fn process_row(
+    provider: &Arc<dyn MetadataProvider>,
+    db: &DatabaseConnection,
+    provider_id: &str,
+    row: &series_refresh_repo::StaleSeriesRow,
+    force_bump: bool,
+    tally: &mut Tally,
+) -> bool {
+    let fetch_one_started = Instant::now();
+    let outcome = provider.get(&row.external_id).await;
+    let elapsed_ms = fetch_one_started.elapsed().as_millis() as u64;
+    tracing::debug!(
+        series_id = row.series_id,
+        external_id = %row.external_id,
+        elapsed_ms,
+        "provider.get returned"
+    );
+    match outcome {
+        Ok(Some(meta)) => {
+            let now = Utc::now();
+            match persist::upsert_series_from_metadata(
+                db,
+                provider_id,
+                &meta,
+                row.metadata_fetched_at,
+                now,
+                false,
+            )
+            .await
+            {
+                Ok(result) => {
+                    if result.unchanged {
+                        tally.unchanged += 1;
+                        // Hash matched → persist skipped the UPDATE, so the
+                        // row's metadata_fetched_at is unchanged. A drain
+                        // must advance it or this row reappears every batch.
+                        if force_bump {
+                            bump_fetched_at(db, row.series_id).await;
+                        }
+                    } else {
+                        tally.refreshed += 1;
+                    }
+                }
+                Err(e) => {
+                    // A persist error doesn't poison the loop: count it as
+                    // errored so the metrics row reflects reality. In a
+                    // single tick the row stays eligible for next time; in a
+                    // drain we still bump it so the loop can't livelock on a
+                    // row that keeps failing (its hash is untouched, so the
+                    // next scheduled tick retries it anyway).
+                    tally.errored += 1;
+                    tracing::warn!(
+                        error = ?e,
+                        series_id = row.series_id,
+                        external_id = %row.external_id,
+                        "persist failed during series refresh; continuing"
+                    );
+                    if tally.error_message.is_none() {
+                        tally.error_message =
+                            Some(format!("persist failed for series {}: {e}", row.series_id));
+                        tally.error_kind_class = Some(error_kind::classify_anyhow(&e));
+                    }
+                    if force_bump {
+                        bump_fetched_at(db, row.series_id).await;
+                    }
+                }
+            }
+            true
+        }
+        Ok(None) => {
+            tally.not_found += 1;
+            bump_fetched_at(db, row.series_id).await;
+            tracing::debug!(
+                series_id = row.series_id,
+                external_id = %row.external_id,
+                "provider returned Ok(None); rotating row out of next batch"
+            );
+            true
+        }
+        Err(e) => {
+            tally.errored += 1;
+            let err: anyhow::Error =
+                anyhow::Error::new(e).context(format!("series refresh for {provider_id}"));
+            tracing::warn!(
+                error = ?err,
+                provider = %provider_id,
+                series_id = row.series_id,
+                external_id = %row.external_id,
+                "provider.get failed; aborting batch"
+            );
+            tally.error_message = Some(format!("error: {err}"));
+            tally.error_kind_class = Some(error_kind::classify_anyhow(&err));
+            false
+        }
+    }
+}
+
+/// Advance a single row's `metadata_fetched_at` to "now". Used after
+/// `Ok(None)` (rotate the vanished row out) and, in drain mode, after any
+/// row persist left untouched. Failures are logged, not fatal.
+async fn bump_fetched_at(db: &DatabaseConnection, series_id: i32) {
+    let ts = Utc::now().timestamp();
+    if let Err(e) = series_refresh_repo::bump_metadata_fetched_at(db, series_id, ts).await {
+        tracing::warn!(
+            error = ?e,
+            series_id,
+            "failed to bump metadata_fetched_at; row may reappear in next batch"
+        );
+    }
+}
+
+/// Drain refresh: re-fetch *every* eligible (non-manual, provider-mapped)
+/// series, ignoring `min_age`, in repeated `batch_size` chunks until none
+/// remain. Public so the manual API trigger and CLI can drive it; callers
+/// handle contention via [`crate::dispatch::try_dispatch`].
+///
+/// Termination rests on a cutoff fixed at drain start: every row the loop
+/// touches gets its `metadata_fetched_at` advanced past that cutoff (by
+/// persist on a real change, by [`process_row`]'s `force_bump` otherwise),
+/// so the eligible set strictly shrinks each batch. Concurrent inserts
+/// land with `metadata_fetched_at >= cutoff` and are never picked up. A
+/// provider error aborts the whole drain (same rationale as the single
+/// tick). One `series_refresh_runs` row is written for the entire drain.
+pub async fn run_drain(
+    provider: Arc<dyn MetadataProvider>,
+    db: DatabaseConnection,
+    batch_size: u32,
+    events: broadcast::Sender<JobEvent>,
+    trigger: &str,
+) {
+    let provider_id = provider.id().to_string();
+    let started_at_ts = Utc::now().timestamp();
+    // Fixed selection cutoff for the whole drain. Touched rows advance past
+    // it; everything else is left as-is.
+    let cutoff = started_at_ts;
+    // An explicit "refresh everything" must still work when the operator
+    // set batch_size = 0 to park the scheduled tick; fall back to a sane
+    // chunk so the drain paces its outbound calls.
+    let chunk = if batch_size == 0 {
+        DRAIN_FALLBACK_CHUNK
+    } else {
+        batch_size
+    };
+
+    let metrics_id =
+        match run_metrics_repo::start_series_refresh_run(&db, &provider_id, started_at_ts, trigger)
+            .await
+        {
+            Ok(rid) => Some(rid),
+            Err(e) => {
+                tracing::warn!(
+                    error = ?e,
+                    provider = %provider_id,
+                    "failed to record series_refresh_run start"
+                );
+                None
+            }
+        };
+
+    let total = series_refresh_repo::count_stale_for_active_provider(&db, &provider_id, cutoff)
+        .await
+        .unwrap_or(0);
+
+    tracing::info!(
+        provider = %provider_id,
+        total,
+        chunk,
+        "series-refresh drain: walking every stale row"
+    );
+
+    let progress = ProgressHandle::new(
+        db.clone(),
+        ProgressTable::SeriesRefreshRuns,
+        metrics_id,
+        events,
+        JobKind::SeriesRefresh,
+        &provider_id,
+    );
+    progress.set_total(total).await;
+
+    let mut tally = Tally::default();
+    let mut considered = 0i32;
+    let mut done = 0u64;
+    let mut aborted = false;
+    let fetch_started = Instant::now();
+
+    // Backstop against a row that refuses to advance (e.g. repeated bump
+    // failures): each successful batch clears `chunk` rows from the
+    // eligible set, so the drain can never need more than this many passes.
+    let max_batches = total / chunk as u64 + 2;
+    let mut batches = 0u64;
+
+    loop {
+        if batches >= max_batches {
+            tracing::warn!(
+                provider = %provider_id,
+                batches,
+                "series-refresh drain hit its batch ceiling; stopping to avoid a livelock"
+            );
+            if tally.error_message.is_none() {
+                tally.errored += 1;
+                tally.error_message =
+                    Some("drain did not converge within its batch ceiling".into());
+            }
+            break;
+        }
+        batches += 1;
+
+        let batch = match series_refresh_repo::select_stale_for_active_provider(
+            &db,
+            &provider_id,
+            chunk,
+            0,
+            cutoff,
+        )
+        .await
+        {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(
+                    error = ?e,
+                    provider = %provider_id,
+                    "failed to select stale series during drain"
+                );
+                tally.errored += 1;
+                if tally.error_message.is_none() {
+                    tally.error_message = Some(format!("error selecting stale series: {e}"));
+                    tally.error_kind_class = Some(error_kind::classify_anyhow(&e));
+                }
+                break;
+            }
+        };
+        if batch.is_empty() {
+            break;
+        }
+
+        for row in &batch {
+            let keep_going = process_row(&provider, &db, &provider_id, row, true, &mut tally).await;
+            considered += 1;
+            done += 1;
+            progress.tick_to(done).await;
+            if !keep_going {
+                aborted = true;
+                break;
+            }
+        }
+        if aborted {
+            break;
+        }
+    }
+    progress.flush().await;
+
+    let fetch_duration_ms = fetch_started.elapsed().as_millis() as i64;
+    finalize_tally(
+        &db,
+        metrics_id,
+        considered,
+        fetch_duration_ms,
+        &tally,
+        "series-refresh drain complete",
+        &provider_id,
+    )
+    .await;
+}
+
+/// Default per-batch chunk for a drain when `batch_size = 0` (scheduled
+/// tick parked but the operator clicked "refresh everything").
+const DRAIN_FALLBACK_CHUNK: u32 = 100;
+
+/// Write the final `series_refresh_runs` row from an accumulated [`Tally`].
+async fn finalize_tally(
+    db: &DatabaseConnection,
+    metrics_id: Option<i64>,
+    considered: i32,
+    fetch_duration_ms: i64,
+    tally: &Tally,
+    log_msg: &str,
+    provider_id: &str,
+) {
+    let status = if tally.errored == 0 {
         run_metrics_repo::status::SUCCESS
     } else {
         run_metrics_repo::status::FAILURE
@@ -289,28 +520,28 @@ pub async fn run_tick(
     tracing::info!(
         provider = %provider_id,
         considered,
-        refreshed,
-        unchanged,
-        not_found,
-        errored,
+        refreshed = tally.refreshed,
+        unchanged = tally.unchanged,
+        not_found = tally.not_found,
+        errored = tally.errored,
         fetch_duration_ms,
-        "series-refresh tick complete"
+        "{log_msg}"
     );
 
     finalize_metrics(
-        &db,
+        db,
         metrics_id,
         status,
         SeriesRefreshCounts {
             considered: Some(considered),
-            refreshed: Some(refreshed),
-            unchanged: Some(unchanged),
-            not_found: Some(not_found),
-            errored: Some(errored),
+            refreshed: Some(tally.refreshed),
+            unchanged: Some(tally.unchanged),
+            not_found: Some(tally.not_found),
+            errored: Some(tally.errored),
             fetch_duration_ms: Some(fetch_duration_ms),
         },
-        error_message.as_deref(),
-        error_kind_class,
+        tally.error_message.as_deref(),
+        tally.error_kind_class,
     )
     .await;
 }

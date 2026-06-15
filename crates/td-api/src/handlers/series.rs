@@ -1200,8 +1200,25 @@ pub struct RefreshAllSeriesResponse {
     /// `skipped: true` so the UI can render consistent metadata.
     pub batch_size: u32,
     /// Minimum age in days a row must have before it's eligible. Echoes
-    /// `metadata.series_refresh.min_age_days`.
+    /// `metadata.series_refresh.min_age_days`, or `0` for a `scope = "all"`
+    /// drain (which ignores the floor).
     pub min_age_days: u32,
+    /// `"settings"` for a single, settings-bounded tick (honors
+    /// `batch_size` + `min_age_days`); `"all"` for a drain that re-fetches
+    /// every eligible row in repeated batches, ignoring `min_age_days`.
+    pub scope: String,
+}
+
+/// Query for `POST /api/v1/series/refresh-all`. `all=true` switches from a
+/// single settings-bounded tick to a full drain.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshAllSeriesQuery {
+    /// When `true`, ignore `min_age_days` and re-fetch *every* eligible
+    /// (non-manual, provider-mapped) series in repeated `batch_size`
+    /// chunks. Defaults to `false`: a single settings-bounded tick.
+    #[serde(default)]
+    pub all: bool,
 }
 
 /// Body for creating a manual series. Only `canonicalTitle` is required;
@@ -1787,20 +1804,27 @@ pub async fn refresh_metadata(
 }
 
 /// Trigger a bulk refresh of stale series rows against the active
-/// metadata provider. The spawned tick reads `batch_size` and
-/// `min_age_days` from `metadata.series_refresh`; the same selection
-/// query backs the cron, so a manual click and a cron tick are
-/// behaviourally identical (and they share a per-provider mutex, so
-/// they can't race).
+/// metadata provider.
 ///
-/// Returns immediately with `triggered: true` once the tick is spawned,
-/// or `triggered: false, skipped: true` when a refresh is already in
-/// flight for the active provider.
+/// Default (`all=false`): one settings-bounded tick. It reads `batch_size`
+/// and `min_age_days` from `metadata.series_refresh`; the same selection
+/// query backs the cron, so a manual click and a cron tick are
+/// behaviourally identical.
+///
+/// `all=true`: a drain that re-fetches *every* eligible (non-manual,
+/// provider-mapped) row in repeated `batch_size` chunks, ignoring the
+/// `min_age_days` floor, until none remain.
+///
+/// Both modes share the per-provider mutex (so they can't race the cron or
+/// each other) and return immediately with `triggered: true` once the work
+/// is spawned, or `triggered: false, skipped: true` when a refresh is
+/// already in flight for the active provider.
 #[utoipa::path(
     post,
     path = "/api/v1/series/refresh-all",
     tag = "series",
     operation_id = "refresh_all_series",
+    params(RefreshAllSeriesQuery),
     responses(
         (status = 202, body = RefreshAllSeriesResponse),
         (status = 503, description = "Active provider is not registered")
@@ -1809,11 +1833,18 @@ pub async fn refresh_metadata(
 )]
 pub async fn refresh_all(
     State(state): State<AppState>,
+    Query(query): Query<RefreshAllSeriesQuery>,
 ) -> ApiResult<Json<RefreshAllSeriesResponse>> {
     let active_id = state.metadata.active_id().to_string();
     let provider = state.metadata.active().clone();
     let batch_size = state.metadata_config.series_refresh.batch_size;
-    let min_age_days = state.metadata_config.series_refresh.min_age_days;
+    let drain = query.all;
+    // A drain ignores the min-age floor; report 0 so the response is honest.
+    let min_age_days = if drain {
+        0
+    } else {
+        state.metadata_config.series_refresh.min_age_days
+    };
     let min_age_seconds = (min_age_days as i64).saturating_mul(86_400);
 
     let lock = state.locks.series_refresh_lock(&active_id);
@@ -1837,15 +1868,26 @@ pub async fn refresh_all(
             .await;
         },
         move || async move {
-            refresh_series_metadata::run_tick(
-                provider,
-                db,
-                batch_size,
-                min_age_seconds,
-                events,
-                run_metrics_repo::trigger::MANUAL,
-            )
-            .await;
+            if drain {
+                refresh_series_metadata::run_drain(
+                    provider,
+                    db,
+                    batch_size,
+                    events,
+                    run_metrics_repo::trigger::MANUAL,
+                )
+                .await;
+            } else {
+                refresh_series_metadata::run_tick(
+                    provider,
+                    db,
+                    batch_size,
+                    min_age_seconds,
+                    events,
+                    run_metrics_repo::trigger::MANUAL,
+                )
+                .await;
+            }
             JobResult {
                 triggered: true,
                 skipped: false,
@@ -1860,6 +1902,7 @@ pub async fn refresh_all(
         skipped: !triggered,
         batch_size,
         min_age_days,
+        scope: if drain { "all" } else { "settings" }.into(),
     }))
 }
 

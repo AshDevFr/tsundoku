@@ -545,7 +545,7 @@ describe("admin maintenance page", () => {
     });
   });
 
-  it("renders the refresh-all card", async () => {
+  it("renders the refresh card with stale + all buttons", async () => {
     renderAt("/admin/maintenance");
     expect(
       await screen.findByTestId("maintenance-refresh-card", undefined, {
@@ -553,11 +553,14 @@ describe("admin maintenance page", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("maintenance-refresh-button")).toHaveTextContent(
-      /refresh all series metadata/i,
+      /refresh stale series/i,
     );
+    expect(
+      screen.getByTestId("maintenance-refresh-all-button"),
+    ).toHaveTextContent(/refresh all series/i);
   });
 
-  it("dispatches the refresh-all mutation and surfaces the result", async () => {
+  it("dispatches the stale refresh mutation and surfaces the result", async () => {
     renderAt("/admin/maintenance");
     const button = await screen.findByTestId(
       "maintenance-refresh-button",
@@ -569,6 +572,22 @@ describe("admin maintenance page", () => {
     await waitFor(() => {
       expect(
         screen.getByText(/mangabaka: up to 25 row\(s\), min age 7d/i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("dispatches the full drain mutation when ALL is clicked", async () => {
+    renderAt("/admin/maintenance");
+    const button = await screen.findByTestId(
+      "maintenance-refresh-all-button",
+      undefined,
+      { timeout: 3000 },
+    );
+    fireEvent.click(button);
+    // MSW handler echoes scope=all when ?all=true.
+    await waitFor(() => {
+      expect(
+        screen.getByText(/draining every eligible row in batches of 25/i),
       ).toBeInTheDocument();
     });
   });

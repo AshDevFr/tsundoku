@@ -880,14 +880,20 @@ export interface paths {
         put?: never;
         /**
          * Trigger a bulk refresh of stale series rows against the active
-         *     metadata provider. The spawned tick reads `batch_size` and
-         *     `min_age_days` from `metadata.series_refresh`; the same selection
+         *     metadata provider.
+         * @description Default (`all=false`): one settings-bounded tick. It reads `batch_size`
+         *     and `min_age_days` from `metadata.series_refresh`; the same selection
          *     query backs the cron, so a manual click and a cron tick are
-         *     behaviourally identical (and they share a per-provider mutex, so
-         *     they can't race).
-         * @description Returns immediately with `triggered: true` once the tick is spawned,
-         *     or `triggered: false, skipped: true` when a refresh is already in
-         *     flight for the active provider.
+         *     behaviourally identical.
+         *
+         *     `all=true`: a drain that re-fetches *every* eligible (non-manual,
+         *     provider-mapped) row in repeated `batch_size` chunks, ignoring the
+         *     `min_age_days` floor, until none remain.
+         *
+         *     Both modes share the per-provider mutex (so they can't race the cron or
+         *     each other) and return immediately with `triggered: true` once the work
+         *     is spawned, or `triggered: false, skipped: true` when a refresh is
+         *     already in flight for the active provider.
          */
         post: operations["refresh_all_series"];
         delete?: never;
@@ -1891,11 +1897,18 @@ export interface components {
             /**
              * Format: int32
              * @description Minimum age in days a row must have before it's eligible. Echoes
-             *     `metadata.series_refresh.min_age_days`.
+             *     `metadata.series_refresh.min_age_days`, or `0` for a `scope = "all"`
+             *     drain (which ignores the floor).
              */
             minAgeDays: number;
             /** @description Active provider id the refresh ran against. */
             provider: string;
+            /**
+             * @description `"settings"` for a single, settings-bounded tick (honors
+             *     `batch_size` + `min_age_days`); `"all"` for a drain that re-fetches
+             *     every eligible row in repeated batches, ignoring `min_age_days`.
+             */
+            scope: string;
             /**
              * @description `true` when a previous refresh tick is still in flight; the
              *     request is a no-op.
@@ -3988,7 +4001,14 @@ export interface operations {
     };
     refresh_all_series: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description When `true`, ignore `min_age_days` and re-fetch *every* eligible
+                 *     (non-manual, provider-mapped) series in repeated `batch_size`
+                 *     chunks. Defaults to `false`: a single settings-bounded tick.
+                 */
+                all?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;

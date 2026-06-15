@@ -529,14 +529,20 @@ function RecomputeSpansCard() {
 function RefreshAllSeriesCard() {
   const refresh = useRefreshAllSeries();
 
-  const handleClick = () => {
-    refresh.mutate(undefined, {
+  const run = (all: boolean) => {
+    refresh.mutate(all, {
       onSuccess: (data) => {
         if (data?.triggered) {
           notifications.show({
             color: "blue",
-            title: "Series refresh triggered",
-            message: `${data.provider}: up to ${data.batchSize} row(s), min age ${data.minAgeDays}d`,
+            title:
+              data.scope === "all"
+                ? "Full series refresh triggered"
+                : "Series refresh triggered",
+            message:
+              data.scope === "all"
+                ? `${data.provider}: draining every eligible row in batches of ${data.batchSize}`
+                : `${data.provider}: up to ${data.batchSize} row(s), min age ${data.minAgeDays}d`,
           });
         } else {
           notifications.show({
@@ -549,34 +555,53 @@ function RefreshAllSeriesCard() {
       onError: (e) =>
         notifications.show({
           color: "red",
-          title: "Refresh-all failed",
+          title: "Refresh failed",
           message: (e as Error).message,
         }),
     });
   };
 
+  // `variables` carries the `all` flag of the in-flight mutation, so each
+  // button only spins while it's the one that was clicked.
+  const pendingAll = refresh.isPending && refresh.variables === true;
+  const pendingStale = refresh.isPending && refresh.variables === false;
+
   return (
     <Card withBorder radius="md" p="md" data-testid="maintenance-refresh-card">
       <Stack gap="sm">
         <Stack gap={2}>
-          <Title order={4}>Refresh all series metadata</Title>
+          <Title order={4}>Refresh series metadata</Title>
           <Text size="sm" c="dimmed">
-            Run a series-metadata refresh tick against the active provider now,
-            instead of waiting for the next cron tick. Honors the configured
-            batch size and minimum row age; manual rows are skipped. Pair with
-            the invalidate card above when adding a denormalized column to the
-            series table.
+            Re-fetch series metadata from the active provider now instead of
+            waiting for the next cron tick; manual rows are always skipped.{" "}
+            <strong>Refresh stale</strong> runs a single tick that honors the
+            configured batch size and minimum row age.{" "}
+            <strong>Refresh ALL</strong> ignores the minimum row age and drains
+            every eligible row in repeated batches: heavier, but it actually
+            touches everything. Pair with the invalidate card above when adding
+            a denormalized column to the series table.
           </Text>
         </Stack>
         <Group justify="flex-end">
           <Button
             size="xs"
             variant="light"
-            onClick={handleClick}
-            loading={refresh.isPending}
+            onClick={() => run(false)}
+            loading={pendingStale}
+            disabled={refresh.isPending}
             data-testid="maintenance-refresh-button"
           >
-            Refresh all series metadata
+            Refresh stale series
+          </Button>
+          <Button
+            size="xs"
+            variant="filled"
+            onClick={() => run(true)}
+            loading={pendingAll}
+            disabled={refresh.isPending}
+            data-testid="maintenance-refresh-all-button"
+          >
+            Refresh ALL series
           </Button>
         </Group>
       </Stack>
