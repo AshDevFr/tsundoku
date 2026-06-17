@@ -2,15 +2,19 @@ import {
   ActionIcon,
   Anchor,
   Badge,
+  Burger,
   Container,
   Group,
   AppShell as MantineAppShell,
   type MantineColor,
+  NavLink,
+  Stack,
   Text,
   Title,
   useComputedColorScheme,
   useMantineColorScheme,
 } from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useAppInfo, useStats } from "@/api/queries";
@@ -75,18 +79,35 @@ function ColorSchemeToggle() {
 export function AppShell({ children }: { children: ReactNode }) {
   const stats = useStats();
   const appInfo = useAppInfo();
+  // The navbar is a mobile-only drawer: always collapsed on desktop (where the
+  // header keeps the inline badges), toggled by the burger below `sm`.
+  const [opened, { toggle, close }] = useDisclosure(false);
   const reviewCount =
     (stats.data?.releases.unresolved ?? 0) +
     (stats.data?.releases.ambiguous ?? 0) +
     (stats.data?.releases.reviewPending ?? 0);
 
   return (
-    <MantineAppShell header={{ height: 56 }} padding={0}>
+    <MantineAppShell
+      header={{ height: 56 }}
+      navbar={{
+        width: 260,
+        breakpoint: "sm",
+        collapsed: { mobile: !opened, desktop: true },
+      }}
+      padding={0}
+    >
       <MantineAppShell.Header>
         <Container size="xl" h="100%">
           <Group h="100%" justify="space-between" align="center" wrap="nowrap">
-            <Anchor component={Link} to="/" underline="never" c="inherit">
-              <Group gap="xs" align="baseline">
+            <Anchor
+              component={Link}
+              to="/"
+              underline="never"
+              c="inherit"
+              onClick={close}
+            >
+              <Group gap="xs" align="baseline" wrap="nowrap">
                 <Title order={3}>tsundoku</Title>
                 <Text size="xs" c="dimmed">
                   discovery
@@ -98,7 +119,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 )}
               </Group>
             </Anchor>
-            <Group gap="md" align="center" wrap="nowrap">
+            {/* Desktop: every destination inline. */}
+            <Group gap="md" align="center" wrap="nowrap" visibleFrom="sm">
               {typeof stats.data?.series === "number" && (
                 <Text size="sm" c="dimmed" component="span">
                   {stats.data.series} series
@@ -145,9 +167,73 @@ export function AppShell({ children }: { children: ReactNode }) {
               )}
               <ColorSchemeToggle />
             </Group>
+            {/* Mobile: theme toggle + burger that opens the navbar drawer. */}
+            <Group gap="sm" align="center" wrap="nowrap" hiddenFrom="sm">
+              <ColorSchemeToggle />
+              <Burger
+                opened={opened}
+                onClick={toggle}
+                size="sm"
+                aria-label={opened ? "Close navigation" : "Open navigation"}
+              />
+            </Group>
           </Group>
         </Container>
       </MantineAppShell.Header>
+      <MantineAppShell.Navbar p="md">
+        <Stack gap={4}>
+          <NavLink
+            component={Link}
+            to="/"
+            label="Feed"
+            onClick={close}
+            data-testid="mobile-nav-feed"
+          />
+          <NavLink
+            component={Link}
+            to="/admin/review"
+            label="Review"
+            onClick={close}
+            data-testid="mobile-nav-review"
+            rightSection={
+              reviewCount > 0 ? (
+                <Badge size="sm" color="orange" variant="light" radius="sm">
+                  {reviewCount}
+                </Badge>
+              ) : undefined
+            }
+          />
+          <NavLink
+            component={Link}
+            to="/admin/wishlist"
+            label="★ Wishlist"
+            onClick={close}
+            data-testid="mobile-nav-wishlist"
+          />
+          <NavLink
+            component={Link}
+            to="/admin"
+            label="Admin"
+            onClick={close}
+            data-testid="mobile-nav-admin"
+          />
+          {(typeof stats.data?.series === "number" ||
+            stats.data?.activeProvider) && (
+            <Group gap="xs" mt="md" px="xs" wrap="wrap">
+              {typeof stats.data?.series === "number" && (
+                <Text size="sm" c="dimmed">
+                  {stats.data.series} series
+                </Text>
+              )}
+              {stats.data?.activeProvider && (
+                <Badge variant="default" radius="sm">
+                  {stats.data.activeProvider}
+                </Badge>
+              )}
+            </Group>
+          )}
+        </Stack>
+      </MantineAppShell.Navbar>
       <MantineAppShell.Main>{children}</MantineAppShell.Main>
     </MantineAppShell>
   );
