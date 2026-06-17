@@ -14,6 +14,7 @@ import { useState } from "react";
 import { useUpdateSeries } from "@/api/mutations";
 import type { SeriesDetail } from "@/api/queries";
 import { KIND_OPTIONS, STATUS_OPTIONS } from "@/constants/series";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 /// Admin-only editor for a *manual* series' descriptive fields. The caller is
 /// responsible for only rendering this when `series.metadataSource ===
@@ -27,6 +28,7 @@ export function EditSeriesModal({
   onClose: () => void;
 }) {
   const update = useUpdateSeries();
+  const isMobile = useIsMobile();
 
   const [title, setTitle] = useState(series.canonicalTitle);
   const [alternateTitles, setAlternateTitles] = useState<string[]>(
@@ -81,7 +83,14 @@ export function EditSeriesModal({
   };
 
   return (
-    <Modal opened onClose={onClose} title="Edit series" size="lg" centered>
+    <Modal
+      opened
+      onClose={onClose}
+      title="Edit series"
+      size="lg"
+      centered
+      fullScreen={isMobile}
+    >
       <Stack gap="md">
         <TextInput
           label="Title"

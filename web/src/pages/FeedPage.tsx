@@ -166,12 +166,16 @@ export function FeedPage() {
               // space (wide mode, a bigger monitor) turns into more columns
               // rather than larger cards. ~175px keeps ~5 columns in the
               // centered layout and packs more when the container is wide.
+              // `min(45%, 175px)` caps the min track at 45% of the container on
+              // narrow phones, so the grid keeps at least 2 cards per row
+              // instead of one oversized card, while desktop stays fluid.
               <Box
                 data-testid="feed-card-grid"
                 style={{
                   display: "grid",
                   gap: "var(--mantine-spacing-md)",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(175px, 1fr))",
+                  gridTemplateColumns:
+                    "repeat(auto-fill, minmax(min(45%, 175px), 1fr))",
                 }}
               >
                 {list.data.items.map((s) => (

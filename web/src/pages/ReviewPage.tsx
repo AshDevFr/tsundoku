@@ -65,6 +65,7 @@ import {
   ProviderSearchPanel,
 } from "@/components/ReleaseLinking";
 import { SendToClientButton, SentBadge } from "@/components/SendToClientButton";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { REVIEW_PAGE_SIZE_OPTIONS, useUiPrefs } from "@/stores/uiPrefs";
 import type { components } from "@/types/api.generated";
 
@@ -791,6 +792,7 @@ function BulkLinkModal({
   onClose: () => void;
   onLinked: () => void;
 }) {
+  const isMobile = useIsMobile();
   return (
     <Modal
       opened
@@ -798,6 +800,7 @@ function BulkLinkModal({
       title={`Link ${releaseIds.length} release${releaseIds.length === 1 ? "" : "s"} to a series`}
       size="lg"
       centered
+      fullScreen={isMobile}
     >
       <Stack gap="md">
         <BulkLinkPanel
@@ -831,6 +834,7 @@ function BulkCreateSeriesModal({
 }) {
   const createSeries = useCreateSeries();
   const bulkLink = useBulkLink();
+  const isMobile = useIsMobile();
   const [title, setTitle] = useState(seedTitle);
   const [kind, setKind] = useState<string | null>(null);
   const [year, setYear] = useState<number | "">("");
@@ -873,6 +877,7 @@ function BulkCreateSeriesModal({
       onClose={onClose}
       title="Create series for selection"
       centered
+      fullScreen={isMobile}
     >
       <Stack gap="md">
         <Text size="xs" c="dimmed">
@@ -1382,6 +1387,7 @@ function LinkExistingModal({
   releaseId: string;
   seedQuery: string;
 }) {
+  const isMobile = useIsMobile();
   return (
     <Modal
       opened
@@ -1389,6 +1395,7 @@ function LinkExistingModal({
       title="Link to existing series"
       size="lg"
       centered
+      fullScreen={isMobile}
     >
       <Stack gap="md">
         <LinkExistingPanel
@@ -1422,6 +1429,7 @@ function CreateSeriesModal({
 }) {
   const createSeries = useCreateSeries();
   const link = useLinkRelease();
+  const isMobile = useIsMobile();
   const [title, setTitle] = useState(seedTitle);
   const [kind, setKind] = useState<string | null>(null);
   const [year, setYear] = useState<number | "">("");
@@ -1469,6 +1477,7 @@ function CreateSeriesModal({
       onClose={onClose}
       title="Create manual series"
       centered
+      fullScreen={isMobile}
     >
       <Stack gap="md">
         <Text size="xs" c="dimmed">
@@ -1779,6 +1788,7 @@ function ProviderSearchModal({
   /** Pre-select the "ID source" (canonical foreign provider id). */
   seedIdSource?: string;
 }) {
+  const isMobile = useIsMobile();
   return (
     <Modal
       opened={opened}
@@ -1786,6 +1796,7 @@ function ProviderSearchModal({
       title="Search provider"
       size="lg"
       centered
+      fullScreen={isMobile}
     >
       {opened && (
         <Stack gap="md">

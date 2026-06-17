@@ -58,6 +58,7 @@ import {
   ProviderSearchPanel,
 } from "@/components/ReleaseLinking";
 import { SendToClientButton, SentBadge } from "@/components/SendToClientButton";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { seriesDetailRoute } from "@/router";
 import { useAdminAuth } from "@/stores/auth";
 import type { FilterSearch } from "@/stores/filters";
@@ -863,6 +864,7 @@ function MoveReleaseModal({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState("catalog");
+  const isMobile = useIsMobile();
 
   return (
     <Modal
@@ -871,6 +873,7 @@ function MoveReleaseModal({
       title="Move release to another series"
       size="lg"
       centered
+      fullScreen={isMobile}
     >
       <Stack gap="md">
         <Text size="sm" c="dimmed" lineClamp={2} title={release.title}>

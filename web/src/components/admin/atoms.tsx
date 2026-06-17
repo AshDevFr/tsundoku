@@ -24,7 +24,14 @@ export function ConfigRow({
         {label}
       </Text>
       {typeof value === "string" ? (
-        <Text size="xs" ff={mono ? "monospace" : undefined}>
+        // minWidth:0 lets the value shrink inside the nowrap row, and
+        // overflowWrap breaks long unbreakable strings (e.g. a base_url) so
+        // they wrap instead of pushing the page wider than a phone.
+        <Text
+          size="xs"
+          ff={mono ? "monospace" : undefined}
+          style={{ minWidth: 0, overflowWrap: "anywhere" }}
+        >
           {value}
         </Text>
       ) : (
