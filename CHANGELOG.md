@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.14.1] - 2026-06-17
+
+### Bug Fixes
+
+- *(web)* Make series-detail release rows usable on mobile
+
 ## [1.14.0] - 2026-06-17
 
 ### Features
