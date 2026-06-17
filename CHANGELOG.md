@@ -2,6 +2,14 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.14.0] - 2026-06-17
+
+### Features
+
+- *(web)* Make the top navigation mobile-friendly with a burger drawer
+- *(web)* Collapse admin nav and feed filters into left drawers on mobile
+- *(web)* Full-screen modals, 2-up cards, and wrapped config values on mobile
+
 ## [1.13.1] - 2026-06-15
 
 ### Features
