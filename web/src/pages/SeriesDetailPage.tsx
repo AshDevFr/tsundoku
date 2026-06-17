@@ -11,6 +11,7 @@ import {
   Checkbox,
   Container,
   CopyButton,
+  Flex,
   Grid,
   Group,
   Image,
@@ -87,13 +88,12 @@ function spanCount(
   return null;
 }
 
-// A release can be bulk-sent when it carries a magnet or `.torrent` and hasn't
-// already been pushed to the client.
+// A release can be bulk-sent when it carries a magnet or `.torrent`.
+// Already-sent releases stay selectable so the operator can deliberately
+// re-send one (e.g. it was removed from the client); the "Sent" badge marks
+// them, mirroring the per-release Send button which also allows re-sending.
 function isSendable(r: ReleaseDto): boolean {
-  return (
-    (Boolean(r.magnet) || Boolean(r.torrentUrl)) &&
-    typeof r.sentToClientAt !== "number"
-  );
+  return Boolean(r.magnet) || Boolean(r.torrentUrl);
 }
 
 // Group releases by source (kind/name), preserving first-seen order. Shared by
@@ -311,7 +311,9 @@ export function SeriesDetailPage() {
     typeof s.highestVolume === "number" || typeof s.highestChapter === "number";
 
   return (
-    <Container size="xl" py="lg">
+    // Tighter horizontal gutter on mobile so the release cards use more of the
+    // screen; restores the standard `md` gutter from `sm` up.
+    <Container size="xl" py="lg" px={{ base: "xs", sm: "md" }}>
       <Button
         renderRoot={(props) => (
           <Link to="/" search={(prev) => prev} {...props} />
@@ -654,6 +656,7 @@ function ReleaseList({
               <ReleaseRow
                 key={r.id}
                 release={r}
+                bulkActive={Boolean(bulk)}
                 select={
                   bulk && isSendable(r)
                     ? {
@@ -730,9 +733,14 @@ function CopyLinkButton({ value, label }: { value: string; label: string }) {
 function ReleaseRow({
   release,
   select,
+  bulkActive,
 }: {
   release: ReleaseDto;
   select?: { checked: boolean; onToggle: (range: boolean) => void };
+  /// True when the bulk-send affordance is on for the list. Rows that aren't
+  /// selectable (already sent, or nothing to send) still reserve the checkbox
+  /// slot with a disabled box so every row stays aligned.
+  bulkActive?: boolean;
 }) {
   // The relink ("Move") action calls a write endpoint, so only offer it when
   // an admin token is present — the series detail page is otherwise a public
@@ -742,49 +750,70 @@ function ReleaseRow({
 
   return (
     <Card withBorder padding="xs" radius="sm">
-      <Group justify="space-between" wrap="nowrap" align="flex-start">
-        {select && (
-          <Checkbox
-            checked={select.checked}
-            // Toggling is driven from onClick so we can read the shift key for
-            // range select (the change event's nativeEvent doesn't carry it).
-            // The controlled `checked` resyncs the box after the click.
-            onChange={() => {}}
-            onClick={(e) => select.onToggle(e.shiftKey)}
-            aria-label={`Select release ${release.title}`}
-            data-testid={`select-release-${release.id}`}
-            mt={2}
-          />
-        )}
-        <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
-          <Anchor
-            href={release.link}
-            target="_blank"
-            rel="noreferrer noopener"
-            size="sm"
-            lineClamp={1}
-            title={release.title}
-          >
-            {release.title}
-          </Anchor>
-          <Group gap={4} wrap="wrap">
-            {release.formats.map((f) => (
-              <Badge key={f} size="xs" variant="outline">
-                {f}
-              </Badge>
-            ))}
-            <Text size="xs" c="dimmed" title={formatAbsolute(release.postedAt)}>
-              posted {formatRelative(release.postedAt)}
-            </Text>
-            {release.resolutionPath && (
-              <Badge size="xs" variant="dot" color="teal">
-                {release.resolutionPath}
-              </Badge>
-            )}
-            <SentBadge release={release} />
-          </Group>
-        </Stack>
-        <Group gap={8} wrap="nowrap" align="center">
+      {/* Side-by-side on desktop; stacks on mobile so the long release title
+          gets the full width instead of being crushed by the action buttons. */}
+      <Flex
+        direction={{ base: "column", sm: "row" }}
+        justify="space-between"
+        align={{ base: "stretch", sm: "flex-start" }}
+        gap="xs"
+      >
+        <Group
+          wrap="nowrap"
+          align="flex-start"
+          gap="xs"
+          style={{ minWidth: 0, flex: 1 }}
+        >
+          {select ? (
+            <Checkbox
+              checked={select.checked}
+              // Toggling is driven from onClick so we can read the shift key for
+              // range select (the change event's nativeEvent doesn't carry it).
+              // The controlled `checked` resyncs the box after the click.
+              onChange={() => {}}
+              onClick={(e) => select.onToggle(e.shiftKey)}
+              aria-label={`Select release ${release.title}`}
+              data-testid={`select-release-${release.id}`}
+              mt={2}
+            />
+          ) : bulkActive ? (
+            // Already sent / nothing to send: keep the slot so rows align.
+            <Checkbox disabled aria-label="Release not selectable" mt={2} />
+          ) : null}
+          <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+            <Anchor
+              href={release.link}
+              target="_blank"
+              rel="noreferrer noopener"
+              size="sm"
+              lineClamp={1}
+              title={release.title}
+            >
+              {release.title}
+            </Anchor>
+            <Group gap={4} wrap="wrap">
+              {release.formats.map((f) => (
+                <Badge key={f} size="xs" variant="outline">
+                  {f}
+                </Badge>
+              ))}
+              <Text
+                size="xs"
+                c="dimmed"
+                title={formatAbsolute(release.postedAt)}
+              >
+                posted {formatRelative(release.postedAt)}
+              </Text>
+              {release.resolutionPath && (
+                <Badge size="xs" variant="dot" color="teal">
+                  {release.resolutionPath}
+                </Badge>
+              )}
+              <SentBadge release={release} />
+            </Group>
+          </Stack>
+        </Group>
+        <Group gap={8} wrap="wrap" align="center">
           {release.magnet && (
             <Group gap={2} wrap="nowrap" align="center">
               <Anchor href={release.magnet} size="xs" rel="noreferrer">
@@ -837,7 +866,7 @@ function ReleaseRow({
           )}
           <SendToClientButton release={release} />
         </Group>
-      </Group>
+      </Flex>
 
       <Stack gap={6} mt={6}>
         <ExtractedLinks links={release.extractedLinks} />

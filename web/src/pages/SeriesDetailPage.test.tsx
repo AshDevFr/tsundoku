@@ -265,32 +265,31 @@ describe("SeriesDetailPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("excludes already-sent releases from bulk selection", async () => {
+  it("keeps already-sent releases selectable for re-send", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderSeriesDetail(1);
-    // v01 + v02 are selectable; v03 was already sent, so no checkbox.
+    // v03 was already sent, but it could have been cancelled/lost in the
+    // client, so it still gets a checkbox (re-send is allowed).
     await screen.findByTestId("select-release-nyaa:111");
     await screen.findByTestId("select-release-nyaa:112");
-    expect(
-      screen.queryByTestId("select-release-nyaa:113"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("select-release-nyaa:113")).toBeInTheDocument();
   });
 
-  it("shift-clicking selects the span of sendable releases, skipping sent ones", async () => {
+  it("shift-clicking selects the full span including already-sent releases", async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     renderSeriesDetail(1);
 
-    // Anchor on v01, then shift-click v04: the range covers v01, v02, v04 but
-    // skips the already-sent v03 (no checkbox), so 3 end up selected.
+    // Anchor on v01, then shift-click v04: the range covers v01, v02, v03, v04
+    // — the already-sent v03 is included now, so 4 end up selected.
     fireEvent.click(await screen.findByTestId("select-release-nyaa:111"));
     fireEvent.click(await screen.findByTestId("select-release-nyaa:114"), {
       shiftKey: true,
     });
 
     const sendBtn = await screen.findByTestId("bulk-send");
-    expect(sendBtn).toHaveTextContent("Send 3 to client");
+    expect(sendBtn).toHaveTextContent("Send 4 to client");
     expect(
-      (screen.getByTestId("select-release-nyaa:112") as HTMLInputElement)
+      (screen.getByTestId("select-release-nyaa:113") as HTMLInputElement)
         .checked,
     ).toBe(true);
   });
