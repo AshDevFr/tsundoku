@@ -212,6 +212,23 @@ describe("FeedPage", () => {
   });
 });
 
+describe("FeedPage filters drawer (mobile)", () => {
+  it("opens the filter drawer when the Filters button is tapped", async () => {
+    renderWithProviders("/");
+    await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 });
+    // No drawer/dialog mounted until the button is pressed.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId("feed-filters-button"));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("shows the active-filter count on the Filters button", async () => {
+    renderWithProviders("/?kind=manga");
+    const button = await screen.findByTestId("feed-filters-button");
+    expect(within(button).getByText("1")).toBeInTheDocument();
+  });
+});
+
 describe("SeriesDetailPage", () => {
   it("renders detail and releases for a series", async () => {
     renderWithProviders("/series/1");

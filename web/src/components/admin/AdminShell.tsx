@@ -1,8 +1,10 @@
 import {
   Badge,
   Box,
+  Burger,
   Button,
   Container,
+  Drawer,
   Group,
   NavLink,
   Stack,
@@ -10,6 +12,7 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { JobEventsProvider } from "@/api/jobEventsContext";
 import { type SourceDto, useSources } from "@/api/queries";
@@ -59,19 +62,34 @@ export function AdminShell() {
 function AdminLayout() {
   const clearToken = useAdminAuth((s) => s.clear);
   const location = useLocation();
+  // The section nav is a left drawer on mobile (freeing the content column to
+  // full width); the desktop rail is always visible and never opens this.
+  const [navOpened, { toggle: toggleNav, close: closeNav }] =
+    useDisclosure(false);
   return (
     <Container size="xl" py="lg">
       <Stack gap="lg">
-        <Group justify="space-between" align="baseline" wrap="wrap">
-          <Stack gap={2}>
-            <Group gap="sm" align="baseline">
-              <Title order={2}>Admin</Title>
-              <FailurePip />
-            </Group>
-            <Text size="sm" c="dimmed">
-              Inspect runtime state and force-trigger scheduler work.
-            </Text>
-          </Stack>
+        <Group justify="space-between" align="center" wrap="nowrap">
+          <Group gap="sm" align="center" wrap="nowrap">
+            <Burger
+              opened={navOpened}
+              onClick={toggleNav}
+              size="sm"
+              hiddenFrom="sm"
+              aria-label={
+                navOpened ? "Close admin sections" : "Open admin sections"
+              }
+            />
+            <Stack gap={2}>
+              <Group gap="sm" align="baseline">
+                <Title order={2}>Admin</Title>
+                <FailurePip />
+              </Group>
+              <Text size="sm" c="dimmed" visibleFrom="sm">
+                Inspect runtime state and force-trigger scheduler work.
+              </Text>
+            </Stack>
+          </Group>
           <Tooltip label="Forget the admin token in this browser">
             <Button
               variant="subtle"
@@ -91,49 +109,62 @@ function AdminLayout() {
             miw={180}
             visibleFrom="sm"
           >
-            <Stack gap={2}>
-              {NAV.map((entry) => (
-                <NavLink
-                  key={entry.to}
-                  label={entry.label}
-                  component={Link}
-                  to={entry.to}
-                  activeOptions={{ exact: true }}
-                  active={isActive(entry, location.pathname)}
-                  data-testid={`admin-nav-${slug(entry.label)}`}
-                />
-              ))}
-            </Stack>
+            <AdminNavLinks
+              location={location.pathname}
+              testIdPrefix="admin-nav-"
+            />
           </Box>
-          <MobileNav location={location.pathname} />
           <Box flex={1} miw={0}>
             <Outlet />
           </Box>
         </Group>
       </Stack>
+
+      <Drawer
+        opened={navOpened}
+        onClose={closeNav}
+        position="left"
+        size="xs"
+        title="Admin sections"
+        hiddenFrom="sm"
+      >
+        <AdminNavLinks
+          location={location.pathname}
+          testIdPrefix="admin-nav-mobile-"
+          onNavigate={closeNav}
+        />
+      </Drawer>
     </Container>
   );
 }
 
-function MobileNav({ location }: { location: string }) {
+/// The admin section links, shared by the always-on desktop rail and the
+/// mobile drawer. The two render the same entries with distinct testid
+/// prefixes so each stays individually queryable.
+function AdminNavLinks({
+  location,
+  testIdPrefix,
+  onNavigate,
+}: {
+  location: string;
+  testIdPrefix: string;
+  onNavigate?: () => void;
+}) {
   return (
-    <Box hiddenFrom="sm" w="100%">
-      <Group gap={4} wrap="wrap">
-        {NAV.map((entry) => (
-          <Button
-            key={entry.to}
-            component={Link}
-            to={entry.to}
-            activeOptions={{ exact: true }}
-            size="xs"
-            variant={isActive(entry, location) ? "filled" : "default"}
-            data-testid={`admin-nav-mobile-${slug(entry.label)}`}
-          >
-            {entry.label}
-          </Button>
-        ))}
-      </Group>
-    </Box>
+    <Stack gap={2}>
+      {NAV.map((entry) => (
+        <NavLink
+          key={entry.to}
+          label={entry.label}
+          component={Link}
+          to={entry.to}
+          activeOptions={{ exact: true }}
+          active={isActive(entry, location)}
+          onClick={onNavigate}
+          data-testid={`${testIdPrefix}${slug(entry.label)}`}
+        />
+      ))}
+    </Stack>
   );
 }
 

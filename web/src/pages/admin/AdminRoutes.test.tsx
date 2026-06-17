@@ -700,6 +700,46 @@ describe("admin maintenance page", () => {
   });
 });
 
+describe("admin section-nav mobile drawer", () => {
+  beforeEach(() => useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN));
+  afterEach(() => useAdminAuth.getState().clear());
+
+  it("hides the section links behind a burger until opened", async () => {
+    renderAt("/admin");
+    // The mobile drawer mounts its links only when open.
+    expect(
+      screen.queryByTestId("admin-nav-mobile-sources"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /open admin sections/i }),
+    );
+    expect(
+      await screen.findByTestId("admin-nav-mobile-sources"),
+    ).toBeInTheDocument();
+  });
+
+  it("closes the drawer after tapping a section", async () => {
+    renderAt("/admin");
+    fireEvent.click(
+      await screen.findByRole("button", { name: /open admin sections/i }),
+    );
+    const link = await screen.findByTestId("admin-nav-mobile-sources");
+    fireEvent.click(link);
+    // Navigating collapses the drawer, unmounting its links.
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("admin-nav-mobile-sources"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("keeps the desktop rail links present and unambiguous", async () => {
+    renderAt("/admin");
+    // Rail link is always mounted; only one element carries the rail testid.
+    expect(await screen.findByTestId("admin-nav-sources")).toBeInTheDocument();
+  });
+});
+
 describe("admin id-maps page", () => {
   beforeEach(() => useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN));
   afterEach(() => useAdminAuth.getState().clear());

@@ -27,6 +27,7 @@ import {
 } from "@/constants/series";
 import { useAdminAuth } from "@/stores/auth";
 import {
+  countActiveFilters,
   type FilterSearch,
   type TagFilterMode,
   useFilterPresets,
@@ -139,18 +140,7 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
       page: 1,
     });
 
-  const hasActiveFilters =
-    (search.kind?.length ?? 0) > 0 ||
-    (search.status?.length ?? 0) > 0 ||
-    (search.genres?.length ?? 0) > 0 ||
-    (search.tags?.length ?? 0) > 0 ||
-    Boolean(search.q) ||
-    typeof search.owned === "boolean" ||
-    typeof search.wishlisted === "boolean" ||
-    typeof search.hasReleases === "boolean" ||
-    Boolean(search.metadataSource) ||
-    (search.codexStatus?.length ?? 0) > 0 ||
-    (search.sources?.length ?? 0) > 0;
+  const hasActiveFilters = countActiveFilters(search) > 0;
 
   const activeSort = search.sort ?? "last_release_at";
   const orderLabels = ORDER_LABELS_BY_SORT[activeSort] ?? DEFAULT_ORDER_LABELS;

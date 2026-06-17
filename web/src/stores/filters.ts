@@ -60,6 +60,26 @@ export interface FilterSearch {
   sources?: string[];
 }
 
+/// Count the active filter constraints in a search (sort/order/page are
+/// presentation, not filters, so they don't count). Single source of truth for
+/// both the FilterPanel's "any active?" check and the mobile Filters button's
+/// count badge. When adding a field here, see the filter-field audit checklist.
+export function countActiveFilters(search: FilterSearch): number {
+  let n = 0;
+  if ((search.kind?.length ?? 0) > 0) n++;
+  if ((search.status?.length ?? 0) > 0) n++;
+  if ((search.genres?.length ?? 0) > 0) n++;
+  if ((search.tags?.length ?? 0) > 0) n++;
+  if (search.q) n++;
+  if (typeof search.owned === "boolean") n++;
+  if (typeof search.wishlisted === "boolean") n++;
+  if (typeof search.hasReleases === "boolean") n++;
+  if (search.metadataSource) n++;
+  if ((search.codexStatus?.length ?? 0) > 0) n++;
+  if ((search.sources?.length ?? 0) > 0) n++;
+  return n;
+}
+
 interface PresetState {
   presets: FilterPreset[];
   savePreset: (name: string, search: FilterSearch) => FilterPreset;

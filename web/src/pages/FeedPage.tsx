@@ -1,9 +1,11 @@
 import {
   Alert,
+  Badge,
   Box,
   Button,
   Center,
   Container,
+  Drawer,
   Flex,
   Group,
   Loader,
@@ -14,13 +16,14 @@ import {
   Text,
   Title,
 } from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
 import { useNavigate } from "@tanstack/react-router";
 import { useSeriesList } from "@/api/queries";
 import { FilterPanel } from "@/components/FilterPanel";
 import { SeriesCard } from "@/components/SeriesCard";
 import { SeriesListRow } from "@/components/SeriesListRow";
 import { feedRoute } from "@/router";
-import type { FilterSearch } from "@/stores/filters";
+import { countActiveFilters, type FilterSearch } from "@/stores/filters";
 import {
   DEFAULT_PAGE_SIZE,
   PAGE_SIZE_OPTIONS,
@@ -42,6 +45,11 @@ export function FeedPage() {
   const toggleWideMode = useUiPrefs((s) => s.toggleWideMode);
   const view = useUiPrefs((s) => s.view);
   const setView = useUiPrefs((s) => s.setView);
+  // On mobile the filter panel collapses into a left drawer so the results
+  // grid gets the full width.
+  const [filtersOpen, { open: openFilters, close: closeFilters }] =
+    useDisclosure(false);
+  const activeFilterCount = countActiveFilters(search);
 
   const list = useSeriesList({ ...search, pageSize });
   const total = list.data?.total ?? 0;
@@ -58,16 +66,32 @@ export function FeedPage() {
         direction={{ base: "column", sm: "row" }}
       >
         <Box
-          w={{ base: "100%", sm: 280 }}
+          w={280}
           style={{ flexShrink: 0 }}
-          pos={{ base: "static", sm: "sticky" }}
+          pos="sticky"
           top={72}
+          visibleFrom="sm"
         >
           <FilterPanel search={search} onChange={setSearch} />
         </Box>
 
         <Box style={{ flex: 1, minWidth: 0 }}>
           <Stack gap="md">
+            <Button
+              hiddenFrom="sm"
+              variant="default"
+              onClick={openFilters}
+              data-testid="feed-filters-button"
+              rightSection={
+                activeFilterCount > 0 ? (
+                  <Badge size="sm" variant="filled" circle>
+                    {activeFilterCount}
+                  </Badge>
+                ) : undefined
+              }
+            >
+              Filters
+            </Button>
             <Group justify="space-between" align="center" wrap="wrap">
               <Group gap="sm" align="baseline" wrap="wrap">
                 <Title order={2}>Series</Title>
@@ -181,6 +205,19 @@ export function FeedPage() {
           </Stack>
         </Box>
       </Flex>
+
+      <Drawer
+        opened={filtersOpen}
+        onClose={closeFilters}
+        position="left"
+        size="sm"
+        // The FilterPanel renders its own "Filters" heading, so the drawer
+        // chrome stays title-less (the close button still shows).
+        aria-label="Filters"
+        hiddenFrom="sm"
+      >
+        <FilterPanel search={search} onChange={setSearch} />
+      </Drawer>
     </Container>
   );
 }
