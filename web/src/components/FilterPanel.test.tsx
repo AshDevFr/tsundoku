@@ -175,6 +175,37 @@ describe("FilterPanel — sources filter (admin-only)", () => {
   });
 });
 
+describe("FilterPanel — search descriptions toggle", () => {
+  afterEach(() => useAdminAuth.getState().clear());
+
+  it("is off by default and visible to everyone", async () => {
+    renderPanel();
+    const toggle = await screen.findByTestId("feed-search-descriptions-toggle");
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("turning it on emits searchDescriptions=true", async () => {
+    const onChange = vi.fn();
+    renderPanel({}, onChange);
+    const toggle = await screen.findByTestId("feed-search-descriptions-toggle");
+    fireEvent.click(toggle);
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ searchDescriptions: true, page: 1 }),
+    );
+  });
+
+  it("turning it off clears the flag (undefined, not false)", async () => {
+    const onChange = vi.fn();
+    renderPanel({ searchDescriptions: true }, onChange);
+    const toggle = await screen.findByTestId("feed-search-descriptions-toggle");
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ searchDescriptions: undefined, page: 1 }),
+    );
+  });
+});
+
 describe("FilterPanel — manual/auto source filter", () => {
   afterEach(() => useAdminAuth.getState().clear());
 

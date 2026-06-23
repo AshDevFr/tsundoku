@@ -47,6 +47,11 @@ export interface FilterSearch {
   page?: number;
   /// Free-text search query. Whitespace-only treated as absent.
   q?: string;
+  /// When `true`, the free-text [[q]] search also matches series descriptions,
+  /// not just titles. Absent/`false` means titles only. A search *mode* rather
+  /// than a filter, so it's deliberately excluded from [[countActiveFilters]];
+  /// it is still captured in saved presets and reset by "clear all".
+  searchDescriptions?: boolean;
   /// Codex presence filter, OR-combined: `any` (on Codex), `missing` (not on
   /// Codex), `complete`, `behind`, `present`, or `ignored` (completion tracking
   /// off). Selecting several keeps series matching any of them (e.g. `missing`

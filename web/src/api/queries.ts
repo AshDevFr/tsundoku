@@ -88,6 +88,9 @@ export interface SeriesFilters {
   /// Free-text search query. Whitespace-only is treated as absent so the
   /// server avoids the rerank pass for an effectively-empty query.
   q?: string;
+  /// When `true`, the free-text `q` search also matches series descriptions,
+  /// not just titles. Only sent alongside a non-empty `q`.
+  searchDescriptions?: boolean;
   /// Codex presence filter, OR-combined (`any` | `missing` | `complete` |
   /// `behind` | `present` | `ignored`). Joined into a CSV before being sent —
   /// the backend re-splits on the comma. Admin-only and enforced server-side;
@@ -144,6 +147,10 @@ export function useSeriesList(filters: SeriesFilters) {
     sort: filters.sort || undefined,
     order: filters.order || undefined,
     q: trimmedQ || undefined,
+    // Only meaningful alongside `q`; omit otherwise so an idle toggle doesn't
+    // churn the URL/cache key. Sent only when on (backend default is false).
+    searchDescriptions:
+      trimmedQ && filters.searchDescriptions ? true : undefined,
     // Backend drops this for non-admins; send it regardless and let the
     // server enforce. Keeps the URL/cache key honest for admins.
     codexStatus: codexStatusCsv,

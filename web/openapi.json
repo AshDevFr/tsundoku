@@ -1597,6 +1597,15 @@
             }
           },
           {
+            "name": "searchDescriptions",
+            "in": "query",
+            "description": "When `true`, the free-text [`Self::q`] also matches series descriptions,\nnot just titles. Defaults to `false` (titles only). Only meaningful\nalongside `q`; ignored when `q` is absent. Description-only matches rank\nbelow genuine title matches (the relevance score is title-based).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "codexStatus",
             "in": "query",
             "description": "Comma-separated Codex presence statuses, OR-combined: `any` (on Codex),\n`missing` (not on Codex), `complete`, `behind`, `present`, or `ignored`\n(completion tracking turned off via `ignore_completion`). A series is\nkept if it matches *any* listed status, so e.g. `missing,behind` returns\neverything not on Codex plus the owned-but-behind titles. **Admin-only\nand enforced server-side**: for a non-admin request the param is ignored\nentirely, so it can't be used to probe library contents.",

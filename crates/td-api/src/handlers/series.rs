@@ -343,6 +343,11 @@ pub struct SeriesListQuery {
     /// score against canonical + alternate titles, with a boost for FTS5
     /// prefix matches. Whitespace-only is treated as absent.
     pub q: Option<String>,
+    /// When `true`, the free-text [`Self::q`] also matches series descriptions,
+    /// not just titles. Defaults to `false` (titles only). Only meaningful
+    /// alongside `q`; ignored when `q` is absent. Description-only matches rank
+    /// below genuine title matches (the relevance score is title-based).
+    pub search_descriptions: Option<bool>,
     /// Comma-separated Codex presence statuses, OR-combined: `any` (on Codex),
     /// `missing` (not on Codex), `complete`, `behind`, `present`, or `ignored`
     /// (completion tracking turned off via `ignore_completion`). A series is
@@ -372,6 +377,7 @@ impl Default for SeriesListQuery {
             sort: None,
             order: None,
             q: None,
+            search_descriptions: None,
             codex_status: None,
         }
     }
@@ -875,7 +881,7 @@ async fn search_list(
 
     // FTS5 boost set. An empty match expression (all-punctuation input,
     // for example) skips the FTS pass entirely; Dice still runs.
-    let fts_expr = build_fts_match_expression(q_raw);
+    let fts_expr = build_fts_match_expression(q_raw, q.search_descriptions.unwrap_or(false));
     let fts_ids: HashSet<i32> = if fts_expr.is_empty() {
         HashSet::new()
     } else {
@@ -977,7 +983,15 @@ async fn search_list(
 /// tokens only, each quoted, with a `*` suffix on the last token so a
 /// partial last word still hits (e.g. "solo lev" matches "solo leveling").
 /// Returns an empty string if no usable tokens remain.
-fn build_fts_match_expression(raw: &str) -> String {
+///
+/// When `include_description` is false (the default search mode), the whole
+/// expression is wrapped in a `{title alternate_titles} : (…)` column filter
+/// so matching is pinned to titles — identical to the behavior from before
+/// `description` was added to the FTS table. The parentheses are required:
+/// the column-filter operator binds tighter than the implicit AND, so without
+/// them only the first token would be scoped. When true, the unfiltered form
+/// is emitted, which also spans the `description` column.
+fn build_fts_match_expression(raw: &str, include_description: bool) -> String {
     let tokens: Vec<String> = raw
         .split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
@@ -989,7 +1003,12 @@ fn build_fts_match_expression(raw: &str) -> String {
     let mut parts: Vec<String> = tokens.iter().map(|t| format!("\"{t}\"")).collect();
     let last = parts.len() - 1;
     parts[last].push('*');
-    parts.join(" ")
+    let joined = parts.join(" ");
+    if include_description {
+        joined
+    } else {
+        format!("{{title alternate_titles}} : ({joined})")
+    }
 }
 
 /// Series detail, including the resolved external-ID mappings.
@@ -2129,7 +2148,7 @@ mod tests {
     #[test]
     fn fts_match_quotes_tokens_and_prefixes_last() {
         assert_eq!(
-            build_fts_match_expression("solo leveling"),
+            build_fts_match_expression("solo leveling", true),
             "\"solo\" \"leveling\"*"
         );
     }
@@ -2139,19 +2158,37 @@ mod tests {
         // Mixed punctuation, including a leading bracket that would
         // otherwise be a syntax error in a raw FTS5 expression.
         assert_eq!(
-            build_fts_match_expression("[scanlator] Solo-Leveling!"),
+            build_fts_match_expression("[scanlator] Solo-Leveling!", true),
             "\"scanlator\" \"Solo\" \"Leveling\"*"
         );
     }
 
     #[test]
     fn fts_match_returns_empty_when_no_alphanumeric_tokens() {
-        assert_eq!(build_fts_match_expression("!!! ???"), "");
-        assert_eq!(build_fts_match_expression(""), "");
+        // Empty regardless of mode — no tokens to scope.
+        assert_eq!(build_fts_match_expression("!!! ???", true), "");
+        assert_eq!(build_fts_match_expression("", true), "");
+        assert_eq!(build_fts_match_expression("!!! ???", false), "");
+        assert_eq!(build_fts_match_expression("", false), "");
     }
 
     #[test]
     fn fts_match_handles_single_token_with_prefix() {
-        assert_eq!(build_fts_match_expression("naruto"), "\"naruto\"*");
+        assert_eq!(build_fts_match_expression("naruto", true), "\"naruto\"*");
+    }
+
+    #[test]
+    fn fts_match_scopes_to_titles_when_description_excluded() {
+        // Default mode pins matching to the title columns; the parentheses
+        // are required so the column filter spans every token, not just the
+        // first. This must reproduce the pre-description-column behavior.
+        assert_eq!(
+            build_fts_match_expression("solo leveling", false),
+            "{title alternate_titles} : (\"solo\" \"leveling\"*)"
+        );
+        assert_eq!(
+            build_fts_match_expression("naruto", false),
+            "{title alternate_titles} : (\"naruto\"*)"
+        );
     }
 }

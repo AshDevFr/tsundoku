@@ -11,6 +11,7 @@ import {
   SegmentedControl,
   Select,
   Stack,
+  Switch,
   Text,
   TextInput,
   Title,
@@ -275,6 +276,17 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
             ) : null
           }
           data-testid="feed-search-input"
+        />
+
+        <Switch
+          label="Also search descriptions"
+          checked={search.searchDescriptions ?? false}
+          onChange={(e) =>
+            merge({
+              searchDescriptions: e.currentTarget.checked || undefined,
+            })
+          }
+          data-testid="feed-search-descriptions-toggle"
         />
 
         <MultiSelect

@@ -3762,6 +3762,13 @@ export interface operations {
                  */
                 q?: string;
                 /**
+                 * @description When `true`, the free-text [`Self::q`] also matches series descriptions,
+                 *     not just titles. Defaults to `false` (titles only). Only meaningful
+                 *     alongside `q`; ignored when `q` is absent. Description-only matches rank
+                 *     below genuine title matches (the relevance score is title-based).
+                 */
+                searchDescriptions?: boolean;
+                /**
                  * @description Comma-separated Codex presence statuses, OR-combined: `any` (on Codex),
                  *     `missing` (not on Codex), `complete`, `behind`, `present`, or `ignored`
                  *     (completion tracking turned off via `ignore_completion`). A series is

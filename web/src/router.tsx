@@ -94,6 +94,8 @@ function validateFilterSearch(raw: Record<string, unknown>): FilterSearch {
   const page = Number(raw.page);
   if (Number.isFinite(page) && page > 0) search.page = Math.floor(page);
   if (typeof raw.q === "string" && raw.q.trim()) search.q = raw.q;
+  if (raw.searchDescriptions === true || raw.searchDescriptions === "true")
+    search.searchDescriptions = true;
   const codexStatus = parseStringList(raw.codexStatus).filter((s) =>
     CODEX_STATUS_VALUES.includes(s),
   );

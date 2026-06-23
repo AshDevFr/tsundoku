@@ -398,7 +398,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use migration::{Migrator, MigratorTrait};
-    use sea_orm::{Database, Set};
+    use sea_orm::{ActiveModelTrait, Database, Set};
 
     async fn fresh() -> DatabaseConnection {
         let db = Database::connect("sqlite::memory:").await.unwrap();
@@ -779,5 +779,77 @@ mod tests {
         // The filter composes with the cursor: resuming after A yields only C.
         let after_a = feed_after(&db, 100, a, &want, 10).await.unwrap();
         assert_eq!(after_a.iter().map(|s| s.id).collect::<Vec<_>>(), vec![c]);
+    }
+
+    /// Insert a series with a `description`, exercising the FTS triggers so the
+    /// `series_fts.description` column is populated.
+    async fn seed_with_description(db: &DatabaseConnection, title: &str, description: &str) -> i32 {
+        let now = Utc::now().timestamp();
+        series::Entity::insert(series::ActiveModel {
+            canonical_title: Set(title.into()),
+            description: Set(Some(description.into())),
+            metadata_source: Set("api".into()),
+            metadata_fetched_at: Set(now),
+            first_seen_at: Set(now),
+            last_release_at: Set(now),
+            owned: Set(0),
+            ..Default::default()
+        })
+        .exec_with_returning(db)
+        .await
+        .unwrap()
+        .id
+    }
+
+    #[tokio::test]
+    async fn fts_description_scoping_gates_synopsis_matches() {
+        let db = fresh().await;
+        // Term "dragon" appears only in the synopsis, never in the title.
+        let id = seed_with_description(&db, "Solo Leveling", "A hunter fights a dragon").await;
+
+        // Title-scoped expression (default search mode) must NOT surface a
+        // description-only hit — reproducing pre-description-column behavior.
+        let scoped = search_fts(&db, "{title alternate_titles} : (\"dragon\"*)", 10)
+            .await
+            .unwrap();
+        assert!(
+            scoped.is_empty(),
+            "title-scoped match should ignore the description"
+        );
+
+        // Unscoped expression (toggle on) now spans the description column.
+        let unscoped = search_fts(&db, "\"dragon\"*", 10).await.unwrap();
+        assert_eq!(unscoped.iter().map(|s| s.id).collect::<Vec<_>>(), vec![id]);
+
+        // A genuine title term still matches in the scoped mode.
+        let title_hit = search_fts(&db, "{title alternate_titles} : (\"solo\"*)", 10)
+            .await
+            .unwrap();
+        assert_eq!(title_hit.iter().map(|s| s.id).collect::<Vec<_>>(), vec![id]);
+    }
+
+    #[tokio::test]
+    async fn fts_description_tracks_updates() {
+        let db = fresh().await;
+        let id = seed_with_description(&db, "Untitled", "no keyword yet").await;
+        assert!(
+            search_fts(&db, "\"griffin\"*", 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Update the description; the AFTER UPDATE trigger must refresh the FTS row.
+        let mut row: series::ActiveModel = series::Entity::find_by_id(id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap()
+            .into();
+        row.description = Set(Some("now mentions a griffin".into()));
+        row.update(&db).await.unwrap();
+
+        let hit = search_fts(&db, "\"griffin\"*", 10).await.unwrap();
+        assert_eq!(hit.iter().map(|s| s.id).collect::<Vec<_>>(), vec![id]);
     }
 }
