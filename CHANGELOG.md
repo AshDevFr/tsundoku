@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.14.2] - 2026-06-23
+
+### Bug Fixes
+
+- *(metadata)* Parse MangaBaka source-id lookup envelope
+
 ## [1.14.1] - 2026-06-17
 
 ### Bug Fixes
