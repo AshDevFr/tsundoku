@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.15.0] - 2026-06-23
+
+### Features
+
+- *(search)* Optionally match series descriptions
+
 ## [1.14.3] - 2026-06-23
 
 ### Bug Fixes
