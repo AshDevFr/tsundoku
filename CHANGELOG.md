@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.14.3] - 2026-06-23
+
+### Bug Fixes
+
+- *(codex)* Confirm currency from any comparable axis
+
 ## [1.14.2] - 2026-06-23
 
 ### Bug Fixes
