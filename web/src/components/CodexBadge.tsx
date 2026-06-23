@@ -38,7 +38,7 @@ const STATUS_META: Record<
     variant: "outline",
     label: "owned",
     blurb:
-      "Owned on Codex; no numbered releases to compare, so currency is unconfirmed",
+      "Owned on Codex, but surfaced releases use different volume/chapter numbering than your owned files, so currency can't be compared",
   },
   // Operator muted completion tracking for this series (e.g. read in omnibus,
   // where source single-volume numbering is permanently ahead of the owned

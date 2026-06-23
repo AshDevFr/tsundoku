@@ -28,8 +28,10 @@ pub enum CodexStatus {
     Complete,
     /// Newer volumes/chapters have surfaced on a source than Codex owns.
     Behind,
-    /// Owned, but the relevant Codex maximum didn't parse, so we can't judge
-    /// whether it's caught up.
+    /// Owned, but every discovered axis is on a different volume/chapter
+    /// numbering than Codex owns (e.g. only chapter releases surfaced for a
+    /// volume-only library entry), so there is no shared axis to compare and
+    /// currency can't be judged. If *any* axis is comparable this never fires.
     Present,
     /// Owned, but the operator opted out of completion tracking
     /// (`series.ignore_completion`). The volume/chapter comparison is
@@ -68,10 +70,14 @@ pub struct CodexInfo {
     pub synced_at: i64,
 }
 
-/// Derive the presence status from the parsed maxima. Compares per tracked
-/// dimension; `Behind` (actionable) wins over `Present` (can't fully judge)
-/// over `Complete`. A series with nothing discovered to compare against is
-/// `Complete` (we own it, nothing newer is known).
+/// Derive the presence status from the parsed maxima. An axis is comparable
+/// only when we track it *and* Codex reports a max for it. `Behind` (a
+/// comparable axis is below us) wins over `Complete` (any comparable axis is
+/// caught up) over `Present` (we tracked an axis but it's on different
+/// numbering than Codex owns, so nothing is comparable). A series with nothing
+/// discovered to compare against is `Complete` (we own it, nothing newer is
+/// known) — as is one where a single axis confirms currency even though a
+/// sibling axis is uncomparable.
 ///
 /// `ignore_completion` short-circuits to [`CodexStatus::Ignored`] before any
 /// comparison, so the per-row badge and the server-side `codexStatus` filter
@@ -89,17 +95,33 @@ pub fn compute_status(
     let vol_tracked = highest_volume.is_some();
     let chap_tracked = highest_chapter.is_some();
 
-    let vol_behind = vol_tracked && codex_max_volume.is_some_and(|c| c < highest_volume.unwrap());
-    let chap_behind =
-        chap_tracked && codex_max_chapter.is_some_and(|c| c < highest_chapter.unwrap());
+    // An axis is "comparable" only when we track it AND Codex reports a max for
+    // it. Codex's max is per owned-file: a series owned as volume files reports
+    // a volume max but no chapter max, so a discovered chapter release leaves
+    // the chapter axis uncomparable even though Codex owns the series.
+    let vol_comparable = vol_tracked && codex_max_volume.is_some();
+    let chap_comparable = chap_tracked && codex_max_chapter.is_some();
 
-    // Tracked on our side but Codex has no parsed maximum for that dimension.
+    let vol_behind = vol_comparable && codex_max_volume.unwrap() < highest_volume.unwrap();
+    let chap_behind = chap_comparable && codex_max_chapter.unwrap() < highest_chapter.unwrap();
+
+    // Tracked on our side but Codex has no max for that axis (it owns the
+    // series on the *other* axis).
     let vol_uncomparable = vol_tracked && codex_max_volume.is_none();
     let chap_uncomparable = chap_tracked && codex_max_chapter.is_none();
 
     if vol_behind || chap_behind {
+        // A comparable axis that's behind is the actionable signal.
         CodexStatus::Behind
+    } else if vol_comparable || chap_comparable {
+        // At least one axis compares cleanly and isn't behind, which positively
+        // confirms currency. An uncomparable sibling axis (e.g. a chapter
+        // release against volume-only ownership) can never produce a `Behind`
+        // signal anyway, so it must not drag a confirmed series to "unverified".
+        CodexStatus::Complete
     } else if vol_uncomparable || chap_uncomparable {
+        // We discovered something, but only on an axis Codex doesn't report for
+        // this series, so there is no shared axis to compare against at all.
         CodexStatus::Present
     } else {
         CodexStatus::Complete
@@ -184,11 +206,37 @@ mod tests {
     }
 
     #[test]
-    fn present_when_tracked_dim_is_uncomparable() {
-        // We discovered volume 10 but Codex parsed no volume max.
+    fn present_only_when_no_axis_is_comparable() {
+        // We discovered volume 10 but Codex reports a chapter max, not a
+        // volume one (owned on a different axis than we surfaced). No shared
+        // axis -> we genuinely can't judge currency.
         assert_eq!(
             compute_status(false, Some(10.0), None, None, Some(300.0)),
             CodexStatus::Present
+        );
+        // Surfaced as volumes, but Codex reports neither max: still nothing to
+        // compare against.
+        assert_eq!(
+            compute_status(false, Some(10.0), None, None, None),
+            CodexStatus::Present
+        );
+    }
+
+    #[test]
+    fn complete_when_one_axis_confirms_despite_uncomparable_sibling() {
+        // The Carefree-Journey case: owned as volume files (Codex reports a
+        // volume max, no chapter max), but a chapter-numbered release was
+        // discovered. The volume axis compares cleanly and is caught up, so
+        // the uncomparable chapter axis must NOT force "unverified".
+        assert_eq!(
+            compute_status(false, Some(4.0), Some(22.0), Some(4.0), None),
+            CodexStatus::Complete
+        );
+        // Symmetric: owned as chapters, a volume release surfaced; the chapter
+        // axis confirms currency.
+        assert_eq!(
+            compute_status(false, Some(2.0), Some(150.0), None, Some(150.0)),
+            CodexStatus::Complete
         );
     }
 
@@ -203,12 +251,12 @@ mod tests {
     }
 
     #[test]
-    fn cross_dimension_mismatch_reads_as_behind() {
-        // Surfaced as volumes, owned only as chapters on Codex: the volume
-        // dimension is uncomparable, but there's no behind dim -> Present.
+    fn behind_when_comparable_axis_is_behind_despite_uncomparable_sibling() {
+        // Volume axis compares and is behind (own 4, source surfaced 5); the
+        // uncomparable chapter axis doesn't suppress the actionable signal.
         assert_eq!(
-            compute_status(false, Some(10.0), None, None, None),
-            CodexStatus::Present
+            compute_status(false, Some(5.0), Some(22.0), Some(4.0), None),
+            CodexStatus::Behind
         );
     }
 
