@@ -50,6 +50,15 @@ pub struct MbPagination {
     pub previous: Option<String>,
 }
 
+/// `/v1/source/{source}/{id}` does not return a bare series; it wraps zero or
+/// more matches in `{ source_response, series: [...] }`. We only care about the
+/// matched series (the first, if any).
+#[derive(Debug, Deserialize)]
+pub struct MbSourceResult {
+    #[serde(default)]
+    pub series: Vec<MbSeries>,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MbSeries {
     pub id: i64,
@@ -196,8 +205,8 @@ impl MangabakaClient {
             urlencode(source),
             urlencode(id)
         );
-        match self.request_envelope::<MbSeries>(&url).await? {
-            EnvelopeOutcome::Ok(series) => Ok(Some(series)),
+        match self.request_envelope::<MbSourceResult>(&url).await? {
+            EnvelopeOutcome::Ok(result) => Ok(result.series.into_iter().next()),
             EnvelopeOutcome::NotFound => Ok(None),
         }
     }
@@ -315,6 +324,34 @@ mod tests {
         let env: MbEnvelope<Vec<MbSeries>> = serde_json::from_str(raw).unwrap();
         assert_eq!(env.data.len(), 2);
         assert_eq!(env.data[0].title, "Chainsaw Man");
+    }
+
+    #[test]
+    fn source_envelope_deserializes_match() {
+        // `/v1/source/{source}/{id}` wraps results in `{ source_response, series }`,
+        // NOT a bare series object.
+        let raw = r#"{
+            "status": 200,
+            "data": {
+                "source_response": null,
+                "series": [
+                    {"id": 1692, "title": "BERSERK", "type": "manga"}
+                ]
+            }
+        }"#;
+        let env: MbEnvelope<MbSourceResult> = serde_json::from_str(raw).unwrap();
+        let first = env.data.series.into_iter().next().unwrap();
+        assert_eq!(first.id, 1692);
+        assert_eq!(first.title, "BERSERK");
+    }
+
+    #[test]
+    fn source_envelope_deserializes_empty() {
+        // No MangaBaka entry cross-references the foreign id: `series` is empty,
+        // which previously crashed with `missing field id`.
+        let raw = r#"{"status":200,"data":{"source_response":null,"series":[]}}"#;
+        let env: MbEnvelope<MbSourceResult> = serde_json::from_str(raw).unwrap();
+        assert!(env.data.series.is_empty());
     }
 
     #[test]
