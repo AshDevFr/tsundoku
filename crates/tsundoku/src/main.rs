@@ -116,6 +116,22 @@ enum Commands {
         #[arg(short, long, default_value_t = 1)]
         pages: u32,
     },
+    /// One-shot per-series release search against a configured [[search]]
+    /// entry. Walks every usable series title through the entry's
+    /// paginated search, persisting and resolving every new release
+    /// through the normal pipeline (results are NOT force-linked to the
+    /// series). Audited in `search_runs`.
+    Search {
+        #[arg(short, long, default_value = DEFAULT_CONFIG_PATH)]
+        config: PathBuf,
+        /// Catalog id of the series whose titles drive the search.
+        #[arg(long)]
+        series: i32,
+        /// Name of the [[search]] entry to use. Defaults to the entry
+        /// marked `default = true` (or the first enabled one).
+        #[arg(long)]
+        entry: Option<String>,
+    },
     /// Recompute every release's volume/chapter span and every series'
     /// `highest_volume` / `highest_chapter` from the stored file lists
     /// (titles as fallback). Network-free and idempotent. Run after a
@@ -165,6 +181,11 @@ async fn main() -> anyhow::Result<()> {
             source,
             pages,
         } => commands::backfill::run(config, source, pages).await,
+        Commands::Search {
+            config,
+            series,
+            entry,
+        } => commands::search::run(config, series, entry).await,
         Commands::RecomputeSpans { config } => commands::recompute_spans::run(config).await,
         Commands::Openapi { output } => commands::openapi::run(&output),
     }

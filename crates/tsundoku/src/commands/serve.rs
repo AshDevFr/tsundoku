@@ -41,6 +41,20 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
     let db = td_db::connect(&cfg).await?;
     td_db::run_migrations(&db).await?;
 
+    // A `running` search_runs row can only be live while its process is:
+    // any that survived a restart is a walk that died mid-run and would
+    // poll as in-flight forever. Flip them to error before serving.
+    match td_db::repos::search_runs_repo::mark_stale_running_interrupted(
+        &db,
+        chrono::Utc::now().timestamp(),
+    )
+    .await
+    {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(rows = n, "marked stale running search_runs as interrupted"),
+        Err(e) => tracing::warn!(error = ?e, "failed to reconcile stale search_runs"),
+    }
+
     // Build the process-wide outbound-HTTP limiter first; every component
     // that makes external requests routes through it so per-host
     // serialization and min-gap are enforced uniformly.

@@ -17,6 +17,7 @@ pub mod releases_repo;
 pub mod review_repo;
 pub mod review_snapshots_repo;
 pub mod run_metrics_repo;
+pub mod search_runs_repo;
 pub mod series_external_ids_repo;
 pub mod series_refresh_repo;
 pub mod series_repo;

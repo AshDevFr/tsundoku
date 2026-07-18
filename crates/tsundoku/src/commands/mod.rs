@@ -7,6 +7,7 @@ pub mod recompute_spans;
 pub mod refresh_provider_cache;
 pub mod refresh_series;
 pub mod resolve;
+pub mod search;
 pub mod serve;
 
 use td_config::AppConfig;

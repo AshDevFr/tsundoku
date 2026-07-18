@@ -26,6 +26,7 @@ mod m20260608_000001_series_coverage_and_updated_at;
 mod m20260613_000001_series_wishlisted;
 mod m20260614_000001_series_published_dates;
 mod m20260623_000001_series_fts_description;
+mod m20260718_000001_search_runs;
 
 pub struct Migrator;
 
@@ -61,6 +62,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260613_000001_series_wishlisted::Migration),
             Box::new(m20260614_000001_series_published_dates::Migration),
             Box::new(m20260623_000001_series_fts_description::Migration),
+            Box::new(m20260718_000001_search_runs::Migration),
         ];
         m.extend(td_metadata_mangabaka::migration::migrations());
         m
