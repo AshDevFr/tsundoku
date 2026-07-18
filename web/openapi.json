@@ -1442,6 +1442,32 @@
         ]
       }
     },
+    "/api/v1/search/entries": {
+      "get": {
+        "tags": [
+          "search"
+        ],
+        "summary": "The configured release-search endpoints, in config (dropdown) order.",
+        "operationId": "entries",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchEntriesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/series": {
       "get": {
         "tags": [
@@ -2286,6 +2312,118 @@
           },
           "409": {
             "description": "No mapping for the active provider on this series"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/series/{id}/search-releases": {
+      "post": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Trigger a release search for one series. The walk runs in the\nbackground; poll `GET /series/{id}/search-runs` for completion.",
+        "operationId": "trigger",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Series id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchReleasesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchReleasesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown or disabled search entry"
+          },
+          "404": {
+            "description": "No series with that id"
+          },
+          "503": {
+            "description": "No [[search]] entries configured"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/series/{id}/search-runs": {
+      "get": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Recent search runs for one series, newest first. The newest row's\n`outcome = running` is the \"search in flight\" signal the UI polls.",
+        "operationId": "runs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Series id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum rows to return (newest first). Defaults to 10.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchRunsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No series with that id"
           }
         },
         "security": [
@@ -3473,7 +3611,8 @@
           "source",
           "provider",
           "seriesRefresh",
-          "codex"
+          "codex",
+          "search"
         ]
       },
       "JobPhase": {
@@ -4770,6 +4909,184 @@
           "unresolvedCount": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "SearchEntriesResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchEntryDto"
+            }
+          }
+        }
+      },
+      "SearchEntryDto": {
+        "type": "object",
+        "description": "One configured `[[search]]` endpoint, with the display fields the\nadmin Sources page renders. Disabled entries are never listed (they\naren't registered).",
+        "required": [
+          "name",
+          "kind",
+          "default",
+          "searchUrl",
+          "maxPages",
+          "fetchDetails"
+        ],
+        "properties": {
+          "default": {
+            "type": "boolean",
+            "description": "The split button's primary action. Exactly one listed entry is\n`true` (explicitly marked, or the first entry as fallback)."
+          },
+          "fetchDetails": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "maxPages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "searchUrl": {
+            "type": "string",
+            "description": "Listing URL the search appends `q`/`p` to (filters baked in)."
+          }
+        }
+      },
+      "SearchReleasesRequest": {
+        "type": "object",
+        "properties": {
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`[[search]]` entry name. Omitted ⇒ the default entry."
+          }
+        }
+      },
+      "SearchReleasesResponse": {
+        "type": "object",
+        "required": [
+          "search",
+          "seriesId",
+          "triggered",
+          "skipped"
+        ],
+        "properties": {
+          "search": {
+            "type": "string",
+            "description": "Entry the walk was (or would have been) dispatched against."
+          },
+          "seriesId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "skipped": {
+            "type": "boolean",
+            "description": "`true` when a walk against this entry was already in flight."
+          },
+          "triggered": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SearchRunDto": {
+        "type": "object",
+        "description": "One `search_runs` row. `outcome` is `running` | `success` | `error`;\ncounts are set on completion only.",
+        "required": [
+          "id",
+          "ranAt",
+          "searchName",
+          "seriesId",
+          "trigger",
+          "outcome"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finishedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "pagesFetched": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "queriesAttempted": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ranAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "releasesNew": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "releasesSeen": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "searchName": {
+            "type": "string"
+          },
+          "seriesId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "trigger": {
+            "type": "string"
+          }
+        }
+      },
+      "SearchRunsResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchRunDto"
+            }
           }
         }
       },

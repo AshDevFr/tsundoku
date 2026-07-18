@@ -34,6 +34,10 @@ use crate::handlers::releases::{
     ReleaseGroupsResponse, ReleasePage, RetryAllResponse, ReviewCandidateDto, UnresolvedPage,
     UnresolvedRelease,
 };
+use crate::handlers::search::{
+    SearchEntriesResponse, SearchEntryDto, SearchReleasesRequest, SearchReleasesResponse,
+    SearchRunDto, SearchRunsResponse,
+};
 use crate::handlers::series::{
     CoverageSpanDto, CreateSeriesFromProviderRequest, CreateSeriesRequest, ExternalIdDto,
     InvalidateMetadataHashesResponse, RecomputeSpansResponse, RefreshAllSeriesResponse,
@@ -47,7 +51,7 @@ use crate::handlers::sources::{
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
 use crate::handlers::{
-    codex, covers, download, events, health, info, metrics, providers, releases, series,
+    codex, covers, download, events, health, info, metrics, providers, releases, search, series,
     series_export, sources, stats, tagging,
 };
 use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult};
@@ -118,9 +122,18 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         download::send,
         download::status,
         download::test,
+        search::entries,
+        search::trigger,
+        search::runs,
     ),
     components(schemas(
         ApiErrorBody,
+        SearchEntryDto,
+        SearchEntriesResponse,
+        SearchReleasesRequest,
+        SearchReleasesResponse,
+        SearchRunDto,
+        SearchRunsResponse,
         health::Health,
         info::AppInfo,
         StatsResponse,

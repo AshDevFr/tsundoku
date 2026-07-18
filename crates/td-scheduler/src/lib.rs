@@ -59,6 +59,10 @@ pub struct JobLocks {
     /// the cron tick and the manual `POST /codex/refresh` both `try_lock` it,
     /// so a manual kick during a scheduled sweep is reported as skipped.
     codex_sync: Arc<Mutex<()>>,
+    /// Per-`[[search]]`-entry locks for the per-series release search.
+    /// One walk per endpoint at a time, whatever series it targets — the
+    /// serialization is upstream politeness, not data protection.
+    searches: DashMap<String, Arc<Mutex<()>>>,
 }
 
 impl JobLocks {
@@ -89,6 +93,13 @@ impl JobLocks {
 
     pub fn codex_sync_lock(&self) -> Arc<Mutex<()>> {
         self.codex_sync.clone()
+    }
+
+    pub fn search_lock(&self, entry_name: &str) -> Arc<Mutex<()>> {
+        self.searches
+            .entry(entry_name.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 }
 

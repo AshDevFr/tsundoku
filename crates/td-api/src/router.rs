@@ -17,7 +17,7 @@ use crate::auth;
 use crate::docs::ApiDoc;
 use crate::embed::serve_static;
 use crate::handlers::{
-    codex, covers, download, events, health, info, metrics, providers, releases, series,
+    codex, covers, download, events, health, info, metrics, providers, releases, search, series,
     series_export, sources, stats, tagging,
 };
 use crate::state::AppState;
@@ -86,6 +86,11 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/releases/{id}/send-to-client", post(download::send))
         .route("/download/status", get(download::status))
         .route("/download/test", post(download::test))
+        // Per-series release search: admin-only, entries list included —
+        // it exposes config naming, which stays off the public read tier.
+        .route("/search/entries", get(search::entries))
+        .route("/series/{id}/search-releases", post(search::trigger))
+        .route("/series/{id}/search-runs", get(search::runs))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             auth::require_admin,

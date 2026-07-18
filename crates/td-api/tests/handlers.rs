@@ -6468,3 +6468,266 @@ async fn wishlist_sort_orders_by_clip_time() {
         .unwrap();
     assert_eq!(ids(&body_json(resp).await), vec![a as i64, b as i64]);
 }
+
+// ---------------------------------------------------------------------------
+// Per-series release search
+// ---------------------------------------------------------------------------
+
+fn search_stub(name: &str, hits: Vec<td_source::DiscoveredRelease>) -> StubSearchSource {
+    StubSearchSource {
+        name: name.into(),
+        hits,
+        delay: None,
+    }
+}
+
+#[tokio::test]
+async fn search_entries_lists_config_with_default_flag() {
+    let db = fresh_db().await;
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![
+            (search_stub("eng", vec![]), false),
+            (search_stub("raw", vec![]), true),
+        ],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/search/entries")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    // Config order preserved; the marked entry (not the first) is default.
+    assert_eq!(items[0]["name"], "eng");
+    assert_eq!(items[0]["default"], false);
+    assert_eq!(items[1]["name"], "raw");
+    assert_eq!(items[1]["default"], true);
+    assert_eq!(items[0]["kind"], "test");
+    assert_eq!(items[0]["maxPages"], 3);
+    assert_eq!(items[0]["searchUrl"], "https://nyaa.test/?c=3_1&entry=eng");
+}
+
+#[tokio::test]
+async fn search_entries_requires_admin_token() {
+    let db = fresh_db().await;
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![(search_stub("eng", vec![]), true)],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/search/entries")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+async fn post_search(app: axum::Router, series_id: i32, body: &str) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/v1/series/{series_id}/search-releases"))
+            .header(header::AUTHORIZATION, "Bearer write-token")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn search_trigger_404s_on_unknown_series() {
+    let db = fresh_db().await;
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![(search_stub("eng", vec![]), true)],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = post_search(app, 9999, "{}").await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn search_trigger_400s_on_unknown_entry() {
+    let db = fresh_db().await;
+    let series_id = seed_series(&db, "Solo Leveling", "manhwa").await;
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![(search_stub("eng", vec![]), true)],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = post_search(app, series_id, r#"{"search":"nope"}"#).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn search_trigger_503s_when_nothing_configured() {
+    let db = fresh_db().await;
+    let series_id = seed_series(&db, "Solo Leveling", "manhwa").await;
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = post_search(app, series_id, "{}").await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn search_trigger_runs_the_walk_and_records_the_audit_row() {
+    let db = fresh_db().await;
+    let series_id = seed_series(&db, "Solo Leveling", "manhwa").await;
+    let hit = sample_release("sr-1", "eng", "Solo Leveling v01");
+    let app = build_app_with_search(
+        db.clone(),
+        open_auth(),
+        vec![(search_stub("eng", vec![hit]), true)],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+
+    let resp = post_search(app, series_id, "{}").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["triggered"], true);
+    assert_eq!(body["skipped"], false);
+    assert_eq!(body["search"], "eng");
+    assert_eq!(body["seriesId"], series_id);
+
+    // The walk runs detached; poll the audit row until it completes.
+    let mut done = None;
+    for _ in 0..100 {
+        let runs = td_db::repos::search_runs_repo::recent_for_series(&db, series_id, 5)
+            .await
+            .unwrap();
+        if let Some(r) = runs.first()
+            && r.outcome != td_db::repos::search_runs_repo::OUTCOME_RUNNING
+        {
+            done = Some(r.clone());
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let run = done.expect("search run should complete");
+    assert_eq!(run.outcome, td_db::repos::search_runs_repo::OUTCOME_SUCCESS);
+    assert_eq!(run.trigger, "manual");
+    assert_eq!(run.search_name, "eng");
+    assert_eq!(run.releases_new, Some(1));
+
+    // The hit went through the normal persist path.
+    assert!(
+        releases_repo::find_by_id(&db, &releases_repo::id_for("test", "sr-1"))
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn search_trigger_skips_when_the_entry_is_busy() {
+    let db = fresh_db().await;
+    let series_id = seed_series(&db, "Solo Leveling", "manhwa").await;
+    let locks = std::sync::Arc::new(td_scheduler::JobLocks::default());
+    let held = locks.search_lock("eng");
+    let _guard = held.try_lock().expect("test should hold the lock first");
+
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![(search_stub("eng", vec![]), true)],
+        locks,
+    );
+    let resp = post_search(app, series_id, "{}").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["triggered"], false);
+    assert_eq!(body["skipped"], true);
+}
+
+#[tokio::test]
+async fn search_runs_lists_newest_first_and_404s_on_unknown_series() {
+    let db = fresh_db().await;
+    let series_id = seed_series(&db, "Solo Leveling", "manhwa").await;
+    let first = td_db::repos::search_runs_repo::insert_running(&db, 100, "eng", series_id, "cli")
+        .await
+        .unwrap();
+    td_db::repos::search_runs_repo::complete(
+        &db,
+        first,
+        160,
+        td_db::repos::search_runs_repo::OUTCOME_SUCCESS,
+        td_db::repos::search_runs_repo::SearchRunCounts {
+            queries_attempted: 1,
+            pages_fetched: 2,
+            releases_seen: 10,
+            releases_new: 4,
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    td_db::repos::search_runs_repo::insert_running(&db, 200, "raw", series_id, "manual")
+        .await
+        .unwrap();
+
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![(search_stub("eng", vec![]), true)],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/series/{series_id}/search-runs"))
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["searchName"], "raw");
+    assert_eq!(items[0]["outcome"], "running");
+    assert_eq!(items[1]["searchName"], "eng");
+    assert_eq!(items[1]["outcome"], "success");
+    assert_eq!(items[1]["releasesNew"], 4);
+    assert_eq!(items[1]["finishedAt"], 160);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/424242/search-runs")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}

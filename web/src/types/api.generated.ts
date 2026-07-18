@@ -708,6 +708,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/search/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The configured release-search endpoints, in config (dropdown) order. */
+        get: operations["entries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series": {
         parameters: {
             query?: never;
@@ -987,6 +1004,46 @@ export interface paths {
         put?: never;
         /** Re-fetch metadata for a series from the active provider and re-persist. */
         post: operations["refresh_metadata"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/series/{id}/search-releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger a release search for one series. The walk runs in the
+         *     background; poll `GET /series/{id}/search-runs` for completion.
+         */
+        post: operations["trigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/series/{id}/search-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent search runs for one series, newest first. The newest row's
+         *     `outcome = running` is the "search in flight" signal the UI polls.
+         */
+        get: operations["runs"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1594,7 +1651,7 @@ export interface components {
          *     the enum.
          * @enum {string}
          */
-        JobKind: "source" | "provider" | "seriesRefresh" | "codex";
+        JobKind: "source" | "provider" | "seriesRefresh" | "codex" | "search";
         /**
          * @description Lifecycle phase. `Started` fires after the per-key mutex was
          *     acquired (so a `skipped` job emits only `Finished`). `Progress`
@@ -2126,6 +2183,70 @@ export interface components {
             reviewPendingCount: number;
             /** Format: int64 */
             unresolvedCount: number;
+        };
+        SearchEntriesResponse: {
+            items: components["schemas"]["SearchEntryDto"][];
+        };
+        /**
+         * @description One configured `[[search]]` endpoint, with the display fields the
+         *     admin Sources page renders. Disabled entries are never listed (they
+         *     aren't registered).
+         */
+        SearchEntryDto: {
+            /**
+             * @description The split button's primary action. Exactly one listed entry is
+             *     `true` (explicitly marked, or the first entry as fallback).
+             */
+            default: boolean;
+            fetchDetails: boolean;
+            kind: string;
+            /** Format: int32 */
+            maxPages: number;
+            name: string;
+            /** @description Listing URL the search appends `q`/`p` to (filters baked in). */
+            searchUrl: string;
+        };
+        SearchReleasesRequest: {
+            /** @description `[[search]]` entry name. Omitted ⇒ the default entry. */
+            search?: string | null;
+        };
+        SearchReleasesResponse: {
+            /** @description Entry the walk was (or would have been) dispatched against. */
+            search: string;
+            /** Format: int32 */
+            seriesId: number;
+            /** @description `true` when a walk against this entry was already in flight. */
+            skipped: boolean;
+            triggered: boolean;
+        };
+        /**
+         * @description One `search_runs` row. `outcome` is `running` | `success` | `error`;
+         *     counts are set on completion only.
+         */
+        SearchRunDto: {
+            error?: string | null;
+            /** Format: int64 */
+            finishedAt?: number | null;
+            /** Format: int64 */
+            id: number;
+            outcome: string;
+            /** Format: int64 */
+            pagesFetched?: number | null;
+            /** Format: int64 */
+            queriesAttempted?: number | null;
+            /** Format: int64 */
+            ranAt: number;
+            /** Format: int64 */
+            releasesNew?: number | null;
+            /** Format: int64 */
+            releasesSeen?: number | null;
+            searchName: string;
+            /** Format: int32 */
+            seriesId: number;
+            trigger: string;
+        };
+        SearchRunsResponse: {
+            items: components["schemas"]["SearchRunDto"][];
         };
         /** @description One send-attempt audit entry. `source` is `torrent` | `magnet`. */
         SendRecordDto: {
@@ -3690,6 +3811,25 @@ export interface operations {
             };
         };
     };
+    entries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchEntriesResponse"];
+                };
+            };
+        };
+    };
     list_series: {
         parameters: {
             query?: {
@@ -4231,6 +4371,85 @@ export interface operations {
             };
             /** @description No mapping for the active provider on this series */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    trigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Series id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchReleasesRequest"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchReleasesResponse"];
+                };
+            };
+            /** @description Unknown or disabled search entry */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No series with that id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No [[search]] entries configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    runs: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return (newest first). Defaults to 10. */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Series id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchRunsResponse"];
+                };
+            };
+            /** @description No series with that id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

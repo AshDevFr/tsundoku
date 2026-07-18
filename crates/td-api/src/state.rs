@@ -10,14 +10,14 @@ use sea_orm::DatabaseConnection;
 use serde::Serialize;
 use td_config::{
     AuthConfig, CodexConfig, DownloadConfig, IngestionConfig, MetadataConfig, ProvidersConfig,
-    SourceConfig,
+    SearchEntryConfig, SourceConfig,
 };
 use td_download::DownloadClient;
 use td_metadata::MetadataRegistry;
 use td_resolution::mangaupdates_redirect::MangaUpdatesRedirector;
 use td_resolution::query_builder::QueryBuilder;
 use td_scheduler::JobLocks;
-use td_source::SourceRegistry;
+use td_source::{SearchRegistry, SourceRegistry};
 use tokio::sync::broadcast;
 use utoipa::ToSchema;
 
@@ -80,6 +80,14 @@ pub struct AppState {
     /// from. Lets the admin handlers surface cron, feed_url, etc. without
     /// a config-state table or a round trip back to the file.
     pub sources_config: Arc<Vec<SourceConfig>>,
+    /// Registry of `[[search]]` release-search endpoints (enabled entries
+    /// only, one resolved default). Empty when none are configured; the
+    /// trigger endpoint then answers 503 Misconfigured.
+    pub search: Arc<SearchRegistry>,
+    /// Snapshot of the raw `[[search]]` config blocks, for the display
+    /// fields the registry's trait objects don't expose (`search_url`,
+    /// `fetch_details`), same role as `sources_config`.
+    pub search_config: Arc<Vec<SearchEntryConfig>>,
     /// Snapshot of the `[providers]` config block, with the same role for
     /// the provider admin endpoints.
     pub providers_config: Arc<ProvidersConfig>,

@@ -14,6 +14,7 @@ pub mod metrics;
 pub mod pagination;
 pub mod providers;
 pub mod releases;
+pub mod search;
 pub mod series;
 pub mod series_export;
 pub mod sources;

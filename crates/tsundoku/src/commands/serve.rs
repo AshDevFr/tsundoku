@@ -87,11 +87,12 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
         &cfg,
         limiter.clone(),
     )?);
-    // Built at boot even though nothing consumes it yet (the per-series
-    // search endpoint arrives with its API surface): constructing every
-    // entry here means a broken [[search]] block fails the launch, not the
-    // operator's first button click.
-    let search = crate::search_registry::build_search_registry(&cfg, limiter.clone())?;
+    // Constructing every entry at boot means a broken [[search]] block
+    // fails the launch, not the operator's first button click.
+    let search = Arc::new(crate::search_registry::build_search_registry(
+        &cfg,
+        limiter.clone(),
+    )?);
     if !search.is_empty() {
         tracing::info!(
             entries = search.len(),
@@ -166,6 +167,8 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
         auth: Arc::new(cfg.auth.clone()),
         locks,
         sources_config: Arc::new(cfg.sources.clone()),
+        search,
+        search_config: Arc::new(cfg.search.clone()),
         providers_config: Arc::new(cfg.providers.clone()),
         metadata_config: Arc::new(cfg.metadata.clone()),
         query_builder,

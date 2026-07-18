@@ -40,6 +40,8 @@ pub enum JobKind {
     SeriesRefresh,
     /// Codex presence sync (sweep of Codex's series external-index).
     Codex,
+    /// Per-series release search against a `[[search]]` entry.
+    Search,
 }
 
 /// Lifecycle phase. `Started` fires after the per-key mutex was

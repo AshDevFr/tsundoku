@@ -193,6 +193,8 @@ pub fn build_app_with_events(
         auth: Arc::new(auth),
         locks,
         sources_config: Arc::new(sources_config),
+        search: Arc::new(td_source::SearchRegistry::builder().build()),
+        search_config: Arc::new(Vec::new()),
         providers_config: Arc::new(providers_config),
         metadata_config: Arc::new(td_config::MetadataConfig::default()),
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
@@ -234,6 +236,8 @@ pub fn build_app_with_cover_cache(
         auth: Arc::new(auth),
         locks: Arc::new(JobLocks::default()),
         sources_config: Arc::new(Vec::new()),
+        search: Arc::new(td_source::SearchRegistry::builder().build()),
+        search_config: Arc::new(Vec::new()),
         providers_config: Arc::new(ProvidersConfig::default()),
         metadata_config: Arc::new(td_config::MetadataConfig::default()),
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
@@ -278,6 +282,8 @@ pub fn build_app_with_codex(
         auth: Arc::new(auth),
         locks,
         sources_config: Arc::new(Vec::new()),
+        search: Arc::new(td_source::SearchRegistry::builder().build()),
+        search_config: Arc::new(Vec::new()),
         providers_config: Arc::new(ProvidersConfig::default()),
         metadata_config: Arc::new(td_config::MetadataConfig::default()),
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
@@ -336,6 +342,8 @@ pub fn build_app_with_download(
         auth: Arc::new(auth),
         locks: Arc::new(JobLocks::default()),
         sources_config: Arc::new(Vec::new()),
+        search: Arc::new(td_source::SearchRegistry::builder().build()),
+        search_config: Arc::new(Vec::new()),
         providers_config: Arc::new(ProvidersConfig::default()),
         metadata_config: Arc::new(td_config::MetadataConfig::default()),
         query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
@@ -365,6 +373,103 @@ pub fn unreachable_download_client() -> Arc<dyn td_download::DownloadClient> {
         )
         .unwrap(),
     )
+}
+
+/// Release-search endpoint double for the search-handler tests. Returns
+/// `hits` on page 1 of every query and empty afterwards; `delay` lets the
+/// skipped-path test hold the per-entry lock long enough to collide.
+pub struct StubSearchSource {
+    pub name: String,
+    pub hits: Vec<DiscoveredRelease>,
+    pub delay: Option<std::time::Duration>,
+}
+
+#[async_trait]
+impl td_source::SearchSource for StubSearchSource {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn kind(&self) -> &str {
+        "test"
+    }
+    async fn search_page(&self, _query: &str, page: u32) -> SourceResult<Vec<DiscoveredRelease>> {
+        if let Some(d) = self.delay {
+            tokio::time::sleep(d).await;
+        }
+        Ok(if page == 1 {
+            self.hits.clone()
+        } else {
+            Vec::new()
+        })
+    }
+}
+
+/// Router variant for the search-handler tests: builds the search registry
+/// from `(source, is_default)` pairs and mirrors each into a
+/// `SearchEntryConfig` snapshot (nyaa options block with a recognizable
+/// URL) so the entries endpoint has display fields to surface. `locks`
+/// lets a test pre-hold a `search:<name>` lock to assert the skipped path.
+pub fn build_app_with_search(
+    db: DatabaseConnection,
+    auth: AuthConfig,
+    entries: Vec<(StubSearchSource, bool)>,
+    locks: Arc<JobLocks>,
+) -> Router {
+    let cfg = AppConfig {
+        auth: auth.clone(),
+        api: td_config::ApiConfig { docs: false },
+        ..AppConfig::default()
+    };
+    let (job_events, _) = tokio::sync::broadcast::channel(td_api::JOB_EVENT_BUFFER);
+    let metadata = metadata_registry_with(StubProvider {
+        id: "stub",
+        ..Default::default()
+    });
+    let sources = source_registry_with(vec![]);
+    let mut builder = td_source::SearchRegistry::builder();
+    let mut search_config = Vec::new();
+    for (source, is_default) in entries {
+        search_config.push(td_config::SearchEntryConfig {
+            kind: "nyaa".into(),
+            name: source.name.clone(),
+            is_default,
+            enabled: true,
+            max_pages: 3,
+            nyaa: Some(td_config::NyaaSearchOptions {
+                search_url: format!("https://nyaa.test/?c=3_1&entry={}", source.name),
+                ..Default::default()
+            }),
+        });
+        builder
+            .register(td_source::SearchEntry {
+                source: Arc::new(source),
+                is_default,
+                max_pages: 3,
+            })
+            .unwrap();
+    }
+    let state = td_api::AppState {
+        db,
+        sources: Arc::new(sources),
+        metadata: Arc::new(metadata),
+        ingestion: IngestionConfig::default(),
+        auth: Arc::new(auth),
+        locks,
+        sources_config: Arc::new(Vec::new()),
+        search: Arc::new(builder.build()),
+        search_config: Arc::new(search_config),
+        providers_config: Arc::new(ProvidersConfig::default()),
+        metadata_config: Arc::new(td_config::MetadataConfig::default()),
+        query_builder: Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
+        mangaupdates_redirector: None,
+        job_events,
+        cover_cache_dir: None,
+        codex: Arc::new(td_config::CodexConfig::default()),
+        codex_client: None,
+        download: Arc::new(td_config::DownloadConfig::default()),
+        download_client: None,
+    };
+    td_api::router(state, &cfg)
 }
 
 pub fn sample_release(id: &str, source_name: &str, title: &str) -> DiscoveredRelease {
