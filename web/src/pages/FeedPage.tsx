@@ -67,7 +67,15 @@ export function FeedPage() {
       >
         <Box
           w={280}
-          style={{ flexShrink: 0 }}
+          // Cap the sticky sidebar at the viewport height below the header
+          // (56px header + 16px gap above, 16px breathing room below) and
+          // scroll it internally; otherwise a panel taller than the screen
+          // pins its bottom controls permanently offscreen.
+          style={{
+            flexShrink: 0,
+            maxHeight: "calc(100dvh - 88px)",
+            overflowY: "auto",
+          }}
           pos="sticky"
           top={72}
           visibleFrom="sm"
