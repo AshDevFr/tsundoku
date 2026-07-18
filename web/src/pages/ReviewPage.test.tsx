@@ -853,7 +853,12 @@ describe("ReviewPage", () => {
     });
   });
 
-  it("bulk-rejects an entire group via select-all-matching", async () => {
+  // Renders 22 review cards and walks the full escalate → confirm → drain
+  // flow; on slow CI runners it legitimately takes ~5s, right at vitest's
+  // default 5000ms timeout, so it gets an explicit one.
+  it("bulk-rejects an entire group via select-all-matching", {
+    timeout: 15_000,
+  }, async () => {
     useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
     // 21 group members (one more than a page) so "select all matching" surfaces
     // and the bulk request carries the searchQuery filter, not explicit ids.
