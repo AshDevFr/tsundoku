@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.15.1] - 2026-07-18
+
+### Bug Fixes
+
+- *(web)* Let the sticky filter panel scroll when taller than the viewport
+
 ## [1.15.0] - 2026-06-23
 
 ### Features
