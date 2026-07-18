@@ -36,6 +36,13 @@ pub struct AppConfig {
     /// scheduler keys on `name`.
     #[serde(default)]
     pub sources: Vec<SourceConfig>,
+    /// Configured release-search endpoints for the per-series "Search
+    /// releases" action. Decoupled from `sources`: a series doesn't know
+    /// which source discovered it (and the prime target, a wishlisted or
+    /// orphan series, has no releases at all), so search targets are their
+    /// own named entries. Order is the UI's dropdown order.
+    #[serde(default)]
+    pub search: Vec<SearchEntryConfig>,
     pub ingestion: IngestionConfig,
     pub codex: CodexConfig,
     pub download: DownloadConfig,
@@ -49,6 +56,7 @@ impl AppConfig {
     pub fn validate(&self) -> anyhow::Result<()> {
         self.codex.validate()?;
         self.download.validate()?;
+        validate_search_entries(&self.search)?;
         Ok(())
     }
 }
@@ -549,6 +557,108 @@ pub struct NyaaSourceOptions {
     pub site_base_url: String,
 }
 
+/// One configured release-search endpoint for the per-series "Search
+/// releases" action. Mirrors [`SourceConfig`]'s shape: `kind` is the
+/// discriminator, per-kind connection details nest under their own block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchEntryConfig {
+    /// Search kind discriminator (e.g. `"nyaa"`).
+    pub kind: String,
+    /// Entry name, unique across all entries. Shown in the UI dropdown and
+    /// stamped as `source_name` on releases this search discovers first.
+    pub name: String,
+    /// Marks this entry as the split button's primary action. At most one
+    /// enabled entry may set it; when none does, the first enabled entry
+    /// is the default.
+    #[serde(default, rename = "default")]
+    pub is_default: bool,
+    /// Disabled entries are skipped at registry build time and exempt from
+    /// per-entry validation, like disabled sources.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Per-query pagination cap: a title's page walk stops at this page
+    /// even if results keep coming. Nyaa search rarely exceeds 2-3 pages;
+    /// the cap is a runaway guard, not a tuning knob.
+    #[serde(default = "default_search_max_pages")]
+    pub max_pages: u32,
+    /// Per-kind nested options. The relevant variant must match `kind`.
+    #[serde(default)]
+    pub nyaa: Option<NyaaSearchOptions>,
+}
+
+fn default_search_max_pages() -> u32 {
+    5
+}
+
+/// Nyaa-specific search options, populated from `[search.nyaa]` under the
+/// matching `[[search]]` entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NyaaSearchOptions {
+    /// Paginated HTML listing URL with the category/filter params baked in
+    /// (e.g. `https://nyaa.si/?f=0&c=3_1`). The search appends `&q=<title>`
+    /// and `&p=<page>`; it is deliberately *not* the RSS `feed_url`, since
+    /// Nyaa's RSS view silently ignores `&p=N`.
+    pub search_url: String,
+    /// HTTP timeout (seconds) for listing and detail fetches.
+    pub timeout_seconds: u32,
+    /// Fetch each hit's detail HTML to enrich the file list and external
+    /// links, same trade-off as the source-side flag.
+    pub fetch_details: bool,
+    /// Override for the site base URL. Useful when the listing is proxied.
+    pub site_base_url: String,
+}
+
+/// Cross-entry validation for `[[search]]`: unique names, at most one
+/// enabled default, and each enabled entry carries a usable options block
+/// for its kind. Runs at load time so a broken block fails the boot, not
+/// the first button click.
+fn validate_search_entries(entries: &[SearchEntryConfig]) -> anyhow::Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for entry in entries {
+        if !seen.insert(entry.name.as_str()) {
+            anyhow::bail!(
+                "[[search]] entry named {:?} appears more than once",
+                entry.name
+            );
+        }
+    }
+    let defaults: Vec<&str> = entries
+        .iter()
+        .filter(|e| e.enabled && e.is_default)
+        .map(|e| e.name.as_str())
+        .collect();
+    if defaults.len() > 1 {
+        anyhow::bail!(
+            "multiple [[search]] entries marked default = true: {}; mark at most one",
+            defaults.join(", ")
+        );
+    }
+    for entry in entries.iter().filter(|e| e.enabled) {
+        match entry.kind.as_str() {
+            "nyaa" => {
+                let opts = entry.nyaa.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "search entry {:?} (kind=nyaa) is missing the [search.nyaa] options block",
+                        entry.name
+                    )
+                })?;
+                if opts.search_url.is_empty() {
+                    anyhow::bail!(
+                        "search entry {:?} (kind=nyaa) requires [search.nyaa].search_url",
+                        entry.name
+                    );
+                }
+            }
+            other => anyhow::bail!(
+                "search entry {:?} has unknown kind {other:?} (only \"nyaa\" is supported)",
+                entry.name
+            ),
+        }
+    }
+    Ok(())
+}
+
 /// Settings for the resolution pipeline. Controls how raw `releases` rows
 /// get resolved to `series` rows: fuzzy-match threshold, review-queue
 /// behavior, and format/type validation rules.
@@ -772,6 +882,17 @@ impl Default for NyaaSourceOptions {
     fn default() -> Self {
         Self {
             feed_url: String::new(),
+            timeout_seconds: 30,
+            fetch_details: true,
+            site_base_url: "https://nyaa.si".into(),
+        }
+    }
+}
+
+impl Default for NyaaSearchOptions {
+    fn default() -> Self {
+        Self {
+            search_url: String::new(),
             timeout_seconds: 30,
             fetch_details: true,
             site_base_url: "https://nyaa.si".into(),
@@ -1620,6 +1741,157 @@ enabled = true
         write_starter(&path, true).unwrap();
         let after_force = std::fs::read_to_string(&path).unwrap();
         assert_eq!(after_force, STARTER_CONFIG_TOML);
+    }
+
+    fn search_entry(name: &str, is_default: bool, enabled: bool) -> SearchEntryConfig {
+        SearchEntryConfig {
+            kind: "nyaa".into(),
+            name: name.into(),
+            is_default,
+            enabled,
+            max_pages: 5,
+            nyaa: Some(NyaaSearchOptions {
+                search_url: "https://nyaa.si/?f=0&c=3_1".into(),
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn config_with_search(entries: Vec<SearchEntryConfig>) -> AppConfig {
+        AppConfig {
+            search: entries,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn search_entries_parse_from_toml_with_defaults() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tsundoku.toml");
+        writeln!(
+            std::fs::File::create(&path).unwrap(),
+            r#"
+[[search]]
+kind = "nyaa"
+name = "Nyaa Literature - Eng"
+default = true
+[search.nyaa]
+search_url = "https://nyaa.si/?f=0&c=3_1"
+
+[[search]]
+kind = "nyaa"
+name = "Nyaa Literature - Raw"
+[search.nyaa]
+search_url = "https://nyaa.si/?f=0&c=3_3"
+fetch_details = false
+"#
+        )
+        .unwrap();
+
+        let cfg = load(&path).unwrap();
+        assert_eq!(cfg.search.len(), 2);
+        let eng = &cfg.search[0];
+        assert_eq!(eng.name, "Nyaa Literature - Eng");
+        assert!(eng.is_default);
+        assert!(eng.enabled);
+        assert_eq!(eng.max_pages, 5);
+        let eng_opts = eng.nyaa.as_ref().unwrap();
+        assert_eq!(eng_opts.search_url, "https://nyaa.si/?f=0&c=3_1");
+        assert_eq!(eng_opts.timeout_seconds, 30);
+        assert!(eng_opts.fetch_details);
+        assert_eq!(eng_opts.site_base_url, "https://nyaa.si");
+        let raw = &cfg.search[1];
+        assert!(!raw.is_default);
+        assert!(!raw.nyaa.as_ref().unwrap().fetch_details);
+    }
+
+    #[test]
+    fn search_validation_accepts_valid_entries() {
+        let cfg = config_with_search(vec![
+            search_entry("eng", true, true),
+            search_entry("raw", false, true),
+        ]);
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn search_validation_accepts_no_entries() {
+        AppConfig::default().validate().unwrap();
+    }
+
+    #[test]
+    fn search_validation_rejects_duplicate_names() {
+        let cfg = config_with_search(vec![
+            search_entry("eng", true, true),
+            search_entry("eng", false, false),
+        ]);
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("eng"), "unexpected error: {err}");
+        assert!(err.contains("more than once"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn search_validation_rejects_two_enabled_defaults() {
+        let cfg = config_with_search(vec![
+            search_entry("eng", true, true),
+            search_entry("raw", true, true),
+        ]);
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("default"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn search_validation_ignores_disabled_default_for_uniqueness() {
+        // A disabled entry marked default doesn't conflict with the enabled one.
+        let cfg = config_with_search(vec![
+            search_entry("eng", true, true),
+            search_entry("raw", true, false),
+        ]);
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn search_validation_requires_nyaa_options_block() {
+        let mut entry = search_entry("eng", false, true);
+        entry.nyaa = None;
+        let err = config_with_search(vec![entry])
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("[search.nyaa]"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn search_validation_requires_search_url() {
+        let mut entry = search_entry("eng", false, true);
+        entry.nyaa.as_mut().unwrap().search_url = String::new();
+        let err = config_with_search(vec![entry])
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("search_url"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn search_validation_rejects_unknown_kind() {
+        let mut entry = search_entry("eng", false, true);
+        entry.kind = "torrentz".into();
+        let err = config_with_search(vec![entry])
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("torrentz"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn search_validation_skips_disabled_entries_per_entry_checks() {
+        // A disabled entry with a broken options block must not fail boot,
+        // matching how disabled sources are skipped at registry build.
+        let mut entry = search_entry("broken", false, false);
+        entry.nyaa = None;
+        let cfg = config_with_search(vec![entry, search_entry("eng", true, true)]);
+        cfg.validate().unwrap();
     }
 
     #[test]

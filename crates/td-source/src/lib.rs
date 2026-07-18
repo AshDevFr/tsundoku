@@ -17,6 +17,7 @@ pub mod error;
 pub mod format;
 pub mod registry;
 pub mod release;
+pub mod search;
 pub mod source;
 pub mod span;
 
@@ -24,6 +25,9 @@ pub use error::{SourceError, SourceResult};
 pub use format::{Format, detect_formats};
 pub use registry::{SourceRegistry, SourceRegistryBuilder};
 pub use release::{DiscoveredRelease, ExternalLinks, PollContext, PollOutcome};
+pub use search::{
+    SearchEntry, SearchRegistry, SearchRegistryBuilder, SearchRegistryError, SearchSource,
+};
 pub use source::{Backfillable, DiscoverySource};
 pub use span::{
     ReleaseSpans, Span, detect_spans, merge_spans, spans_from_json, spans_max_end, spans_to_json,

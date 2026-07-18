@@ -73,6 +73,21 @@ pub async fn run(config_path: PathBuf, explicit_config: bool) -> anyhow::Result<
         &cfg,
         limiter.clone(),
     )?);
+    // Built at boot even though nothing consumes it yet (the per-series
+    // search endpoint arrives with its API surface): constructing every
+    // entry here means a broken [[search]] block fails the launch, not the
+    // operator's first button click.
+    let search = crate::search_registry::build_search_registry(&cfg, limiter.clone())?;
+    if !search.is_empty() {
+        tracing::info!(
+            entries = search.len(),
+            default = search
+                .default_entry()
+                .map(|e| e.source.name())
+                .unwrap_or("-"),
+            "release-search registry ready"
+        );
+    }
     let metadata = Arc::new(crate::metadata::build_registry(&cfg, limiter.clone()).await?);
     let locks = Arc::new(JobLocks::default());
     // One shared MangaUpdates redirector for the whole process: scheduler

@@ -1,6 +1,7 @@
 mod commands;
 mod http_limiter;
 mod metadata;
+mod search_registry;
 mod source_registry;
 
 use std::path::PathBuf;

@@ -183,6 +183,38 @@ poll_write_batch_size = 10
 # after first install, run `tsundoku backfill <name> --pages N` once — it
 # walks the paginated HTML listing pages, which the RSS feed does not.
 
+# --- Release search endpoints (optional) ----------------------------------
+# Named search targets for the admin-only, per-series "Search releases"
+# action. Each entry is one endpoint; discovered releases go through the
+# normal resolution pipeline (they are NOT force-linked to the series you
+# searched from). Entries are independent of [[sources]].
+#
+# `search_url` is the paginated HTML listing URL with the category/filter
+# params baked in; the search appends `&q=<title>` and `&p=<page>` itself.
+# `default = true` marks the split button's primary action (at most one;
+# with none marked, the first enabled entry is the default).
+#
+# [[search]]
+# kind      = "nyaa"
+# name      = "Nyaa Literature - Eng"
+# default   = true
+# enabled   = true
+# max_pages = 5              # per-title pagination cap (runaway guard)
+#   [search.nyaa]
+#   search_url      = "https://nyaa.si/?f=0&c=3_1"
+#   fetch_details   = true   # fetch each hit's detail page to enrich files + external links
+#   timeout_seconds = 30
+#   site_base_url   = "https://nyaa.si"
+#
+# A second entry against the raw category makes Japanese-script alternate
+# titles productive (they rarely match in the English-translated category):
+#
+# [[search]]
+# kind = "nyaa"
+# name = "Nyaa Literature - Raw"
+#   [search.nyaa]
+#   search_url = "https://nyaa.si/?f=0&c=3_3"
+
 # --- Codex integration (optional) ----------------------------------------
 # Powers the admin-only "presence overlay": which discovered series you
 # already own on your Codex library, and whether newer volumes/chapters have

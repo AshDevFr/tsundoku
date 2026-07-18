@@ -137,54 +137,13 @@ impl DiscoverySource for NyaaSource {
         if !self.cfg.fetch_details {
             return Ok(());
         }
-        // Failures are non-fatal by trait contract: log and return Ok so the
-        // scheduler still persists + resolves with whatever RSS-only data
-        // we already have. A flaky detail-page host shouldn't sink a poll.
-        let html = match self.fetcher.fetch_detail(&release.link).await {
-            Ok(html) => html,
-            Err(e) => {
-                tracing::warn!(
-                    source = %self.cfg.name,
-                    link = %release.link,
-                    error = ?e,
-                    "failed to fetch nyaa detail page; keeping rss-only data"
-                );
-                return Ok(());
-            }
-        };
-        let detail = match crate::detail::parse_detail(&html, &self.cfg.site_base_url) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::warn!(
-                    source = %self.cfg.name,
-                    link = %release.link,
-                    error = %e,
-                    "failed to parse nyaa detail page; keeping rss-only data"
-                );
-                return Ok(());
-            }
-        };
-        if !detail.files.is_empty() {
-            release.files = detail.files;
-        }
-        if !detail.external_links.is_empty() {
-            release.external_links = detail.external_links;
-        }
-        if !detail.comment_suggested_links.is_empty() {
-            release.comment_suggested_links = detail.comment_suggested_links;
-        }
-        if detail.information_url.is_some() {
-            release.information_url = detail.information_url;
-        }
-        if release.magnet.is_none() {
-            release.magnet = detail.magnet;
-        }
-        // RSS gives us a short anchor + size + category + hash; the detail
-        // page has the uploader's actual body (markdown). Prefer the latter
-        // when present — it's what the review UI surfaces to the operator.
-        if let Some(desc) = detail.description_html {
-            release.description_html = Some(desc);
-        }
+        enrich_from_detail(
+            &self.fetcher,
+            &self.cfg.name,
+            &self.cfg.site_base_url,
+            release,
+        )
+        .await;
         Ok(())
     }
 
@@ -212,6 +171,67 @@ impl Backfillable for NyaaSource {
             "parsed nyaa listing page"
         );
         Ok(releases)
+    }
+}
+
+/// Fetch + parse a post's detail page and fold the richer fields into
+/// `release`. Shared by the poll path ([`NyaaSource::enrich`]) and the
+/// per-series search path ([`crate::search::NyaaSearch`]).
+///
+/// Infallible by design: enrich failures are non-fatal by trait contract,
+/// so any fetch/parse problem is logged and the release keeps whatever
+/// data the feed/listing pass already provided. A flaky detail-page host
+/// shouldn't sink a poll or a search.
+pub(crate) async fn enrich_from_detail(
+    fetcher: &Fetcher,
+    source_name: &str,
+    site_base_url: &str,
+    release: &mut DiscoveredRelease,
+) {
+    let html = match fetcher.fetch_detail(&release.link).await {
+        Ok(html) => html,
+        Err(e) => {
+            tracing::warn!(
+                source = %source_name,
+                link = %release.link,
+                error = ?e,
+                "failed to fetch nyaa detail page; keeping feed-only data"
+            );
+            return;
+        }
+    };
+    let detail = match crate::detail::parse_detail(&html, site_base_url) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(
+                source = %source_name,
+                link = %release.link,
+                error = %e,
+                "failed to parse nyaa detail page; keeping feed-only data"
+            );
+            return;
+        }
+    };
+    if !detail.files.is_empty() {
+        release.files = detail.files;
+    }
+    if !detail.external_links.is_empty() {
+        release.external_links = detail.external_links;
+    }
+    if !detail.comment_suggested_links.is_empty() {
+        release.comment_suggested_links = detail.comment_suggested_links;
+    }
+    if detail.information_url.is_some() {
+        release.information_url = detail.information_url;
+    }
+    if release.magnet.is_none() {
+        release.magnet = detail.magnet;
+    }
+    // The feed/listing gives a short anchor + size + category + hash; the
+    // detail page has the uploader's actual body (markdown). Prefer the
+    // latter when present — it's what the review UI surfaces.
+    if let Some(desc) = detail.description_html {
+        release.description_html = Some(desc);
     }
 }
 
