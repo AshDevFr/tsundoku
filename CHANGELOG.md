@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.15.2] - 2026-07-18
+
+### Testing
+
+- *(web)* Give the heavy select-all-matching review test an explicit timeout
+
 ## [1.15.1] - 2026-07-18
 
 ### Bug Fixes
