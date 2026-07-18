@@ -1,17 +1,20 @@
 import {
   Alert,
+  Badge,
   Button,
   Center,
   Group,
   Loader,
+  Paper,
   SimpleGrid,
   Stack,
+  Table,
   Text,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { usePollAllSources } from "@/api/mutations";
-import { useSources } from "@/api/queries";
+import { useSearchEntries, useSources } from "@/api/queries";
 import { SourceCard } from "@/components/admin/SourceCard";
 
 /// Sources list page. Identical surface to the old admin tab but now
@@ -88,6 +91,73 @@ export function AdminSourcesListPage() {
           ))}
         </SimpleGrid>
       )}
+
+      <SearchEndpointsSection />
+    </Stack>
+  );
+}
+
+/// Read-only listing of the configured `[[search]]` release-search
+/// endpoints. Config-only like sources and the download client: there is
+/// deliberately no editing here. Self-gating: renders nothing when no
+/// entries are configured (the whole feature is dormant then).
+function SearchEndpointsSection() {
+  const entries = useSearchEntries();
+  const items = entries.data?.items ?? [];
+  if (items.length === 0) return null;
+
+  return (
+    <Stack gap="xs" data-testid="search-endpoints-section">
+      <Stack gap={2}>
+        <Title order={4}>Search endpoints</Title>
+        <Text size="sm" c="dimmed">
+          Targets for the per-series "Search releases" action, from the
+          `[[search]]` config. The default entry is the button's primary action.
+        </Text>
+      </Stack>
+      <Paper withBorder radius="md" p="sm" style={{ overflowX: "auto" }}>
+        <Table verticalSpacing="xs" fz="sm">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Name</Table.Th>
+              <Table.Th>Kind</Table.Th>
+              <Table.Th>Search URL</Table.Th>
+              <Table.Th>Max pages</Table.Th>
+              <Table.Th>Detail fetch</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {items.map((e) => (
+              <Table.Tr key={e.name} data-testid={`search-endpoint-${e.name}`}>
+                <Table.Td>
+                  <Group gap={6} wrap="nowrap">
+                    <Text size="sm" fw={500}>
+                      {e.name}
+                    </Text>
+                    {e.default && (
+                      <Badge size="xs" variant="light" color="blue">
+                        default
+                      </Badge>
+                    )}
+                  </Group>
+                </Table.Td>
+                <Table.Td>{e.kind}</Table.Td>
+                <Table.Td>
+                  <Text
+                    size="sm"
+                    ff="monospace"
+                    style={{ wordBreak: "break-all" }}
+                  >
+                    {e.searchUrl}
+                  </Text>
+                </Table.Td>
+                <Table.Td>{e.maxPages}</Table.Td>
+                <Table.Td>{e.fetchDetails ? "on" : "off"}</Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      </Paper>
     </Stack>
   );
 }

@@ -15,7 +15,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ADMIN_TEST_TOKEN,
   resetReviewQueue,
+  resetSearch,
   resetSeries,
+  seedSearchEntries,
+  setSearchBusy,
 } from "@/mocks/handlers";
 import { server } from "@/mocks/server";
 import { useAdminAuth } from "@/stores/auth";
@@ -65,6 +68,7 @@ describe("SeriesDetailPage", () => {
   beforeEach(() => {
     resetReviewQueue();
     resetSeries();
+    resetSearch();
     useAdminAuth.getState().clear();
   });
 
@@ -320,5 +324,87 @@ describe("SeriesDetailPage", () => {
     expect(
       await screen.findByText(/1 sent, 1 failed/, undefined, { timeout: 3000 }),
     ).toBeInTheDocument();
+  });
+
+  it("hides the search-releases button for anon sessions", async () => {
+    renderSeriesDetail(1);
+    await screen.findByText("Chainsaw Man");
+    expect(screen.queryByTestId("search-releases")).not.toBeInTheDocument();
+  });
+
+  it("hides the search-releases button when no entries are configured", async () => {
+    seedSearchEntries([]);
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(1);
+    await screen.findByText("Chainsaw Man");
+    // Give the entries query a beat to resolve empty; the button must not
+    // appear afterwards either.
+    await waitFor(() => {
+      expect(screen.queryByTestId("search-releases")).not.toBeInTheDocument();
+    });
+  });
+
+  // Full happy path exercises the ~2s poll cycle on top of the mock's
+  // simulated walk, so it legitimately needs more than vitest's default
+  // 5s timeout on slow CI runners.
+  it("runs a search and notifies with the new-release count", {
+    timeout: 15_000,
+  }, async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(1);
+    await screen.findByText("Chainsaw Man");
+
+    const btn = await screen.findByTestId("search-releases");
+    fireEvent.click(btn);
+
+    // Mock walk completes after ~700ms; the 2s poll then notices.
+    expect(
+      await screen.findByText(/Search found 3 new releases/, undefined, {
+        timeout: 6000,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an already-running notice when the entry is busy", async () => {
+    setSearchBusy(true);
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(1);
+    await screen.findByText("Chainsaw Man");
+
+    fireEvent.click(await screen.findByTestId("search-releases"));
+    expect(
+      await screen.findByText(/already running/, undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+  });
+
+  it("lets the dropdown pick a non-default entry", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    // Capture the trigger body to prove the picked entry is sent.
+    let sentBody: unknown;
+    server.use(
+      http.post(
+        "/api/v1/series/:id/search-releases",
+        async ({ request, params }) => {
+          sentBody = await request.json();
+          return HttpResponse.json({
+            search: "Nyaa Literature - Raw",
+            seriesId: Number(params.id),
+            triggered: false,
+            skipped: true,
+          });
+        },
+      ),
+    );
+    renderSeriesDetail(1);
+    await screen.findByText("Chainsaw Man");
+
+    fireEvent.click(await screen.findByTestId("search-releases-options"));
+    fireEvent.click(
+      await screen.findByTestId("search-releases-entry-Nyaa Literature - Raw"),
+    );
+
+    await waitFor(() => {
+      expect(sentBody).toEqual({ search: "Nyaa Literature - Raw" });
+    });
   });
 });

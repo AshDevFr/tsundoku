@@ -526,6 +526,79 @@ function bulkTargets(body: BulkReviewRequest): UnresolvedRelease[] {
   });
 }
 
+// --- Per-series release search state -----------------------------------
+
+interface SearchEntryMock {
+  name: string;
+  kind: string;
+  default: boolean;
+  searchUrl: string;
+  maxPages: number;
+  fetchDetails: boolean;
+}
+
+interface SearchRunMock {
+  id: number;
+  ranAt: number;
+  finishedAt: number | null;
+  searchName: string;
+  seriesId: number;
+  trigger: string;
+  outcome: string;
+  queriesAttempted: number | null;
+  pagesFetched: number | null;
+  releasesSeen: number | null;
+  releasesNew: number | null;
+  error: string | null;
+}
+
+const DEFAULT_SEARCH_ENTRIES: SearchEntryMock[] = [
+  {
+    name: "Nyaa Literature - Eng",
+    kind: "nyaa",
+    default: true,
+    searchUrl: "https://nyaa.si/?f=0&c=3_1",
+    maxPages: 5,
+    fetchDetails: true,
+  },
+  {
+    name: "Nyaa Literature - Raw",
+    kind: "nyaa",
+    default: false,
+    searchUrl: "https://nyaa.si/?f=0&c=3_3",
+    maxPages: 5,
+    fetchDetails: true,
+  },
+];
+
+let searchEntries: SearchEntryMock[] = [...DEFAULT_SEARCH_ENTRIES];
+let searchRuns: SearchRunMock[] = [];
+let nextSearchRunId = 1;
+let searchBusy = false;
+/// `releasesNew` stamped on a completed mock run; tests assert on it.
+const searchResultNewCount = 3;
+
+export function seedSearchEntries(entries: SearchEntryMock[]) {
+  searchEntries = entries;
+}
+
+export function seedSearchRuns(runs: SearchRunMock[]) {
+  searchRuns = runs;
+  nextSearchRunId = Math.max(0, ...runs.map((r) => r.id)) + 1;
+}
+
+/// Makes the trigger endpoint answer `skipped` (a walk already in flight).
+export function setSearchBusy(busy: boolean) {
+  searchBusy = busy;
+}
+
+export function resetSearch() {
+  searchEntries = [...DEFAULT_SEARCH_ENTRIES];
+  searchRuns = [];
+  nextSearchRunId = 1;
+  searchBusy = false;
+}
+
 function requireAdmin(request: Request): Response | null {
   // Dev convenience: in mock mode any non-empty Bearer is accepted, so the
   // operator can paste whatever they have in `auth.admin_token` (or any
@@ -2185,5 +2258,94 @@ export const handlers = [
       JSON.stringify({ error: "not_found", message: `release ${id}` }),
       { status: 404, headers: { "content-type": "application/json" } },
     );
+  }),
+
+  // --- Per-series release search (admin-only) ------------------------------
+
+  http.get("/api/v1/search/entries", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({ items: searchEntries });
+  }),
+
+  http.post(
+    "/api/v1/series/:id/search-releases",
+    async ({ request, params }) => {
+      const denied = requireAdmin(request);
+      if (denied) return denied;
+      const seriesId = Number(params.id);
+      const body = (await request.json().catch(() => ({}))) as {
+        search?: string;
+      };
+      if (searchEntries.length === 0) {
+        return new HttpResponse(
+          JSON.stringify({
+            error: "misconfigured",
+            message: "no [[search]] entries configured",
+          }),
+          { status: 503, headers: { "content-type": "application/json" } },
+        );
+      }
+      const entry = body.search
+        ? searchEntries.find((e) => e.name === body.search)
+        : (searchEntries.find((e) => e.default) ?? searchEntries[0]);
+      if (!entry) {
+        return new HttpResponse(
+          JSON.stringify({
+            error: "bad_request",
+            message: `unknown search entry ${JSON.stringify(body.search)}`,
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (searchBusy) {
+        return HttpResponse.json({
+          search: entry.name,
+          seriesId,
+          triggered: false,
+          skipped: true,
+        });
+      }
+      const run: SearchRunMock = {
+        id: nextSearchRunId++,
+        ranAt: NOW,
+        finishedAt: null,
+        searchName: entry.name,
+        seriesId,
+        trigger: "manual",
+        outcome: "running",
+        queriesAttempted: null,
+        pagesFetched: null,
+        releasesSeen: null,
+        releasesNew: null,
+        error: null,
+      };
+      searchRuns.unshift(run);
+      // Complete the walk shortly after, so the UI's poll cycle sees a
+      // `running` row transition to `success` like the real backend.
+      setTimeout(() => {
+        run.outcome = "success";
+        run.finishedAt = NOW + 2;
+        run.queriesAttempted = 3;
+        run.pagesFetched = 4;
+        run.releasesSeen = 41;
+        run.releasesNew = searchResultNewCount;
+      }, 700);
+      return HttpResponse.json({
+        search: entry.name,
+        seriesId,
+        triggered: true,
+        skipped: false,
+      });
+    },
+  ),
+
+  http.get("/api/v1/series/:id/search-runs", ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const seriesId = Number(params.id);
+    return HttpResponse.json({
+      items: searchRuns.filter((r) => r.seriesId === seriesId),
+    });
   }),
 ];

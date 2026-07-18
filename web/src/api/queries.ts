@@ -220,6 +220,47 @@ export function useDownloadStatus() {
   });
 }
 
+/// Configured `[[search]]` release-search endpoints. Admin-only on the
+/// server; gates rendering of the per-series "Search releases" button and
+/// the admin Sources-page section. Config can't change without a restart,
+/// so cache generously.
+export function useSearchEntries() {
+  const hasAdmin = useAdminAuth((s) => Boolean(s.token));
+  return useQuery({
+    queryKey: ["search-entries", { admin: hasAdmin }],
+    enabled: hasAdmin,
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/search/entries");
+      if (error) throw new Error("failed to load search entries");
+      return data;
+    },
+    staleTime: 5 * 60_000,
+  });
+}
+
+/// Recent release-search runs for one series, newest first. Polls while
+/// the newest run is `running` (or while the caller says a run was just
+/// launched via `poll`), so a completed walk is noticed within ~2s.
+export function useSearchRuns(seriesId: number | undefined, poll = false) {
+  const hasAdmin = useAdminAuth((s) => Boolean(s.token));
+  return useQuery({
+    queryKey: ["search-runs", seriesId],
+    enabled:
+      hasAdmin && typeof seriesId === "number" && Number.isFinite(seriesId),
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/series/{id}/search-runs", {
+        params: { path: { id: seriesId as number } },
+      });
+      if (error) throw new Error("failed to load search runs");
+      return data;
+    },
+    refetchInterval: (query) => {
+      const newest = query.state.data?.items?.[0];
+      return poll || newest?.outcome === "running" ? 2000 : false;
+    },
+  });
+}
+
 export function useSeriesReleases(
   seriesId: number | undefined,
   page = 1,

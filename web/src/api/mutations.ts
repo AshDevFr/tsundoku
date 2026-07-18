@@ -380,6 +380,29 @@ function invalidateProviderQueries(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["stats"] });
 }
 
+/// Launch a per-series release search. `search` omitted ⇒ the default
+/// entry. Invalidates the series' run list so the new `running` row shows
+/// up (and starts the poll cycle) immediately.
+export function useSearchReleases() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { seriesId: number; search?: string }) => {
+      const { data, error } = await api.POST(
+        "/api/v1/series/{id}/search-releases",
+        {
+          params: { path: { id: args.seriesId } },
+          body: { search: args.search ?? null },
+        },
+      );
+      if (error || !data)
+        throw new Error(describeError(error, "failed to start search"));
+      return data;
+    },
+    onSuccess: (_data, args) =>
+      qc.invalidateQueries({ queryKey: ["search-runs", args.seriesId] }),
+  });
+}
+
 export function usePollSource() {
   const qc = useQueryClient();
   return useMutation({

@@ -58,6 +58,7 @@ import {
   LinkExistingPanel,
   ProviderSearchPanel,
 } from "@/components/ReleaseLinking";
+import { SearchReleasesButton } from "@/components/SearchReleasesButton";
 import { SendToClientButton, SentBadge } from "@/components/SendToClientButton";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { seriesDetailRoute } from "@/router";
@@ -472,6 +473,7 @@ export function SeriesDetailPage() {
                     ⌕ Search on Nyaa
                   </Button>
                 </Tooltip>
+                <SearchReleasesButton seriesId={s.id} />
                 {isAdmin && (
                   <Tooltip label="Clip this series to your wishlist (a curated 'download later' list). Independent of Codex ownership; remove it the same way.">
                     <Button
