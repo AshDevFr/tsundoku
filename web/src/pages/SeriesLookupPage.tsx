@@ -18,9 +18,15 @@ import { seriesLookupRoute } from "@/router";
 /// them into their URL templates, so they stay even though the API speaks
 /// `provider`/`externalId`. `title` is optional and only feeds the miss
 /// state's feed-search shortcut.
+///
+/// `id` is `string | number` on purpose: the default TanStack search codec is
+/// JSON-based and type-preserving, so `id=4623` arrives as a number, and
+/// coercing it to a string here would make `stringifySearch` rewrite the
+/// address bar as `id=%224623%22` (JSON-quoted) to keep the string type on a
+/// round-trip. The value is stringified at the point of use instead.
 export interface LookupSearch {
   source?: string;
-  id?: string;
+  id?: string | number;
   title?: string;
 }
 
@@ -30,12 +36,9 @@ export function validateLookupSearch(
   const search: LookupSearch = {};
   if (typeof raw.source === "string" && raw.source.trim())
     search.source = raw.source.trim();
-  // TanStack's default search parser JSON-parses values, so a numeric
-  // external id arrives as a number: normalize back to the string the API
-  // expects.
   if (typeof raw.id === "string" && raw.id.trim()) search.id = raw.id.trim();
   else if (typeof raw.id === "number" && Number.isFinite(raw.id))
-    search.id = String(raw.id);
+    search.id = raw.id;
   if (typeof raw.title === "string" && raw.title.trim())
     search.title = raw.title.trim();
   return search;
@@ -49,7 +52,11 @@ export function validateLookupSearch(
 export function SeriesLookupPage() {
   const { source, id, title } = seriesLookupRoute.useSearch();
   const navigate = useNavigate();
-  const lookup = useSeriesLookup(source, id);
+  // The API takes the id as a string; the search param keeps its parsed type
+  // (see LookupSearch). `!== undefined` rather than truthiness so a numeric
+  // id of 0 still counts as present.
+  const idString = id !== undefined ? String(id) : undefined;
+  const lookup = useSeriesLookup(source, idString);
   const seriesId = lookup.data;
 
   useEffect(() => {
@@ -68,7 +75,7 @@ export function SeriesLookupPage() {
     </Anchor>
   );
 
-  if (!source || !id) {
+  if (!source || idString === undefined) {
     return (
       <Center mih="60vh">
         <Stack align="center" gap="sm">
@@ -97,8 +104,8 @@ export function SeriesLookupPage() {
         <Stack align="center" gap="sm">
           <Title order={3}>Series lookup failed</Title>
           <Text c="dimmed" ta="center">
-            Looking up <Code>{`${source}:${id}`}</Code> hit an unexpected error.
-            Try again in a moment.
+            Looking up <Code>{`${source}:${idString}`}</Code> hit an unexpected
+            error. Try again in a moment.
           </Text>
           {feedLink}
         </Stack>
@@ -111,8 +118,8 @@ export function SeriesLookupPage() {
       <Stack align="center" gap="sm">
         <Title order={3}>This series isn't in tsundoku yet</Title>
         <Text c="dimmed" ta="center">
-          No discovered series matches <Code>{`${source}:${id}`}</Code>. It
-          shows up here once a release for it is discovered and resolved.
+          No discovered series matches <Code>{`${source}:${idString}`}</Code>.
+          It shows up here once a release for it is discovered and resolved.
         </Text>
         {title ? (
           // `renderRoot` instead of `component={Link}`: Mantine's polymorphic

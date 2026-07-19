@@ -56,6 +56,21 @@ function renderLookup(initialEntry: string) {
   return { ...view, router };
 }
 
+describe("validateLookupSearch", () => {
+  it("keeps a numeric id as a number so the URL round-trips unquoted", () => {
+    // The default TanStack search codec JSON-parses `id=4623` to a number;
+    // coercing it to a string here would make stringifySearch re-serialize
+    // the address bar as id=%224623%22.
+    expect(validateLookupSearch({ id: 4623 })).toEqual({ id: 4623 });
+  });
+
+  it("trims a string id and keeps it a string", () => {
+    expect(validateLookupSearch({ id: " 6z1uqw7 " })).toEqual({
+      id: "6z1uqw7",
+    });
+  });
+});
+
 describe("SeriesLookupPage", () => {
   beforeEach(() => {
     resetSeries();
