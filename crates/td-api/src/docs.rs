@@ -35,8 +35,8 @@ use crate::handlers::releases::{
     UnresolvedRelease,
 };
 use crate::handlers::search::{
-    SearchEntriesResponse, SearchEntryDto, SearchReleasesRequest, SearchReleasesResponse,
-    SearchRunDto, SearchRunsResponse,
+    GlobalSearchRunDto, GlobalSearchRunsResponse, SearchEntriesResponse, SearchEntryDto,
+    SearchReleasesRequest, SearchReleasesResponse, SearchRunDto, SearchRunsResponse,
 };
 use crate::handlers::series::{
     CoverageSpanDto, CreateSeriesFromProviderRequest, CreateSeriesRequest, ExternalIdDto,
@@ -46,7 +46,7 @@ use crate::handlers::series::{
 };
 use crate::handlers::sources::{
     ManualBackfillResponse, ManualPollResponse, ManualReenrichResponse, PollAllResponse,
-    ReenrichRequest, SourceConfigDto, SourceDto, SourceList,
+    ReenrichRequest, SourceConfigDto, SourceDto, SourceList, SourceRunDto, SourceRunsResponse,
 };
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
@@ -125,6 +125,8 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         search::entries,
         search::trigger,
         search::runs,
+        search::global_runs,
+        sources::runs,
     ),
     components(schemas(
         ApiErrorBody,
@@ -134,6 +136,10 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         SearchReleasesResponse,
         SearchRunDto,
         SearchRunsResponse,
+        GlobalSearchRunDto,
+        GlobalSearchRunsResponse,
+        SourceRunDto,
+        SourceRunsResponse,
         health::Health,
         info::AppInfo,
         StatsResponse,

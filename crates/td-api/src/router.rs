@@ -89,8 +89,12 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         // Per-series release search: admin-only, entries list included —
         // it exposes config naming, which stays off the public read tier.
         .route("/search/entries", get(search::entries))
+        .route("/search/runs", get(search::global_runs))
         .route("/series/{id}/search-releases", post(search::trigger))
         .route("/series/{id}/search-runs", get(search::runs))
+        // Per-run history behind the aggregated metrics: admin-only like
+        // every other run/audit surface (error messages stay private).
+        .route("/sources/{name}/runs", get(sources::runs))
         .route_layer(middleware::from_fn_with_state(
             auth.clone(),
             auth::require_admin,

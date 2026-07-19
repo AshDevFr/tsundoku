@@ -594,3 +594,86 @@ pub async fn reenrich(
         skipped: !triggered,
     }))
 }
+
+/// One `poll_runs` row: a poll, backfill, or re-enrich run for this
+/// source (they share the lane; `trigger` and `progressPhase` tell them
+/// apart). Counts and durations are set only once the run finished.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceRunDto {
+    pub id: i64,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    /// `running` | `success` | `failure` | `skipped`.
+    pub status: String,
+    pub trigger: String,
+    pub fetched_count: Option<i32>,
+    pub new_count: Option<i32>,
+    pub resolved_count: Option<i32>,
+    pub error_kind: Option<String>,
+    pub error_message: Option<String>,
+    pub fetch_duration_ms: Option<i64>,
+    pub enrich_duration_ms: Option<i64>,
+    pub resolve_duration_ms: Option<i64>,
+    pub progress_phase: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceRunsResponse {
+    pub items: Vec<SourceRunDto>,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceRunsQuery {
+    /// Maximum rows to return (newest first). Defaults to 10, capped at 50.
+    pub limit: Option<u64>,
+}
+
+/// Recent runs for one source, newest first: the per-run timeline behind
+/// the aggregated metrics card.
+#[utoipa::path(
+    get,
+    path = "/api/v1/sources/{name}/runs",
+    tag = "sources",
+    operation_id = "source_runs",
+    params(("name" = String, Path, description = "Source instance name"), SourceRunsQuery),
+    responses(
+        (status = 200, body = SourceRunsResponse),
+        (status = 404, description = "No source with that name registered")
+    ),
+    security(("admin" = []))
+)]
+pub async fn runs(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(q): Query<SourceRunsQuery>,
+) -> ApiResult<Json<SourceRunsResponse>> {
+    if state.sources.get(&name).is_none() {
+        return Err(ApiError::NotFound(format!("source {name:?}")));
+    }
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    let items = run_metrics_repo::recent_source_runs(&state.db, &name, limit)
+        .await
+        .map_err(ApiError::from)?
+        .into_iter()
+        .map(|r| SourceRunDto {
+            id: r.id,
+            started_at: r.started_at,
+            finished_at: r.finished_at,
+            status: r.status,
+            trigger: r.trigger,
+            fetched_count: r.fetched_count,
+            new_count: r.new_count,
+            resolved_count: r.resolved_count,
+            error_kind: r.error_kind,
+            error_message: r.error_message,
+            fetch_duration_ms: r.fetch_duration_ms,
+            enrich_duration_ms: r.enrich_duration_ms,
+            resolve_duration_ms: r.resolve_duration_ms,
+            progress_phase: r.progress_phase,
+        })
+        .collect();
+    Ok(Json(SourceRunsResponse { items }))
+}

@@ -725,6 +725,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/search/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent search runs across every series, newest first, for the admin
+         *     Sources page's global timeline.
+         */
+        get: operations["global_search_runs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series": {
         parameters: {
             query?: never;
@@ -1041,7 +1061,7 @@ export interface paths {
          * Recent search runs for one series, newest first. The newest row's
          *     `outcome = running` is the "search in flight" signal the UI polls.
          */
-        get: operations["runs"];
+        get: operations["series_search_runs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1196,6 +1216,26 @@ export interface paths {
          *     (returns `skipped = true` when work is already in flight).
          */
         post: operations["reenrich"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sources/{name}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent runs for one source, newest first: the per-run timeline behind
+         *     the aggregated metrics card.
+         */
+        get: operations["source_runs"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1544,6 +1584,16 @@ export interface components {
             p50Ms?: number | null;
             /** Format: double */
             p95Ms?: number | null;
+        };
+        /**
+         * @description One run for the global timeline: a [`SearchRunDto`] plus the series'
+         *     canonical title so the admin list can link each row to its series.
+         */
+        GlobalSearchRunDto: components["schemas"]["SearchRunDto"] & {
+            seriesTitle: string;
+        };
+        GlobalSearchRunsResponse: {
+            items: components["schemas"]["GlobalSearchRunDto"][];
         };
         Health: {
             status: string;
@@ -2692,6 +2742,40 @@ export interface components {
             /** Format: int64 */
             totalRuns: number;
         };
+        /**
+         * @description One `poll_runs` row: a poll, backfill, or re-enrich run for this
+         *     source (they share the lane; `trigger` and `progressPhase` tell them
+         *     apart). Counts and durations are set only once the run finished.
+         */
+        SourceRunDto: {
+            /** Format: int64 */
+            enrichDurationMs?: number | null;
+            errorKind?: string | null;
+            errorMessage?: string | null;
+            /** Format: int64 */
+            fetchDurationMs?: number | null;
+            /** Format: int32 */
+            fetchedCount?: number | null;
+            /** Format: int64 */
+            finishedAt?: number | null;
+            /** Format: int64 */
+            id: number;
+            /** Format: int32 */
+            newCount?: number | null;
+            progressPhase?: string | null;
+            /** Format: int64 */
+            resolveDurationMs?: number | null;
+            /** Format: int32 */
+            resolvedCount?: number | null;
+            /** Format: int64 */
+            startedAt: number;
+            /** @description `running` | `success` | `failure` | `skipped`. */
+            status: string;
+            trigger: string;
+        };
+        SourceRunsResponse: {
+            items: components["schemas"]["SourceRunDto"][];
+        };
         StatsResponse: {
             activeProvider: string;
             releases: components["schemas"]["ReleaseCounts"];
@@ -3830,6 +3914,28 @@ export interface operations {
             };
         };
     };
+    global_search_runs: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return (newest first). Defaults to 10. */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalSearchRunsResponse"];
+                };
+            };
+        };
+    };
     list_series: {
         parameters: {
             query?: {
@@ -4425,7 +4531,7 @@ export interface operations {
             };
         };
     };
-    runs: {
+    series_search_runs: {
         parameters: {
             query?: {
                 /** @description Maximum rows to return (newest first). Defaults to 10. */
@@ -4648,6 +4754,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description No source with that name registered */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    source_runs: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return (newest first). Defaults to 10, capped at 50. */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Source instance name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceRunsResponse"];
+                };
             };
             /** @description No source with that name registered */
             404: {

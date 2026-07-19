@@ -6731,3 +6731,175 @@ async fn search_runs_lists_newest_first_and_404s_on_unknown_series() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+// ---------------------------------------------------------------------------
+// Run history timelines
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn source_runs_lists_newest_first_with_counts_and_errors() {
+    let db = fresh_db().await;
+
+    let ok = run_metrics_repo::start_poll_run(&db, "a", "stub", 100, "cron")
+        .await
+        .unwrap();
+    run_metrics_repo::finalize_poll_run(
+        &db,
+        ok,
+        160,
+        run_metrics_repo::status::SUCCESS,
+        run_metrics_repo::PollRunCounts {
+            fetched: Some(75),
+            new: Some(4),
+            resolved: Some(3),
+            fetch_duration_ms: Some(1200),
+            ..Default::default()
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let failed = run_metrics_repo::start_poll_run(&db, "a", "stub", 200, "manual")
+        .await
+        .unwrap();
+    run_metrics_repo::finalize_poll_run(
+        &db,
+        failed,
+        210,
+        run_metrics_repo::status::FAILURE,
+        run_metrics_repo::PollRunCounts::default(),
+        Some("nyaa timed out"),
+        Some("timeout"),
+    )
+    .await
+    .unwrap();
+    // A run for another source must not leak into the list.
+    run_metrics_repo::start_poll_run(&db, "b", "stub", 300, "cron")
+        .await
+        .unwrap();
+
+    let app = common::build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![
+            StubSource {
+                name: "a".into(),
+                kind: "stub".into(),
+                outcome: PollOutcome::default(),
+            },
+            StubSource {
+                name: "b".into(),
+                kind: "stub".into(),
+                outcome: PollOutcome::default(),
+            },
+        ]),
+        open_auth(),
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/sources/a/runs")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["trigger"], "manual");
+    assert_eq!(items[0]["status"], "failure");
+    assert_eq!(items[0]["errorMessage"], "nyaa timed out");
+    assert_eq!(items[0]["errorKind"], "timeout");
+    assert_eq!(items[1]["status"], "success");
+    assert_eq!(items[1]["fetchedCount"], 75);
+    assert_eq!(items[1]["newCount"], 4);
+    assert_eq!(items[1]["resolvedCount"], 3);
+    assert_eq!(items[1]["fetchDurationMs"], 1200);
+
+    // Unknown source name 404s; anon is rejected.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/sources/nope/runs")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/sources/a/runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn global_search_runs_carry_series_titles() {
+    let db = fresh_db().await;
+    let a = seed_series(&db, "Solo Leveling", "manhwa").await;
+    let b = seed_series(&db, "Frieren", "manga").await;
+    td_db::repos::search_runs_repo::insert_running(&db, 100, "eng", a, "manual")
+        .await
+        .unwrap();
+    td_db::repos::search_runs_repo::insert_running(&db, 200, "raw", b, "cli")
+        .await
+        .unwrap();
+
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![(search_stub("eng", vec![]), true)],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/search/runs")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    // Newest first; the flattened run fields sit beside the joined title.
+    assert_eq!(items[0]["seriesTitle"], "Frieren");
+    assert_eq!(items[0]["searchName"], "raw");
+    assert_eq!(items[0]["trigger"], "cli");
+    assert_eq!(items[0]["outcome"], "running");
+    assert_eq!(items[1]["seriesTitle"], "Solo Leveling");
+
+    // Admin-gated like the rest of the search surface.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/search/runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

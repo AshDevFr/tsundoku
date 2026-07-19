@@ -1468,6 +1468,48 @@
         ]
       }
     },
+    "/api/v1/search/runs": {
+      "get": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Recent search runs across every series, newest first, for the admin\nSources page's global timeline.",
+        "operationId": "global_search_runs",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum rows to return (newest first). Defaults to 10.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalSearchRunsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/series": {
       "get": {
         "tags": [
@@ -2384,7 +2426,7 @@
           "search"
         ],
         "summary": "Recent search runs for one series, newest first. The newest row's\n`outcome = running` is the \"search in flight\" signal the UI polls.",
-        "operationId": "runs",
+        "operationId": "series_search_runs",
         "parameters": [
           {
             "name": "id",
@@ -2692,6 +2734,60 @@
           },
           "400": {
             "description": "Empty or unknown status in the request"
+          },
+          "404": {
+            "description": "No source with that name registered"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/sources/{name}/runs": {
+      "get": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "Recent runs for one source, newest first: the per-run timeline behind\nthe aggregated metrics card.",
+        "operationId": "source_runs",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Source instance name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum rows to return (newest first). Defaults to 10, capped at 50.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceRunsResponse"
+                }
+              }
+            }
           },
           "404": {
             "description": "No source with that name registered"
@@ -3417,6 +3513,39 @@
               "null"
             ],
             "format": "double"
+          }
+        }
+      },
+      "GlobalSearchRunDto": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SearchRunDto"
+          },
+          {
+            "type": "object",
+            "required": [
+              "seriesTitle"
+            ],
+            "properties": {
+              "seriesTitle": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "One run for the global timeline: a [`SearchRunDto`] plus the series'\ncanonical title so the admin list can link each row to its series."
+      },
+      "GlobalSearchRunsResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GlobalSearchRunDto"
+            }
           }
         }
       },
@@ -6049,6 +6178,114 @@
           "totalRuns": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "SourceRunDto": {
+        "type": "object",
+        "description": "One `poll_runs` row: a poll, backfill, or re-enrich run for this\nsource (they share the lane; `trigger` and `progressPhase` tell them\napart). Counts and durations are set only once the run finished.",
+        "required": [
+          "id",
+          "startedAt",
+          "status",
+          "trigger"
+        ],
+        "properties": {
+          "enrichDurationMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "errorKind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fetchDurationMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "fetchedCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "finishedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "newCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "progressPhase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolveDurationMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "resolvedCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "startedAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "string",
+            "description": "`running` | `success` | `failure` | `skipped`."
+          },
+          "trigger": {
+            "type": "string"
+          }
+        }
+      },
+      "SourceRunsResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceRunDto"
+            }
           }
         }
       },

@@ -253,6 +253,7 @@ pub struct SearchRunsResponse {
     get,
     path = "/api/v1/series/{id}/search-runs",
     tag = "search",
+    operation_id = "series_search_runs",
     params(("id" = i32, Path, description = "Series id"), SearchRunsQuery),
     responses(
         (status = 200, body = SearchRunsResponse),
@@ -277,4 +278,61 @@ pub async fn runs(
         .map(SearchRunDto::from)
         .collect();
     Ok(Json(SearchRunsResponse { items }))
+}
+
+/// One run for the global timeline: a [`SearchRunDto`] plus the series'
+/// canonical title so the admin list can link each row to its series.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalSearchRunDto {
+    #[serde(flatten)]
+    pub run: SearchRunDto,
+    pub series_title: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalSearchRunsResponse {
+    pub items: Vec<GlobalSearchRunDto>,
+}
+
+/// Recent search runs across every series, newest first, for the admin
+/// Sources page's global timeline.
+#[utoipa::path(
+    get,
+    path = "/api/v1/search/runs",
+    tag = "search",
+    operation_id = "global_search_runs",
+    params(SearchRunsQuery),
+    responses((status = 200, body = GlobalSearchRunsResponse)),
+    security(("admin" = []))
+)]
+pub async fn global_runs(
+    State(state): State<AppState>,
+    Query(q): Query<SearchRunsQuery>,
+) -> ApiResult<Json<GlobalSearchRunsResponse>> {
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    let items = search_runs_repo::recent_all(&state.db, limit)
+        .await
+        .map_err(ApiError::from)?
+        .into_iter()
+        .map(|r| GlobalSearchRunDto {
+            run: SearchRunDto {
+                id: r.id,
+                ran_at: r.ran_at,
+                finished_at: r.finished_at,
+                search_name: r.search_name,
+                series_id: r.series_id,
+                trigger: r.trigger,
+                outcome: r.outcome,
+                queries_attempted: r.queries_attempted,
+                pages_fetched: r.pages_fetched,
+                releases_seen: r.releases_seen,
+                releases_new: r.releases_new,
+                error: r.error,
+            },
+            series_title: r.series_title,
+        })
+        .collect();
+    Ok(Json(GlobalSearchRunsResponse { items }))
 }

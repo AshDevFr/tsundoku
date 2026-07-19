@@ -5,8 +5,8 @@
 
 use anyhow::Result;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
+    FromQueryResult, QueryFilter, QueryOrder, QuerySelect, Set, Statement,
 };
 
 use crate::entities::search_runs;
@@ -95,6 +95,43 @@ pub async fn recent_for_series(
         .limit(limit)
         .all(db)
         .await?)
+}
+
+/// One run joined with its series' canonical title, for the global admin
+/// timeline (per-series views use [`recent_for_series`] instead).
+#[derive(Debug, Clone, FromQueryResult)]
+pub struct RunWithSeriesTitle {
+    pub id: i64,
+    pub ran_at: i64,
+    pub finished_at: Option<i64>,
+    pub search_name: String,
+    pub series_id: i32,
+    pub trigger: String,
+    pub outcome: String,
+    pub queries_attempted: Option<i64>,
+    pub pages_fetched: Option<i64>,
+    pub releases_seen: Option<i64>,
+    pub releases_new: Option<i64>,
+    pub error: Option<String>,
+    pub series_title: String,
+}
+
+/// The most recent runs across every series, newest first, each with its
+/// series' canonical title joined in. An inner join is correct: runs
+/// cascade away with their series, so an unmatched row can't exist.
+pub async fn recent_all(db: &DatabaseConnection, limit: u64) -> Result<Vec<RunWithSeriesTitle>> {
+    let sql = r#"SELECT
+            sr.id, sr.ran_at, sr.finished_at, sr.search_name, sr.series_id,
+            sr."trigger", sr.outcome, sr.queries_attempted, sr.pages_fetched,
+            sr.releases_seen, sr.releases_new, sr.error,
+            s.canonical_title AS series_title
+        FROM search_runs sr
+        JOIN series s ON s.id = sr.series_id
+        ORDER BY sr.id DESC
+        LIMIT ?1"#;
+    let stmt =
+        Statement::from_sql_and_values(db.get_database_backend(), sql, [(limit as i64).into()]);
+    Ok(RunWithSeriesTitle::find_by_statement(stmt).all(db).await?)
 }
 
 /// Boot reconciliation: rows left `running` by a killed process would poll
@@ -255,6 +292,30 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn recent_all_joins_series_titles_newest_first() {
+        let db = fresh_db().await;
+        let a = insert_series(&db, "Solo Leveling").await;
+        let b = insert_series(&db, "Frieren").await;
+        insert_running(&db, 100, "eng", a, TRIGGER_MANUAL)
+            .await
+            .unwrap();
+        insert_running(&db, 200, "raw", b, TRIGGER_CLI)
+            .await
+            .unwrap();
+
+        let rows = recent_all(&db, 10).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].series_title, "Frieren");
+        assert_eq!(rows[0].search_name, "raw");
+        assert_eq!(rows[1].series_title, "Solo Leveling");
+
+        // The limit caps the window from the newest side.
+        let rows = recent_all(&db, 1).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].series_title, "Frieren");
     }
 
     #[tokio::test]
