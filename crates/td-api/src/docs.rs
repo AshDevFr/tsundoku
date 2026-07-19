@@ -42,7 +42,8 @@ use crate::handlers::series::{
     CoverageSpanDto, CreateSeriesFromProviderRequest, CreateSeriesRequest, ExternalIdDto,
     InvalidateMetadataHashesResponse, RecomputeSpansResponse, RefreshAllSeriesResponse,
     SeriesDetail, SeriesFeedItem, SeriesFeedRequest, SeriesFeedResponse, SeriesListItem,
-    SeriesListPage, SetIgnoreCompletionRequest, SetWishlistedRequest, UpdateSeriesRequest,
+    SeriesListPage, SeriesLookupResponse, SetIgnoreCompletionRequest, SetWishlistedRequest,
+    UpdateSeriesRequest,
 };
 use crate::handlers::sources::{
     ManualBackfillResponse, ManualPollResponse, ManualReenrichResponse, PollAllResponse,
@@ -69,6 +70,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         stats::stats,
         series::list,
         series::get,
+        series::lookup,
         series::feed,
         series::feed_query,
         series::create,
@@ -147,6 +149,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         SeriesListItem,
         SeriesListPage,
         SeriesDetail,
+        SeriesLookupResponse,
         SeriesFeedItem,
         SeriesFeedResponse,
         SeriesFeedRequest,

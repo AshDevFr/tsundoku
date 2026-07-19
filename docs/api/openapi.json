@@ -2028,6 +2028,50 @@
         ]
       }
     },
+    "/api/v1/series/lookup": {
+      "get": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Resolve a `(provider, externalId)` pair to the internal series id. Backs\nthe `/series/lookup` deep-link page: external tools (e.g. Codex's\nplugin web-links button) link to that page with only a provider id, and\nthe page resolves it here before redirecting to the series detail route.",
+        "operationId": "lookup",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "description": "Provider token as stored in `series_external_ids.provider`\n(e.g. `mangabaka`, `mal`, `anime_planet`). Case-insensitive.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "externalId",
+            "in": "query",
+            "description": "The provider's own id for the series, matched exactly (after trim).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesLookupResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No series maps to that (provider, externalId)"
+          }
+        }
+      }
+    },
     "/api/v1/series/recompute-spans": {
       "post": {
         "tags": [
@@ -5802,6 +5846,18 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "SeriesLookupResponse": {
+        "type": "object",
+        "required": [
+          "seriesId"
+        ],
+        "properties": {
+          "seriesId": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },

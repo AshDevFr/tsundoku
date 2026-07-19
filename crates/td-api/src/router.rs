@@ -106,6 +106,9 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/stats", get(stats::stats))
         .route("/series", get(series::list))
         .route("/series/feed", get(series::feed).post(series::feed_query))
+        // External-ID deep-link resolver; static segment, so it wins over
+        // `/series/{id}` in axum's matcher.
+        .route("/series/lookup", get(series::lookup))
         .route("/series/{id}", get(series::get))
         .route("/releases", get(releases::list))
         .route("/releases/unresolved", get(releases::list_unresolved))

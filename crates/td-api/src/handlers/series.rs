@@ -1068,6 +1068,50 @@ pub async fn get(
     )))
 }
 
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct SeriesLookupParams {
+    /// Provider token as stored in `series_external_ids.provider`
+    /// (e.g. `mangabaka`, `mal`, `anime_planet`). Case-insensitive.
+    pub provider: String,
+    /// The provider's own id for the series, matched exactly (after trim).
+    pub external_id: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesLookupResponse {
+    pub series_id: i32,
+}
+
+/// Resolve a `(provider, externalId)` pair to the internal series id. Backs
+/// the `/series/lookup` deep-link page: external tools (e.g. Codex's
+/// plugin web-links button) link to that page with only a provider id, and
+/// the page resolves it here before redirecting to the series detail route.
+#[utoipa::path(
+    get,
+    path = "/api/v1/series/lookup",
+    tag = "series",
+    params(SeriesLookupParams),
+    responses(
+        (status = 200, body = SeriesLookupResponse),
+        (status = 404, description = "No series maps to that (provider, externalId)")
+    )
+)]
+pub async fn lookup(
+    State(state): State<AppState>,
+    Query(params): Query<SeriesLookupParams>,
+) -> ApiResult<Json<SeriesLookupResponse>> {
+    let provider = params.provider.trim().to_ascii_lowercase();
+    let external_id = params.external_id.trim();
+    let series_id = series_external_ids_repo::find_series_id(&state.db, &provider, external_id)
+        .await
+        .map_err(anyhow_err)?
+        .ok_or_else(|| ApiError::NotFound(format!("series for {provider}:{external_id}")))?;
+    Ok(Json(SeriesLookupResponse { series_id }))
+}
+
 /// Incremental release feed: series with coverage activity, ordered by
 /// `(updatedAt, id)` after an opaque cursor. A consumer (e.g. a Codex release
 /// plugin) polls this a few times a day, stores `nextCursor`, and only ever

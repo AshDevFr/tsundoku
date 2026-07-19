@@ -876,6 +876,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/series/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve a `(provider, externalId)` pair to the internal series id. Backs
+         *     the `/series/lookup` deep-link page: external tools (e.g. Codex's
+         *     plugin web-links button) link to that page with only a provider id, and
+         *     the page resolves it here before redirecting to the series detail route.
+         */
+        get: operations["lookup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series/recompute-spans": {
         parameters: {
             query?: never;
@@ -2605,6 +2627,10 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
+        SeriesLookupResponse: {
+            /** Format: int32 */
+            seriesId: number;
+        };
         /** @description Body for `PUT /api/v1/series/{id}/ignore-completion`. */
         SetIgnoreCompletionRequest: {
             /**
@@ -4230,6 +4256,40 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["InvalidateMetadataHashesResponse"];
                 };
+            };
+        };
+    };
+    lookup: {
+        parameters: {
+            query: {
+                /**
+                 * @description Provider token as stored in `series_external_ids.provider`
+                 *     (e.g. `mangabaka`, `mal`, `anime_planet`). Case-insensitive.
+                 */
+                provider: string;
+                /** @description The provider's own id for the series, matched exactly (after trim). */
+                externalId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesLookupResponse"];
+                };
+            };
+            /** @description No series maps to that (provider, externalId) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

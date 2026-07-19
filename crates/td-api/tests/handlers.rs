@@ -527,6 +527,133 @@ async fn series_detail_404s_for_unknown_id() {
 }
 
 #[tokio::test]
+async fn series_lookup_resolves_external_id() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "Test Series", "manga").await;
+    series_external_ids_repo::upsert(&db, sid, "mangabaka", "42", 100)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    // A 200 here also proves the static `/series/lookup` route wins over
+    // `/series/{id}` (a capture would fail the i32 path parse with a 400).
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/lookup?provider=mangabaka&externalId=42")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["seriesId"], sid);
+}
+
+#[tokio::test]
+async fn series_lookup_provider_is_case_insensitive() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "Test Series", "manga").await;
+    series_external_ids_repo::upsert(&db, sid, "mal", "1", 100)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/lookup?provider=MAL&externalId=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["seriesId"], sid);
+}
+
+#[tokio::test]
+async fn series_lookup_404s_for_unknown_mapping() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "Test Series", "manga").await;
+    series_external_ids_repo::upsert(&db, sid, "mangabaka", "42", 100)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/lookup?provider=mangabaka&externalId=999999")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body = body_json(resp).await;
+    assert_eq!(body["error"], "not_found");
+}
+
+#[tokio::test]
+async fn series_lookup_400s_when_params_missing() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/lookup?provider=mangabaka")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn release_list_returns_persisted_rows() {
     let db = fresh_db().await;
     let r = sample_release("1", "feed", "Chainsaw Man v01");
