@@ -102,23 +102,38 @@ pub fn model_to_discovered(m: &Model) -> DiscoveredRelease {
     }
 }
 
-/// Rows for a given source whose `resolution_status` is in `statuses`, most
-/// recently observed first, capped at `limit`. Drives the re-enrich job's
-/// status-targeted walk. An empty `statuses` slice matches nothing.
+/// Rows whose `resolution_status` is in `statuses`, most recently observed
+/// first, capped at `limit`. Drives the re-enrich job's status-targeted walk.
+///
+/// `source_names` scopes the walk to those stamped `source_name` values
+/// (`[[sources]]` instances or `[[search]]` entries); `None` matches every
+/// release, including rows whose origin was since renamed or removed from
+/// config. `only_missing_details` keeps only rows still lacking detail-page
+/// data (no files or no description), so a re-run skips rows that are
+/// already filled in. An empty `statuses` slice matches nothing.
 pub async fn select_for_reenrich(
     db: &DatabaseConnection,
-    source_kind: &str,
-    source_name: &str,
     statuses: &[String],
+    only_missing_details: bool,
+    source_names: Option<&[String]>,
     limit: u64,
 ) -> Result<Vec<Model>> {
     if statuses.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(releases::Entity::find()
-        .filter(releases::Column::SourceKind.eq(source_kind))
-        .filter(releases::Column::SourceName.eq(source_name))
-        .filter(releases::Column::ResolutionStatus.is_in(statuses.iter().cloned()))
+    let mut query = releases::Entity::find()
+        .filter(releases::Column::ResolutionStatus.is_in(statuses.iter().cloned()));
+    if let Some(names) = source_names {
+        query = query.filter(releases::Column::SourceName.is_in(names.iter().cloned()));
+    }
+    if only_missing_details {
+        query = query.filter(
+            releases::Column::FilesJson
+                .is_null()
+                .or(releases::Column::DescriptionHtml.is_null()),
+        );
+    }
+    Ok(query
         .order_by_desc(releases::Column::ObservedAt)
         .limit(limit)
         .all(db)

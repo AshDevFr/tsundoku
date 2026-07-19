@@ -9,7 +9,13 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminShell } from "@/components/admin/AdminShell";
 import {
@@ -655,44 +661,60 @@ describe("admin maintenance page", () => {
     );
   });
 
-  it("dispatches the re-enrich mutation with the selected source + statuses", async () => {
+  it("dispatches an all-origins re-enrich with the default statuses and missing-details filter", async () => {
     renderAt("/admin/maintenance");
     const button = await screen.findByTestId(
       "maintenance-reenrich-button",
       undefined,
       { timeout: 3000 },
     );
-    // The button stays disabled until the /sources query resolves and the
-    // source select defaults to the first item.
-    await waitFor(() => expect(button).not.toBeDisabled());
+    // Default scope is "All releases": no origin selection required, the
+    // button is enabled as soon as the card renders.
+    expect(button).not.toBeDisabled();
     fireEvent.click(button);
-    // Source defaults to the first /sources item; statuses default to the
-    // review set. The MSW handler echoes them back.
+    // Statuses default to the review set and the missing-details filter is
+    // on by default; the MSW handler echoes them back.
     await waitFor(() => {
       expect(
         screen.getByText(
-          /english-manga-trusted: unresolved, ambiguous, review_pending/i,
+          /all origins: unresolved, ambiguous, review_pending \(missing details only\)/i,
         ),
       ).toBeInTheDocument();
     });
   });
 
-  it("re-enriches every source after Select all", async () => {
+  it("dispatches a scoped re-enrich targeting a search entry", async () => {
     renderAt("/admin/maintenance");
     const button = await screen.findByTestId(
       "maintenance-reenrich-button",
       undefined,
       { timeout: 3000 },
     );
+    fireEvent.click(
+      within(screen.getByTestId("reenrich-scope")).getByText(
+        "Selected origins",
+      ),
+    );
+    // With an empty origin selection the button is disabled.
+    expect(screen.getByTestId("maintenance-reenrich-button")).toBeDisabled();
+    // Pick a search entry from the grouped dropdown (the testid lands on
+    // the MultiSelect's input element itself); its Searches group appears
+    // once the search-entries query resolves.
+    fireEvent.click(screen.getByTestId("reenrich-source-select"));
+    fireEvent.click(
+      await screen.findByRole(
+        "option",
+        { name: "Nyaa Literature - Eng" },
+        { timeout: 3000 },
+      ),
+    );
     await waitFor(() => expect(button).not.toBeDisabled());
-    fireEvent.click(screen.getByTestId("reenrich-source-all"));
     fireEvent.click(button);
-    // Fan-out dispatches one request per source; the triggered notification
-    // lists every source name (the MSW handler echoes each back).
+    // The scoped request echoes the picked origin back in the notification.
     await waitFor(() => {
       expect(
         screen.getByText(
-          /english-manga-trusted, running-on-load, running-with-progress: unresolved, ambiguous, review_pending/i,
+          /Nyaa Literature - Eng: unresolved, ambiguous, review_pending \(missing details only\)/i,
         ),
       ).toBeInTheDocument();
     });

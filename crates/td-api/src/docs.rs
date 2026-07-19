@@ -30,9 +30,9 @@ use crate::handlers::providers::{
 };
 use crate::handlers::releases::{
     BulkLinkRequest, BulkLinkResponse, BulkRejectResponse, BulkRetryResponse, BulkReviewRequest,
-    ExtractedLinksDto, LinkRequest, ReleaseDto, ReleaseGroupCandidateDto, ReleaseGroupDto,
-    ReleaseGroupsResponse, ReleasePage, RetryAllResponse, ReviewCandidateDto, UnresolvedPage,
-    UnresolvedRelease,
+    ExtractedLinksDto, LinkRequest, ReenrichReleasesResponse, ReenrichRequest, ReleaseDto,
+    ReleaseGroupCandidateDto, ReleaseGroupDto, ReleaseGroupsResponse, ReleasePage,
+    RetryAllResponse, ReviewCandidateDto, UnresolvedPage, UnresolvedRelease,
 };
 use crate::handlers::search::{
     BulkSearchReleasesRequest, BulkSearchReleasesResponse, GlobalSearchRunDto,
@@ -48,8 +48,8 @@ use crate::handlers::series::{
     SetWishlistedRequest, UpdateSeriesRequest,
 };
 use crate::handlers::sources::{
-    ManualBackfillResponse, ManualPollResponse, ManualReenrichResponse, PollAllResponse,
-    ReenrichRequest, SourceConfigDto, SourceDto, SourceList, SourceRunDto, SourceRunsResponse,
+    ManualBackfillResponse, ManualPollResponse, PollAllResponse, SourceConfigDto, SourceDto,
+    SourceList, SourceRunDto, SourceRunsResponse,
 };
 use crate::handlers::stats::{ReleaseCounts, StatsResponse};
 use crate::handlers::tagging::{TagList, TagUsageDto};
@@ -95,6 +95,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         releases::keep,
         releases::retry,
         releases::retry_all,
+        releases::reenrich,
         releases::bulk_reject,
         releases::bulk_retry,
         releases::bulk_link,
@@ -102,7 +103,6 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         sources::list_with_series_counts,
         sources::poll,
         sources::backfill,
-        sources::reenrich,
         sources::poll_all,
         providers::list,
         providers::refresh_cache,
@@ -196,8 +196,8 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         SourceList,
         ManualPollResponse,
         ManualBackfillResponse,
-        ManualReenrichResponse,
         ReenrichRequest,
+        ReenrichReleasesResponse,
         PollAllResponse,
         ProviderDto,
         ProviderConfigDto,

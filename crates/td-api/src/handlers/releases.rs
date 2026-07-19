@@ -1,4 +1,7 @@
-//! Release endpoints: list / unresolved feed / link / reject / retry.
+//! Release endpoints: list / unresolved feed / link / reject / retry /
+//! bulk re-enrich.
+
+use std::collections::HashMap;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -9,14 +12,16 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use td_db::entities::{release_formats, releases};
-use td_db::repos::{releases_repo, review_repo, series_external_ids_repo};
+use td_db::repos::{releases_repo, review_repo, run_metrics_repo, series_external_ids_repo};
 use td_metadata::SeriesMetadata;
 use td_resolution::{Resolver, persist};
+use td_scheduler::dispatch;
+use td_scheduler::jobs::reenrich_releases;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
 use crate::handlers::pagination::Pagination;
-use crate::state::AppState;
+use crate::state::{AppState, JobKind, JobResult};
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -1490,4 +1495,204 @@ fn parse_extracted_links(raw: Option<&str>) -> Option<ExtractedLinksDto> {
 
 fn anyhow_err<E: Into<anyhow::Error>>(e: E) -> ApiError {
     ApiError::Internal(e.into())
+}
+
+/// The resolution statuses a release can carry. A re-enrich request's
+/// `statuses` must be a subset of these; an unknown value is a client error
+/// rather than a silent no-op.
+const VALID_STATUSES: &[&str] = &[
+    "unresolved",
+    "ambiguous",
+    "review_pending",
+    "resolved",
+    "standalone",
+    "rejected",
+];
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReenrichRequest {
+    /// Resolution statuses to target. Releases whose `resolutionStatus` is
+    /// in this set have their detail page re-fetched and their
+    /// source-derived columns refreshed; resolution state is left
+    /// untouched. Must be non-empty and a subset of the known statuses.
+    pub statuses: Vec<String>,
+    /// When `true`, only rows still missing detail-page data (no files or
+    /// no description) are re-fetched, so a re-run skips rows that are
+    /// already filled in. Defaults to `false` (refresh everything matching
+    /// `statuses`, e.g. after a parser change).
+    #[serde(default)]
+    pub only_missing_details: bool,
+    /// Optional scope: stamped `sourceName` values to target (`[[sources]]`
+    /// instances or `[[search]]` entries). Omitted or `null` targets every
+    /// release, including rows whose origin was since renamed or removed
+    /// from config. Names are not validated against the registries — an
+    /// unknown name simply selects nothing — precisely so removed origins
+    /// stay reachable. Must be non-empty when provided.
+    #[serde(default)]
+    pub sources: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReenrichReleasesResponse {
+    /// The (validated, de-duplicated) statuses the run targets.
+    pub statuses: Vec<String>,
+    pub only_missing_details: bool,
+    /// Echo of the requested scope; `null` means every origin.
+    pub sources: Option<Vec<String>>,
+    pub triggered: bool,
+    /// `true` when a bulk re-enrich was already in flight; the request is a
+    /// no-op.
+    pub skipped: bool,
+}
+
+/// Re-fetch the detail page for already-persisted releases matching
+/// `statuses`, refreshing their source-derived columns (files, description,
+/// extracted links, information URL) without touching resolution state.
+///
+/// Enrichment only needs a release's stored link plus a detail-fetching
+/// upstream of the same kind, so the walk covers releases from every origin
+/// — `[[sources]]` instances, `[[search]]` entries, and origins no longer
+/// in config — unless scoped down via `sources`. A single global lock keeps
+/// one bulk walk at a time (`skipped = true` when one is already running);
+/// each origin's rows still record an audit row in that origin's run lane.
+#[utoipa::path(
+    post,
+    path = "/api/v1/releases/re-enrich",
+    tag = "releases",
+    request_body = ReenrichRequest,
+    responses(
+        (status = 200, body = ReenrichReleasesResponse),
+        (status = 400, description = "Empty/unknown status, or an empty sources list")
+    ),
+    security(("admin" = []))
+)]
+pub async fn reenrich(
+    State(state): State<AppState>,
+    Json(req): Json<ReenrichRequest>,
+) -> ApiResult<Json<ReenrichReleasesResponse>> {
+    if req.statuses.is_empty() {
+        return Err(ApiError::BadRequest(
+            "statuses must not be empty".to_string(),
+        ));
+    }
+    // De-dupe while preserving order, and reject anything not in the known
+    // set so a typo surfaces as a 400 instead of selecting zero rows.
+    let mut statuses: Vec<String> = Vec::with_capacity(req.statuses.len());
+    for s in req.statuses {
+        if !VALID_STATUSES.contains(&s.as_str()) {
+            return Err(ApiError::BadRequest(format!("unknown status {s:?}")));
+        }
+        if !statuses.contains(&s) {
+            statuses.push(s);
+        }
+    }
+    if let Some(sources) = &req.sources
+        && sources.is_empty()
+    {
+        return Err(ApiError::BadRequest(
+            "sources, when provided, must not be empty (omit it to target every origin)"
+                .to_string(),
+        ));
+    }
+
+    let enrichers = reenrich_enrichers(&state);
+    let lock = state.locks.reenrich_releases_lock();
+    let db = state.db.clone();
+    let events = state.job_events.clone();
+    let job_statuses = statuses.clone();
+    let only_missing_details = req.only_missing_details;
+    let job_sources = req.sources.clone();
+    let triggered = dispatch::try_dispatch(
+        &state.job_events,
+        lock,
+        JobKind::Reenrich,
+        "releases",
+        || async {},
+        move || async move {
+            let result = reenrich_releases::run(
+                db,
+                enrichers,
+                job_statuses,
+                only_missing_details,
+                job_sources,
+                events,
+                run_metrics_repo::trigger::MANUAL,
+            )
+            .await;
+            if let Err(e) = &result {
+                tracing::warn!(error = ?e, "bulk re-enrich failed");
+            }
+            JobResult {
+                triggered: true,
+                skipped: false,
+                ..Default::default()
+            }
+        },
+    );
+
+    Ok(Json(ReenrichReleasesResponse {
+        statuses,
+        only_missing_details,
+        sources: req.sources,
+        triggered,
+        skipped: !triggered,
+    }))
+}
+
+/// One enricher per `source_kind`, drawn from the registered `[[sources]]`
+/// instances and `[[search]]` entries. Instances whose config says
+/// `fetch_details = true` are preferred (a non-fetching instance's `enrich`
+/// is a no-op, which would make the walk useless); at equal capability a
+/// source wins over a search entry. Kinds with no registered instance at
+/// all are absent — the job counts their rows as skipped.
+fn reenrich_enrichers(state: &AppState) -> HashMap<String, reenrich_releases::Enricher> {
+    let mut best: HashMap<String, (bool, reenrich_releases::Enricher)> = HashMap::new();
+    for (name, source) in state.sources.iter() {
+        let fetches = state
+            .sources_config
+            .iter()
+            .find(|c| c.name == name)
+            .and_then(|c| c.nyaa.as_ref())
+            .map(|o| o.fetch_details)
+            .unwrap_or(false);
+        let kind = source.kind().to_string();
+        let candidate = reenrich_releases::Enricher::Source(source.clone());
+        match best.get(&kind) {
+            Some((true, _)) => {}
+            Some((false, _)) if !fetches => {}
+            _ => {
+                best.insert(kind, (fetches, candidate));
+            }
+        }
+    }
+    for entry in state.search.iter() {
+        let name = entry.source.name();
+        let fetches = state
+            .search_config
+            .iter()
+            .find(|c| c.name == name)
+            .and_then(|c| c.nyaa.as_ref())
+            .map(|o| o.fetch_details)
+            .unwrap_or(false);
+        let kind = entry.source.kind().to_string();
+        // A search entry only displaces a source instance when it is the
+        // kind's sole detail-fetching upstream.
+        if fetches && !best.get(&kind).map(|(f, _)| *f).unwrap_or(false) {
+            best.insert(
+                kind,
+                (
+                    true,
+                    reenrich_releases::Enricher::Search(entry.source.clone()),
+                ),
+            );
+        } else {
+            best.entry(kind).or_insert((
+                false,
+                reenrich_releases::Enricher::Search(entry.source.clone()),
+            ));
+        }
+    }
+    best.into_iter().map(|(k, (_, e))| (k, e)).collect()
 }

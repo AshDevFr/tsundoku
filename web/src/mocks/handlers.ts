@@ -997,13 +997,18 @@ export const handlers = [
     });
   }),
 
-  http.post("/api/v1/sources/:name/re-enrich", async ({ request, params }) => {
+  http.post("/api/v1/releases/re-enrich", async ({ request }) => {
     const denied = requireAdmin(request);
     if (denied) return denied;
-    const body = (await request.json()) as { statuses?: string[] };
+    const body = (await request.json()) as {
+      statuses?: string[];
+      onlyMissingDetails?: boolean;
+      sources?: string[] | null;
+    };
     return HttpResponse.json({
-      source: String(params.name),
       statuses: body.statuses ?? [],
+      onlyMissingDetails: body.onlyMissingDetails ?? false,
+      sources: body.sources ?? null,
       triggered: true,
       skipped: false,
     });

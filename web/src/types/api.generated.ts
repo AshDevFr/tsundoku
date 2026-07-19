@@ -526,6 +526,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/releases/re-enrich": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-fetch the detail page for already-persisted releases matching
+         *     `statuses`, refreshing their source-derived columns (files, description,
+         *     extracted links, information URL) without touching resolution state.
+         * @description Enrichment only needs a release's stored link plus a detail-fetching
+         *     upstream of the same kind, so the walk covers releases from every origin
+         *     — `[[sources]]` instances, `[[search]]` entries, and origins no longer
+         *     in config — unless scoped down via `sources`. A single global lock keeps
+         *     one bulk walk at a time (`skipped = true` when one is already running);
+         *     each origin's rows still record an audit row in that origin's run lane.
+         */
+        post: operations["reenrich"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/releases/retry-all": {
         parameters: {
             query?: never;
@@ -1291,30 +1318,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/sources/{name}/re-enrich": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Re-fetch the detail page for the source's already-persisted releases that
-         *     match `statuses`, refreshing their source-derived columns (files,
-         *     description, extracted links, information URL) without touching resolution
-         *     state. Use after a parser change adds or fixes a detail-page field.
-         *     Shares the per-source mutex, so it cannot race a cron poll / backfill
-         *     (returns `skipped = true` when work is already in flight).
-         */
-        post: operations["reenrich"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/sources/{name}/runs": {
         parameters: {
             query?: never;
@@ -1868,7 +1871,7 @@ export interface components {
          *     the enum.
          * @enum {string}
          */
-        JobKind: "source" | "provider" | "seriesRefresh" | "codex" | "search";
+        JobKind: "source" | "provider" | "seriesRefresh" | "codex" | "search" | "reenrich";
         /**
          * @description Lifecycle phase. `Started` fires after the per-key mutex was
          *     acquired (so a `skipped` job emits only `Finished`). `Progress`
@@ -1969,17 +1972,6 @@ export interface components {
             /** @description `false` when a previous tick is still in flight; the request is a no-op. */
             skipped: boolean;
             source: string;
-            triggered: boolean;
-        };
-        ManualReenrichResponse: {
-            /**
-             * @description `true` when a poll / backfill / re-enrich for this source was already
-             *     in flight; the request is a no-op.
-             */
-            skipped: boolean;
-            source: string;
-            /** @description The (validated) statuses the run targets. */
-            statuses: string[];
             triggered: boolean;
         };
         PollAllResponse: {
@@ -2142,11 +2134,40 @@ export interface components {
              */
             seriesUpdated: number;
         };
+        ReenrichReleasesResponse: {
+            onlyMissingDetails: boolean;
+            /**
+             * @description `true` when a bulk re-enrich was already in flight; the request is a
+             *     no-op.
+             */
+            skipped: boolean;
+            /** @description Echo of the requested scope; `null` means every origin. */
+            sources?: string[] | null;
+            /** @description The (validated, de-duplicated) statuses the run targets. */
+            statuses: string[];
+            triggered: boolean;
+        };
         ReenrichRequest: {
             /**
-             * @description Resolution statuses to target. Releases for the source whose
-             *     `resolutionStatus` is in this set have their detail page re-fetched
-             *     and their source-derived columns refreshed; resolution state is left
+             * @description When `true`, only rows still missing detail-page data (no files or
+             *     no description) are re-fetched, so a re-run skips rows that are
+             *     already filled in. Defaults to `false` (refresh everything matching
+             *     `statuses`, e.g. after a parser change).
+             */
+            onlyMissingDetails?: boolean;
+            /**
+             * @description Optional scope: stamped `sourceName` values to target (`[[sources]]`
+             *     instances or `[[search]]` entries). Omitted or `null` targets every
+             *     release, including rows whose origin was since renamed or removed
+             *     from config. Names are not validated against the registries — an
+             *     unknown name simply selects nothing — precisely so removed origins
+             *     stay reachable. Must be non-empty when provided.
+             */
+            sources?: string[] | null;
+            /**
+             * @description Resolution statuses to target. Releases whose `resolutionStatus` is
+             *     in this set have their detail page re-fetched and their
+             *     source-derived columns refreshed; resolution state is left
              *     untouched. Must be non-empty and a subset of the known statuses.
              */
             statuses: string[];
@@ -3740,6 +3761,36 @@ export interface operations {
             };
         };
     };
+    reenrich: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReenrichRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReenrichReleasesResponse"];
+                };
+            };
+            /** @description Empty/unknown status, or an empty sources list */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     retry_all: {
         parameters: {
             query?: {
@@ -5023,46 +5074,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ManualPollResponse"];
                 };
-            };
-            /** @description No source with that name registered */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    reenrich: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Source instance name */
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReenrichRequest"];
-            };
-        };
-        responses: {
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ManualReenrichResponse"];
-                };
-            };
-            /** @description Empty or unknown status in the request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description No source with that name registered */
             404: {

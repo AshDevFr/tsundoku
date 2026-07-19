@@ -1870,13 +1870,15 @@ async fn reenrich_triggers_and_echoes_validated_statuses() {
         open_auth(),
     );
 
-    // Duplicate values collapse; order is preserved.
+    // Duplicate values collapse; order is preserved. Omitted scope and
+    // filter fields echo their defaults (all origins, full refresh).
     let body = serde_json::json!({ "statuses": ["unresolved", "unresolved", "ambiguous"] });
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/sources/a/re-enrich")
+                .uri("/api/v1/releases/re-enrich")
                 .header(header::AUTHORIZATION, "Bearer write-token")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
@@ -1886,12 +1888,60 @@ async fn reenrich_triggers_and_echoes_validated_statuses() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["source"], "a");
     assert_eq!(body["triggered"], true);
     assert_eq!(body["skipped"], false);
     assert_eq!(
         body["statuses"],
         serde_json::json!(["unresolved", "ambiguous"])
+    );
+    assert_eq!(body["onlyMissingDetails"], false);
+    assert_eq!(body["sources"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn reenrich_echoes_scope_and_missing_details_filter() {
+    let db = fresh_db().await;
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![StubSource {
+            name: "a".into(),
+            kind: "stub".into(),
+            outcome: PollOutcome::default(),
+        }]),
+        open_auth(),
+    );
+
+    // Names are deliberately not validated against the registries (removed
+    // origins stay targetable), so an arbitrary name is accepted.
+    let body = serde_json::json!({
+        "statuses": ["unresolved"],
+        "onlyMissingDetails": true,
+        "sources": ["a", "some-removed-origin"],
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/releases/re-enrich")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["triggered"], true);
+    assert_eq!(body["onlyMissingDetails"], true);
+    assert_eq!(
+        body["sources"],
+        serde_json::json!(["a", "some-removed-origin"])
     );
 }
 
@@ -1913,13 +1963,13 @@ async fn reenrich_rejects_empty_and_unknown_statuses() {
         open_auth(),
     );
 
-    // Empty set.
+    // Empty status set.
     let resp = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/sources/a/re-enrich")
+                .uri("/api/v1/releases/re-enrich")
                 .header(header::AUTHORIZATION, "Bearer write-token")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
@@ -1933,14 +1983,36 @@ async fn reenrich_rejects_empty_and_unknown_statuses() {
 
     // Unknown status.
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/v1/sources/a/re-enrich")
+                .uri("/api/v1/releases/re-enrich")
                 .header(header::AUTHORIZATION, "Bearer write-token")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&serde_json::json!({ "statuses": ["bogus"] })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Provided-but-empty scope: distinct from omitted (= all origins), so
+    // it is rejected rather than silently matching nothing.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/releases/re-enrich")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(
+                        &serde_json::json!({ "statuses": ["unresolved"], "sources": [] }),
+                    )
+                    .unwrap(),
                 ))
                 .unwrap(),
         )

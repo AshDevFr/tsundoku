@@ -2,10 +2,12 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Group,
   List,
   Modal,
   MultiSelect,
+  SegmentedControl,
   Stack,
   Text,
   Title,
@@ -17,10 +19,10 @@ import {
   useInvalidateCoverCache,
   useInvalidateMetadataHashes,
   useRecomputeSpans,
-  useReenrichSource,
+  useReenrichReleases,
   useRefreshAllSeries,
 } from "@/api/mutations";
-import { useSources } from "@/api/queries";
+import { useSearchEntries, useSources } from "@/api/queries";
 
 /// Resolution statuses a release can carry, mirrored from the backend's
 /// `VALID_STATUSES`. Used to populate the re-enrich status picker.
@@ -65,73 +67,60 @@ export function AdminMaintenancePage() {
 
 /// Re-fetch the detail page for already-persisted releases and refresh their
 /// source-derived columns (files, description, extracted links, information
-/// link) without touching resolution state. The status picker scopes the
-/// walk; the source picker targets one, several, or every source. Each source
-/// is dispatched independently (its own per-source lock), so a busy source is
-/// reported as skipped without holding up the rest. Use after a parser change
-/// adds or fixes a detail-page field on existing rows.
+/// link) without touching resolution state. One request covers every origin
+/// by default — sources, search entries, and origins since removed from
+/// config — or can be scoped to picked origins. The missing-details toggle
+/// (on by default) skips rows whose files and description are already
+/// filled in, so a routine run only fetches what's actually incomplete.
 function ReenrichReleasesCard() {
   const sources = useSources();
-  const reenrich = useReenrichSource();
+  const searchEntries = useSearchEntries();
+  const reenrich = useReenrichReleases();
   const sourceNames = sources.data?.items.map((s) => s.name) ?? [];
-  const [selected, setSelected] = useState<string[] | null>(null);
+  // A search entry sharing a source's name would duplicate a MultiSelect
+  // value; releases stamped with it are covered by the source item anyway.
+  const searchNames = (searchEntries.data?.items ?? [])
+    .map((e) => e.name)
+    .filter((name) => !sourceNames.includes(name));
+  const [scope, setScope] = useState<"all" | "selected">("all");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [onlyMissingDetails, setOnlyMissingDetails] = useState(true);
   const [statuses, setStatuses] = useState<string[]>(REENRICH_DEFAULT_STATUSES);
-  const [running, setRunning] = useState(false);
-  // Default the picker to the first source once the list loads, without
-  // clobbering an explicit choice (including an explicit "clear all").
-  const effectiveSources = selected ?? (sourceNames[0] ? [sourceNames[0]] : []);
-  const allSelected =
-    sourceNames.length > 0 && effectiveSources.length === sourceNames.length;
 
-  const handleClick = async () => {
-    const targets = effectiveSources;
-    if (targets.length === 0 || statuses.length === 0) {
-      return;
-    }
-    setRunning(true);
-    try {
-      // Fan out one request per source; each has its own backend lock, so a
-      // busy source just comes back skipped instead of blocking the others.
-      const results = await Promise.allSettled(
-        targets.map((name) => reenrich.mutateAsync({ name, statuses })),
-      );
-      const triggered: string[] = [];
-      const skipped: string[] = [];
-      const failed: string[] = [];
-      results.forEach((r, i) => {
-        const name = targets[i];
-        if (r.status === "fulfilled") {
-          (r.value?.triggered ? triggered : skipped).push(
-            r.value?.source ?? name,
-          );
-        } else {
-          failed.push(name);
-        }
-      });
-      if (triggered.length > 0) {
-        notifications.show({
-          color: "blue",
-          title: "Re-enrich triggered",
-          message: `${triggered.join(", ")}: ${statuses.join(", ")}`,
-        });
-      }
-      if (skipped.length > 0) {
-        notifications.show({
-          color: "gray",
-          title: "Source busy",
-          message: `${skipped.join(", ")}: a poll, backfill, or re-enrich is already in flight`,
-        });
-      }
-      if (failed.length > 0) {
-        notifications.show({
-          color: "red",
-          title: "Re-enrich failed",
-          message: failed.join(", "),
-        });
-      }
-    } finally {
-      setRunning(false);
-    }
+  const handleClick = () => {
+    reenrich.mutate(
+      {
+        statuses,
+        onlyMissingDetails,
+        sources: scope === "all" ? undefined : selected,
+      },
+      {
+        onSuccess: (data) => {
+          if (data?.triggered) {
+            const target = data.sources?.join(", ") ?? "all origins";
+            notifications.show({
+              color: "blue",
+              title: "Re-enrich triggered",
+              message: `${target}: ${statuses.join(", ")}${
+                data.onlyMissingDetails ? " (missing details only)" : ""
+              }`,
+            });
+          } else {
+            notifications.show({
+              color: "gray",
+              title: "Re-enrich already running",
+              message: "A bulk re-enrich is already in flight.",
+            });
+          }
+        },
+        onError: (e) =>
+          notifications.show({
+            color: "red",
+            title: "Re-enrich failed",
+            message: (e as Error).message,
+          }),
+      },
+    );
   };
 
   return (
@@ -142,8 +131,9 @@ function ReenrichReleasesCard() {
           <Text size="sm" c="dimmed">
             Re-fetch the post detail page for existing releases and refresh
             their files, description, extracted links, and information link.
-            Resolution and series links are left untouched. Scope it by status
-            below; the default targets the review queue. Re-enriching{" "}
+            Resolution and series links are left untouched. One run covers
+            releases from every origin — sources, searches, and origins no
+            longer in the config — unless scoped down. Re-enriching{" "}
             <Text span fw={600}>
               resolved
             </Text>{" "}
@@ -151,40 +141,46 @@ function ReenrichReleasesCard() {
             <Text span fw={600}>
               standalone
             </Text>{" "}
-            can mean many detail-page fetches.
+            without the missing-details filter can mean many detail-page
+            fetches.
           </Text>
         </Stack>
-        <Stack gap={4}>
-          <Group justify="space-between" align="center" gap="xs">
-            <Text size="sm" fw={500}>
-              Sources
-            </Text>
-            <Button
-              variant="subtle"
-              size="compact-xs"
-              onClick={() => setSelected(sourceNames)}
-              disabled={
-                sources.isLoading || sourceNames.length === 0 || allSelected
-              }
-              data-testid="reenrich-source-all"
-            >
-              Select all
-            </Button>
-          </Group>
+        <SegmentedControl
+          size="xs"
+          value={scope}
+          onChange={(v) => setScope(v === "selected" ? "selected" : "all")}
+          data={[
+            { label: "All releases", value: "all" },
+            { label: "Selected origins", value: "selected" },
+          ]}
+          data-testid="reenrich-scope"
+        />
+        {scope === "selected" && (
           <MultiSelect
-            data={sourceNames}
-            value={effectiveSources}
+            label="Origins"
+            data={[
+              { group: "Sources", items: sourceNames },
+              { group: "Searches", items: searchNames },
+            ]}
+            value={selected}
             onChange={setSelected}
             placeholder={
-              effectiveSources.length === 0
-                ? "Pick one or more sources"
-                : undefined
+              selected.length === 0 ? "Pick one or more origins" : undefined
             }
             clearable
-            disabled={sources.isLoading || sourceNames.length === 0}
+            searchable
+            disabled={sources.isLoading}
             data-testid="reenrich-source-select"
           />
-        </Stack>
+        )}
+        <Checkbox
+          size="xs"
+          checked={onlyMissingDetails}
+          onChange={(e) => setOnlyMissingDetails(e.currentTarget.checked)}
+          label="Only releases missing files or description"
+          description="Skips rows whose details are already filled in — the fast path for routine backfills. Uncheck to refresh everything, e.g. after a parser change."
+          data-testid="reenrich-missing-only"
+        />
         <MultiSelect
           label="Statuses"
           data={REENRICH_STATUS_OPTIONS}
@@ -198,8 +194,11 @@ function ReenrichReleasesCard() {
             size="xs"
             variant="light"
             onClick={handleClick}
-            loading={running}
-            disabled={effectiveSources.length === 0 || statuses.length === 0}
+            loading={reenrich.isPending}
+            disabled={
+              statuses.length === 0 ||
+              (scope === "selected" && selected.length === 0)
+            }
             data-testid="maintenance-reenrich-button"
           >
             Re-enrich releases

@@ -950,6 +950,46 @@
         ]
       }
     },
+    "/api/v1/releases/re-enrich": {
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Re-fetch the detail page for already-persisted releases matching\n`statuses`, refreshing their source-derived columns (files, description,\nextracted links, information URL) without touching resolution state.",
+        "description": "Enrichment only needs a release's stored link plus a detail-fetching\nupstream of the same kind, so the walk covers releases from every origin\n— `[[sources]]` instances, `[[search]]` entries, and origins no longer\nin config — unless scoped down via `sources`. A single global lock keeps\none bulk walk at a time (`skipped = true` when one is already running);\neach origin's rows still record an audit row in that origin's run lane.",
+        "operationId": "reenrich",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReenrichRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReenrichReleasesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty/unknown status, or an empty sources list"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/releases/retry-all": {
       "post": {
         "tags": [
@@ -2862,59 +2902,6 @@
         ]
       }
     },
-    "/api/v1/sources/{name}/re-enrich": {
-      "post": {
-        "tags": [
-          "sources"
-        ],
-        "summary": "Re-fetch the detail page for the source's already-persisted releases that\nmatch `statuses`, refreshing their source-derived columns (files,\ndescription, extracted links, information URL) without touching resolution\nstate. Use after a parser change adds or fixes a detail-page field.\nShares the per-source mutex, so it cannot race a cron poll / backfill\n(returns `skipped = true` when work is already in flight).",
-        "operationId": "reenrich",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "description": "Source instance name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReenrichRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ManualReenrichResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Empty or unknown status in the request"
-          },
-          "404": {
-            "description": "No source with that name registered"
-          }
-        },
-        "security": [
-          {
-            "admin": []
-          }
-        ]
-      }
-    },
     "/api/v1/sources/{name}/runs": {
       "get": {
         "tags": [
@@ -4058,7 +4045,8 @@
           "provider",
           "seriesRefresh",
           "codex",
-          "search"
+          "search",
+          "reenrich"
         ]
       },
       "JobPhase": {
@@ -4236,34 +4224,6 @@
           },
           "source": {
             "type": "string"
-          },
-          "triggered": {
-            "type": "boolean"
-          }
-        }
-      },
-      "ManualReenrichResponse": {
-        "type": "object",
-        "required": [
-          "source",
-          "statuses",
-          "triggered",
-          "skipped"
-        ],
-        "properties": {
-          "skipped": {
-            "type": "boolean",
-            "description": "`true` when a poll / backfill / re-enrich for this source was already\nin flight; the request is a no-op."
-          },
-          "source": {
-            "type": "string"
-          },
-          "statuses": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The (validated) statuses the run targets."
           },
           "triggered": {
             "type": "boolean"
@@ -4744,18 +4704,70 @@
           }
         }
       },
+      "ReenrichReleasesResponse": {
+        "type": "object",
+        "required": [
+          "statuses",
+          "onlyMissingDetails",
+          "triggered",
+          "skipped"
+        ],
+        "properties": {
+          "onlyMissingDetails": {
+            "type": "boolean"
+          },
+          "skipped": {
+            "type": "boolean",
+            "description": "`true` when a bulk re-enrich was already in flight; the request is a\nno-op."
+          },
+          "sources": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Echo of the requested scope; `null` means every origin."
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The (validated, de-duplicated) statuses the run targets."
+          },
+          "triggered": {
+            "type": "boolean"
+          }
+        }
+      },
       "ReenrichRequest": {
         "type": "object",
         "required": [
           "statuses"
         ],
         "properties": {
+          "onlyMissingDetails": {
+            "type": "boolean",
+            "description": "When `true`, only rows still missing detail-page data (no files or\nno description) are re-fetched, so a re-run skips rows that are\nalready filled in. Defaults to `false` (refresh everything matching\n`statuses`, e.g. after a parser change)."
+          },
+          "sources": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional scope: stamped `sourceName` values to target (`[[sources]]`\ninstances or `[[search]]` entries). Omitted or `null` targets every\nrelease, including rows whose origin was since renamed or removed\nfrom config. Names are not validated against the registries — an\nunknown name simply selects nothing — precisely so removed origins\nstay reachable. Must be non-empty when provided."
+          },
           "statuses": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Resolution statuses to target. Releases for the source whose\n`resolutionStatus` is in this set have their detail page re-fetched\nand their source-derived columns refreshed; resolution state is left\nuntouched. Must be non-empty and a subset of the known statuses."
+            "description": "Resolution statuses to target. Releases whose `resolutionStatus` is\nin this set have their detail page re-fetched and their\nsource-derived columns refreshed; resolution state is left\nuntouched. Must be non-empty and a subset of the known statuses."
           }
         }
       },

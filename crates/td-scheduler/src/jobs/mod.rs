@@ -10,7 +10,7 @@ pub mod backfill_source;
 pub mod outcomes;
 pub mod poll_source;
 pub mod progress;
-pub mod reenrich_source;
+pub mod reenrich_releases;
 pub mod refresh_provider_cache;
 pub mod refresh_series_metadata;
 pub mod search_series;

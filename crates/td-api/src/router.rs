@@ -65,7 +65,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/releases/bulk/link", post(releases::bulk_link))
         .route("/sources/{name}/poll", post(sources::poll))
         .route("/sources/{name}/backfill", post(sources::backfill))
-        .route("/sources/{name}/re-enrich", post(sources::reenrich))
+        .route("/releases/re-enrich", post(releases::reenrich))
         .route("/sources/poll-all", post(sources::poll_all))
         // Source-filter dropdown vocab. Admin-only (in this group) because the
         // series-list `source` filter it feeds is itself admin-only.

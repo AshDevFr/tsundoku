@@ -63,6 +63,10 @@ pub struct JobLocks {
     /// One walk per endpoint at a time, whatever series it targets — the
     /// serialization is upstream politeness, not data protection.
     searches: DashMap<String, Arc<Mutex<()>>>,
+    /// Single global lock for the bulk release re-enrich. One walk at a
+    /// time — a second trigger is reported as skipped rather than doubling
+    /// the detail-page fetch load.
+    reenrich_releases: Arc<Mutex<()>>,
 }
 
 impl JobLocks {
@@ -93,6 +97,10 @@ impl JobLocks {
 
     pub fn codex_sync_lock(&self) -> Arc<Mutex<()>> {
         self.codex_sync.clone()
+    }
+
+    pub fn reenrich_releases_lock(&self) -> Arc<Mutex<()>> {
+        self.reenrich_releases.clone()
     }
 
     pub fn search_lock(&self, entry_name: &str) -> Arc<Mutex<()>> {

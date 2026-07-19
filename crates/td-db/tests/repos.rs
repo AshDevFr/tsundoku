@@ -592,28 +592,47 @@ async fn select_for_reenrich_filters_by_source_and_status_and_round_trips() {
         .await
         .unwrap();
 
-    // Status targeting: only the unresolved row on "trusted" matches.
-    let rows =
-        releases_repo::select_for_reenrich(&db, "nyaa", "trusted", &["unresolved".into()], 100)
-            .await
-            .unwrap();
+    // Status targeting scoped to "trusted": only its unresolved row matches.
+    let trusted_scope = vec!["trusted".to_string()];
+    let rows = releases_repo::select_for_reenrich(
+        &db,
+        &["unresolved".into()],
+        false,
+        Some(&trusted_scope),
+        100,
+    )
+    .await
+    .unwrap();
     let ids: Vec<&str> = rows.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(ids, vec![unresolved_id.as_str()]);
 
     // Multi-status selects both rows on "trusted"; the other-source row is excluded.
     let rows = releases_repo::select_for_reenrich(
         &db,
-        "nyaa",
-        "trusted",
         &["unresolved".into(), "resolved".into()],
+        false,
+        Some(&trusted_scope),
         100,
     )
     .await
     .unwrap();
     assert_eq!(rows.len(), 2);
 
+    // Unscoped (`None`) covers every origin, including names no longer in
+    // any registry.
+    let rows = releases_repo::select_for_reenrich(
+        &db,
+        &["unresolved".into(), "resolved".into()],
+        false,
+        None,
+        100,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 3);
+
     // Empty status set matches nothing.
-    let none = releases_repo::select_for_reenrich(&db, "nyaa", "trusted", &[], 100)
+    let none = releases_repo::select_for_reenrich(&db, &[], false, None, 100)
         .await
         .unwrap();
     assert!(none.is_empty());
@@ -634,6 +653,68 @@ async fn select_for_reenrich_filters_by_source_and_status_and_round_trips() {
         Some("https://anilist.co/manga/9")
     );
     assert_eq!(discovered.posted_at.timestamp(), 1_700_000_000);
+}
+
+#[tokio::test]
+async fn select_for_reenrich_only_missing_details_targets_incomplete_rows() {
+    use chrono::{TimeZone, Utc};
+    use td_source::{DiscoveredRelease, ExternalLinks};
+
+    let db = fresh_db().await;
+    let complete = DiscoveredRelease {
+        source_kind: "nyaa".into(),
+        source_name: "trusted".into(),
+        external_id: "1".into(),
+        title: "Series One v01".into(),
+        link: "https://nyaa.si/view/1".into(),
+        magnet: None,
+        torrent_url: None,
+        ddl_url: None,
+        info_hash: None,
+        size_bytes: None,
+        files: vec!["Series One v01.cbz".into()],
+        description_html: Some("body".into()),
+        external_links: ExternalLinks::default(),
+        comment_suggested_links: ExternalLinks::default(),
+        information_url: None,
+        posted_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+    };
+    releases_repo::persist_discovered(&db, &complete, 100)
+        .await
+        .unwrap();
+
+    // Listing-only row: no files and no description.
+    let mut bare = complete.clone();
+    bare.external_id = "2".into();
+    bare.link = "https://nyaa.si/view/2".into();
+    bare.files = Vec::new();
+    bare.description_html = None;
+    let bare_id = releases_repo::persist_discovered(&db, &bare, 200)
+        .await
+        .unwrap();
+
+    // Partial row: files present but description missing still qualifies.
+    let mut no_desc = complete.clone();
+    no_desc.external_id = "3".into();
+    no_desc.link = "https://nyaa.si/view/3".into();
+    no_desc.description_html = None;
+    let no_desc_id = releases_repo::persist_discovered(&db, &no_desc, 300)
+        .await
+        .unwrap();
+
+    let statuses = vec!["unresolved".to_string()];
+    let all = releases_repo::select_for_reenrich(&db, &statuses, false, None, 100)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 3);
+
+    let missing = releases_repo::select_for_reenrich(&db, &statuses, true, None, 100)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = missing.iter().map(|m| m.id.as_str()).collect();
+    // Newest-first: the partial row was observed after the bare row; the
+    // fully-detailed row is skipped.
+    assert_eq!(ids, vec![no_desc_id.as_str(), bare_id.as_str()]);
 }
 
 #[tokio::test]

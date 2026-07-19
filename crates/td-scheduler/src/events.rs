@@ -42,6 +42,9 @@ pub enum JobKind {
     Codex,
     /// Per-series release search against a `[[search]]` entry.
     Search,
+    /// Bulk release re-enrich across origins (the per-origin groups inside
+    /// the run still emit their progress as [`JobKind::Source`] frames).
+    Reenrich,
 }
 
 /// Lifecycle phase. `Started` fires after the per-key mutex was

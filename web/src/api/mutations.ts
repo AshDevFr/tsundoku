@@ -520,19 +520,24 @@ export function useBackfillSource() {
   });
 }
 
-export function useReenrichSource() {
+export function useReenrichReleases() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (args: { name: string; statuses: string[] }) => {
-      const { data, error } = await api.POST(
-        "/api/v1/sources/{name}/re-enrich",
-        {
-          params: { path: { name: args.name } },
-          body: { statuses: args.statuses },
+    mutationFn: async (args: {
+      statuses: string[];
+      onlyMissingDetails: boolean;
+      /** Omitted = every origin (sources, searches, removed origins). */
+      sources?: string[];
+    }) => {
+      const { data, error } = await api.POST("/api/v1/releases/re-enrich", {
+        body: {
+          statuses: args.statuses,
+          onlyMissingDetails: args.onlyMissingDetails,
+          sources: args.sources ?? null,
         },
-      );
+      });
       if (error)
-        throw new Error(describeError(error, "failed to re-enrich source"));
+        throw new Error(describeError(error, "failed to re-enrich releases"));
       return data;
     },
     // Re-enrich refreshes release detail columns in place; bust the release
