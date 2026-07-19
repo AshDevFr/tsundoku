@@ -2,6 +2,17 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.16.0] - 2026-07-19
+
+### Features
+
+- *(search)* Add configurable per-series release-search foundation
+- *(search)* Add the per-series search run engine, audit trail, and CLI
+- *(search)* Expose per-series release search over the admin API
+- *(web)* Add the per-series Search releases button and admin search-endpoints list
+- *(api)* Expose per-source and global search run histories
+- *(web)* Surface run-history timelines for sources and searches
+
 ## [1.15.2] - 2026-07-18
 
 ### Testing
