@@ -23,6 +23,10 @@ import { FeedPage } from "@/pages/FeedPage";
 import { KeptPage } from "@/pages/KeptPage";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { SeriesDetailPage } from "@/pages/SeriesDetailPage";
+import {
+  SeriesLookupPage,
+  validateLookupSearch,
+} from "@/pages/SeriesLookupPage";
 import { WishlistPage } from "@/pages/WishlistPage";
 import type { FilterSearch } from "@/stores/filters";
 
@@ -108,6 +112,16 @@ export const feedRoute = createRoute({
   path: "/",
   component: FeedPage,
   validateSearch: validateFilterSearch,
+});
+
+// External-ID deep-link resolver (`?source=<provider>&id=<externalId>`,
+// optional `&title=`). Static path, so TanStack ranks it above the
+// `/series/$id` param route regardless of registration order.
+export const seriesLookupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/series/lookup",
+  component: SeriesLookupPage,
+  validateSearch: validateLookupSearch,
 });
 
 export const seriesDetailRoute = createRoute({
@@ -215,6 +229,7 @@ export const adminExportRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   feedRoute,
+  seriesLookupRoute,
   seriesDetailRoute,
   adminLayoutRoute.addChildren([
     adminOverviewRoute,

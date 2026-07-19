@@ -1724,6 +1724,36 @@ export const handlers = [
     return HttpResponse.json(body);
   }),
 
+  // Static route: MUST stay registered before the `/series/:id` sibling
+  // below, or the param route captures "lookup" (MSW is first-match-wins,
+  // unlike axum's static-segment priority). Mirrors the backend's
+  // series_external_ids resolution against the detail handler's synthetic
+  // mangabaka ids (`id * 1111`).
+  http.get("/api/v1/series/lookup", ({ request }) => {
+    const url = new URL(request.url);
+    const provider = (url.searchParams.get("provider") ?? "")
+      .trim()
+      .toLowerCase();
+    const externalId = (url.searchParams.get("externalId") ?? "").trim();
+    if (!provider || !externalId)
+      return new HttpResponse(null, { status: 400 });
+    const numeric = Number(externalId);
+    const seriesId = numeric / 1111;
+    const found =
+      provider === "mangabaka" && Number.isInteger(seriesId)
+        ? SERIES.find((s) => s.id === seriesId)
+        : undefined;
+    if (!found)
+      return HttpResponse.json(
+        {
+          error: "not_found",
+          message: `series for ${provider}:${externalId}`,
+        },
+        { status: 404 },
+      );
+    return HttpResponse.json({ seriesId: found.id });
+  }),
+
   http.get("/api/v1/series/:id", ({ params }) => {
     const id = Number(params.id);
     const found = SERIES.find((s) => s.id === id);

@@ -186,6 +186,31 @@ export function useSeriesDetail(id: number | undefined) {
   });
 }
 
+/// Resolve a `(provider, externalId)` pair to an internal series id. Backs
+/// the `/series/lookup` deep-link page. A 404 resolves to `null` rather than
+/// throwing: "not discovered yet" is that page's expected common case, not a
+/// failure (only transport/server errors reject).
+export function useSeriesLookup(provider?: string, externalId?: string) {
+  return useQuery({
+    queryKey: ["series-lookup", provider, externalId],
+    enabled: Boolean(provider && externalId),
+    retry: false,
+    queryFn: async (): Promise<number | null> => {
+      const { data, error, response } = await api.GET("/api/v1/series/lookup", {
+        params: {
+          query: {
+            provider: provider as string,
+            externalId: externalId as string,
+          },
+        },
+      });
+      if (response.status === 404) return null;
+      if (error || !data) throw new Error("series lookup failed");
+      return data.seriesId;
+    },
+  });
+}
+
 /// Codex connection-health status for the admin maintenance page. Admin-only
 /// on the server; disabled here unless a token is present so anon sessions
 /// don't fire it.
