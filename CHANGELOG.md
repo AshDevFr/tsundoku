@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.18.1] - 2026-07-19
+
+### Features
+
+- Bulk re-enrich across sources, searches, and removed origins
+
 ## [1.18.0] - 2026-07-19
 
 ### Features
