@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.17.1] - 2026-07-19
+
+### Bug Fixes
+
+- *(web)* Stop JSON-quoting numeric lookup ids in the address bar
+
 ## [1.17.0] - 2026-07-19
 
 ### Features
