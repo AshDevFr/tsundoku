@@ -2,6 +2,13 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.17.0] - 2026-07-19
+
+### Features
+
+- *(api)* Add the series lookup endpoint for external-ID deep links
+- *(web)* Add the /series/lookup deep-link resolver page
+
 ## [1.16.0] - 2026-07-19
 
 ### Features
