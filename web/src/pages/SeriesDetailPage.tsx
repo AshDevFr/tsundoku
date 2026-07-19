@@ -55,6 +55,7 @@ import {
   ReleaseFiles,
 } from "@/components/ReleaseDetails";
 import {
+  BulkLinkModal,
   LinkExistingPanel,
   ProviderSearchPanel,
 } from "@/components/ReleaseLinking";
@@ -90,9 +91,9 @@ function spanCount(
 }
 
 // A release can be bulk-sent when it carries a magnet or `.torrent`.
-// Already-sent releases stay selectable so the operator can deliberately
-// re-send one (e.g. it was removed from the client); the "Sent" badge marks
-// them, mirroring the per-release Send button which also allows re-sending.
+// Already-sent releases still count so the operator can deliberately re-send
+// one (e.g. it was removed from the client); the "Sent" badge marks them,
+// mirroring the per-release Send button which also allows re-sending.
 function isSendable(r: ReleaseDto): boolean {
   return Boolean(r.magnet) || Boolean(r.torrentUrl);
 }
@@ -110,19 +111,19 @@ function groupReleases(items: ReleaseDto[]): Map<string, ReleaseDto[]> {
   return groups;
 }
 
-// The sendable release ids in the exact order they render (group by group),
-// so a shift-click can select the contiguous visible range between two rows.
-function orderedSendableIds(items: ReleaseDto[]): string[] {
+// The release ids in the exact order they render (group by group), so a
+// shift-click can select the contiguous visible range between two rows.
+function orderedReleaseIds(items: ReleaseDto[]): string[] {
   const out: string[] = [];
   for (const rs of groupReleases(items).values()) {
-    for (const r of rs) if (isSendable(r)) out.push(r.id);
+    for (const r of rs) out.push(r.id);
   }
   return out;
 }
 
-// Threaded into the release list when the bulk-send affordance is active. Each
-// row consults it to render (or skip) its selection checkbox. `range` is true
-// when the click was shift-held (select the span since the last click).
+// Threaded into the release list when bulk selection is active. Each row
+// consults it to render its selection checkbox. `range` is true when the
+// click was shift-held (select the span since the last click).
 type BulkSelect = {
   selected: Set<string>;
   onToggle: (id: string, range: boolean) => void;
@@ -146,16 +147,31 @@ export function SeriesDetailPage() {
   // The last row toggled, anchoring a shift-click range select.
   const [anchorId, setAnchorId] = useState<string | null>(null);
   const [bulkSending, setBulkSending] = useState(false);
+  const [bulkMoveOpen, { open: openBulkMove, close: closeBulkMove }] =
+    useDisclosure(false);
 
   // Jump to the feed pre-filtered by a clicked genre/tag badge. "any" mode and
   // page 1 match how the filter panel seeds a fresh single-value selection.
   const filterFeedBy = (next: FilterSearch) =>
     navigate({ to: "/", search: () => ({ ...next, page: 1 }) });
 
-  // The bulk "send to client" affordance shares the SendToClientButton's
-  // gating: admin + integration enabled. A release is selectable only when it
-  // has something to send and hasn't already been sent.
-  const bulkEnabled = isAdmin && Boolean(downloadStatus.data?.enabled);
+  // Bulk selection exists for admin-only actions (move, send to client), so
+  // it is gated on the admin token alone. Every release can be moved; the
+  // send button additionally requires the download integration and only
+  // counts releases with something to send.
+  const bulkEnabled = isAdmin;
+  const downloadEnabled = Boolean(downloadStatus.data?.enabled);
+
+  const releaseItems = releases.data?.items ?? [];
+  // Selected ids in visible order, for the move modal and its seed query.
+  const selectedIds = orderedReleaseIds(releaseItems).filter((rid) =>
+    selected.has(rid),
+  );
+  const sendableSelected = releaseItems.filter(
+    (r) => selected.has(r.id) && isSendable(r),
+  );
+  const bulkSeed =
+    releaseItems.find((r) => r.id === selectedIds[0])?.title ?? "";
 
   // Toggle one release, or — on a shift-click with a prior anchor — set the
   // whole visible span between the anchor and this row to the clicked row's new
@@ -164,7 +180,7 @@ export function SeriesDetailPage() {
     setSelected((prev) => {
       const next = new Set(prev);
       const willSelect = !prev.has(id);
-      const order = orderedSendableIds(releases.data?.items ?? []);
+      const order = orderedReleaseIds(releases.data?.items ?? []);
       const a = anchorId ? order.indexOf(anchorId) : -1;
       const b = order.indexOf(id);
       if (range && a !== -1 && b !== -1) {
@@ -188,11 +204,12 @@ export function SeriesDetailPage() {
     setAnchorId(null);
   };
 
-  // Send each selected release through the existing per-release endpoint, one at
-  // a time (gentle on the seedbox XML-RPC), and report a single aggregated
-  // result. The loop never throws: a failed send is tallied, not fatal.
+  // Send each sendable selected release through the existing per-release
+  // endpoint, one at a time (gentle on the seedbox XML-RPC), and report a
+  // single aggregated result. The loop never throws: a failed send is
+  // tallied, not fatal.
   const handleBulkSend = async () => {
-    const ids = [...selected];
+    const ids = sendableSelected.map((r) => r.id);
     if (ids.length === 0) return;
     setBulkSending(true);
     let ok = 0;
@@ -574,15 +591,29 @@ export function SeriesDetailPage() {
               <Text size="sm" c="dimmed">
                 {selected.size} selected
               </Text>
-              <Button
-                size="compact-sm"
-                color="blue"
-                onClick={handleBulkSend}
-                loading={bulkSending}
-                data-testid="bulk-send"
-              >
-                Send {selected.size} to client
-              </Button>
+              <Tooltip label="Wrong series? Move every selected release to the correct one.">
+                <Button
+                  size="compact-sm"
+                  variant="light"
+                  color="orange"
+                  onClick={openBulkMove}
+                  data-testid="bulk-move"
+                >
+                  Move {selected.size} to series
+                </Button>
+              </Tooltip>
+              {downloadEnabled && (
+                <Button
+                  size="compact-sm"
+                  color="blue"
+                  onClick={handleBulkSend}
+                  loading={bulkSending}
+                  disabled={sendableSelected.length === 0}
+                  data-testid="bulk-send"
+                >
+                  Send {sendableSelected.length} to client
+                </Button>
+              )}
               <Button
                 size="compact-sm"
                 variant="subtle"
@@ -612,6 +643,22 @@ export function SeriesDetailPage() {
 
       {editOpen && (
         <EditSeriesModal series={s} onClose={() => setEditOpen(false)} />
+      )}
+
+      {/* Mounted only while open so the search panels don't run in the
+          background. The bulk-link invalidations drop the moved releases from
+          this page, so a success just clears the selection and closes. */}
+      {bulkMoveOpen && (
+        <BulkLinkModal
+          releaseIds={selectedIds}
+          seedQuery={bulkSeed}
+          title={`Move ${selectedIds.length} release${selectedIds.length === 1 ? "" : "s"} to another series`}
+          onClose={closeBulkMove}
+          onLinked={() => {
+            clearSelection();
+            closeBulkMove();
+          }}
+        />
       )}
     </Container>
   );
@@ -658,9 +705,8 @@ function ReleaseList({
               <ReleaseRow
                 key={r.id}
                 release={r}
-                bulkActive={Boolean(bulk)}
                 select={
-                  bulk && isSendable(r)
+                  bulk
                     ? {
                         checked: bulk.selected.has(r.id),
                         onToggle: (range: boolean) =>
@@ -735,14 +781,9 @@ function CopyLinkButton({ value, label }: { value: string; label: string }) {
 function ReleaseRow({
   release,
   select,
-  bulkActive,
 }: {
   release: ReleaseDto;
   select?: { checked: boolean; onToggle: (range: boolean) => void };
-  /// True when the bulk-send affordance is on for the list. Rows that aren't
-  /// selectable (already sent, or nothing to send) still reserve the checkbox
-  /// slot with a disabled box so every row stays aligned.
-  bulkActive?: boolean;
 }) {
   // The relink ("Move") action calls a write endpoint, so only offer it when
   // an admin token is present — the series detail page is otherwise a public
@@ -766,7 +807,7 @@ function ReleaseRow({
           gap="xs"
           style={{ minWidth: 0, flex: 1 }}
         >
-          {select ? (
+          {select && (
             <Checkbox
               checked={select.checked}
               // Toggling is driven from onClick so we can read the shift key for
@@ -778,10 +819,7 @@ function ReleaseRow({
               data-testid={`select-release-${release.id}`}
               mt={2}
             />
-          ) : bulkActive ? (
-            // Already sent / nothing to send: keep the slot so rows align.
-            <Checkbox disabled aria-label="Release not selectable" mt={2} />
-          ) : null}
+          )}
           <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
             <Anchor
               href={release.link}

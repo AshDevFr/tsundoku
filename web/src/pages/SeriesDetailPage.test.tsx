@@ -327,6 +327,76 @@ describe("SeriesDetailPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("bulk-moves selected releases to another catalog series", async () => {
+    let capturedIds: string[] = [];
+    server.use(
+      http.post("/api/v1/releases/bulk/link", async ({ request }) => {
+        const body = (await request.json()) as {
+          ids: string[];
+          seriesId: number | null;
+        };
+        capturedIds = body.ids;
+        return HttpResponse.json({
+          linked: body.ids.length,
+          seriesId: body.seriesId,
+        });
+      }),
+    );
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(1);
+
+    fireEvent.click(await screen.findByTestId("select-release-nyaa:111"));
+    fireEvent.click(await screen.findByTestId("select-release-nyaa:112"));
+
+    const moveBtn = await screen.findByTestId("bulk-move");
+    expect(moveBtn).toHaveTextContent("Move 2 to series");
+    fireEvent.click(moveBtn);
+
+    const dialog = await screen.findByRole("dialog");
+    // Catalog is the default mode; search and pick an existing series.
+    const search = await waitFor(() => {
+      const el = dialog.querySelector<HTMLInputElement>(
+        '[data-testid="link-existing-search"]',
+      );
+      if (!el) throw new Error("link-existing-search input not rendered");
+      return el;
+    });
+    fireEvent.change(search, { target: { value: "Solo" } });
+    const linkBtn = await screen.findByTestId("link-existing-3", undefined, {
+      timeout: 3000,
+    });
+    fireEvent.click(linkBtn);
+
+    await screen.findByText(/Linked 2 releases/, undefined, { timeout: 3000 });
+    expect(capturedIds).toEqual(["nyaa:111", "nyaa:112"]);
+    // The move clears the selection, so the bulk bar goes away.
+    await waitFor(() => {
+      expect(screen.queryByTestId("bulk-move")).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps selection and Move available when the download integration is disabled", async () => {
+    server.use(
+      http.get("/api/v1/download/status", () =>
+        HttpResponse.json({
+          enabled: false,
+          hasCredentials: false,
+          defaultStart: true,
+          preferTorrentFile: true,
+          recentChecks: [],
+          recentSends: [],
+        }),
+      ),
+    );
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(1);
+
+    fireEvent.click(await screen.findByTestId("select-release-nyaa:111"));
+
+    await screen.findByTestId("bulk-move");
+    expect(screen.queryByTestId("bulk-send")).not.toBeInTheDocument();
+  });
+
   it("hides the search-releases button for anon sessions", async () => {
     renderSeriesDetail(1);
     await screen.findByText("Chainsaw Man");

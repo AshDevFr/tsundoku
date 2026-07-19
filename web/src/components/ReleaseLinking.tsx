@@ -8,6 +8,7 @@ import {
   Group,
   Image,
   Loader,
+  Modal,
   SegmentedControl,
   Select,
   Stack,
@@ -30,6 +31,7 @@ import {
   mangabakaSearchUrl,
   providerUrl,
 } from "@/api/utils";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 export const CANDIDATE_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
@@ -613,6 +615,49 @@ export function BulkLinkPanel({
         />
       )}
     </Stack>
+  );
+}
+
+/// Modal wrapper over [`BulkLinkPanel`]. Mount it only while open so the
+/// catalog/provider searches don't run in the background. Shared by the review
+/// queue's "Link to series" and the series page's bulk "Move" — the host picks
+/// the title wording.
+export function BulkLinkModal({
+  releaseIds,
+  seedQuery,
+  title,
+  onClose,
+  onLinked,
+}: {
+  releaseIds: string[];
+  seedQuery: string;
+  title: string;
+  onClose: () => void;
+  onLinked: () => void;
+}) {
+  const isMobile = useIsMobile();
+  return (
+    <Modal
+      opened
+      onClose={onClose}
+      title={title}
+      size="lg"
+      centered
+      fullScreen={isMobile}
+    >
+      <Stack gap="md">
+        <BulkLinkPanel
+          releaseIds={releaseIds}
+          seedQuery={seedQuery}
+          onLinked={onLinked}
+        />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>
+            Close
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
   );
 }
 

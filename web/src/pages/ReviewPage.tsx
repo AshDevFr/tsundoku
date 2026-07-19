@@ -58,7 +58,7 @@ import {
 } from "@/components/ReleaseDetails";
 import { ReleaseGroupPanel } from "@/components/ReleaseGroupPanel";
 import {
-  BulkLinkPanel,
+  BulkLinkModal,
   CANDIDATE_PLACEHOLDER,
   LinkExistingPanel,
   MetadataCounts,
@@ -745,6 +745,7 @@ export function ReviewPage() {
         <BulkLinkModal
           releaseIds={selectedIds}
           seedQuery={bulkSeed}
+          title={`Link ${selectedIds.length} release${selectedIds.length === 1 ? "" : "s"} to a series`}
           onClose={closeBulkLink}
           onLinked={() => {
             resetSelection();
@@ -775,46 +776,6 @@ export function ReviewPage() {
         </Center>
       )}
     </Stack>
-  );
-}
-
-/// Bulk "assign to series" modal: a thin wrapper over [`BulkLinkPanel`].
-/// Mounted only while open so the catalog/provider searches don't run in the
-/// background; the selection count is reflected in the title.
-function BulkLinkModal({
-  releaseIds,
-  seedQuery,
-  onClose,
-  onLinked,
-}: {
-  releaseIds: string[];
-  seedQuery: string;
-  onClose: () => void;
-  onLinked: () => void;
-}) {
-  const isMobile = useIsMobile();
-  return (
-    <Modal
-      opened
-      onClose={onClose}
-      title={`Link ${releaseIds.length} release${releaseIds.length === 1 ? "" : "s"} to a series`}
-      size="lg"
-      centered
-      fullScreen={isMobile}
-    >
-      <Stack gap="md">
-        <BulkLinkPanel
-          releaseIds={releaseIds}
-          seedQuery={seedQuery}
-          onLinked={onLinked}
-        />
-        <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>
-            Close
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
   );
 }
 
