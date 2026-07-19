@@ -550,6 +550,72 @@ interface SearchRunMock {
   releasesSeen: number | null;
   releasesNew: number | null;
   error: string | null;
+  /// Used by the global timeline endpoint; per-series responses omit it.
+  seriesTitle?: string;
+}
+
+interface SourceRunMock {
+  id: number;
+  startedAt: number;
+  finishedAt: number | null;
+  status: string;
+  trigger: string;
+  fetchedCount: number | null;
+  newCount: number | null;
+  resolvedCount: number | null;
+  errorKind: string | null;
+  errorMessage: string | null;
+  fetchDurationMs: number | null;
+  enrichDurationMs: number | null;
+  resolveDurationMs: number | null;
+  progressPhase: string | null;
+}
+
+/// Default per-source timeline shown in dev mock mode for any source
+/// that hasn't been explicitly seeded: one clean cron run and one failure.
+const DEFAULT_SOURCE_RUNS: SourceRunMock[] = [
+  {
+    id: 2,
+    startedAt: NOW - 1800,
+    finishedAt: NOW - 1790,
+    status: "failure",
+    trigger: "manual",
+    fetchedCount: null,
+    newCount: null,
+    resolvedCount: null,
+    errorKind: "timeout",
+    errorMessage: "nyaa.si timed out after 30s",
+    fetchDurationMs: null,
+    enrichDurationMs: null,
+    resolveDurationMs: null,
+    progressPhase: null,
+  },
+  {
+    id: 1,
+    startedAt: NOW - 7200,
+    finishedAt: NOW - 7140,
+    status: "success",
+    trigger: "cron",
+    fetchedCount: 75,
+    newCount: 4,
+    resolvedCount: 3,
+    errorKind: null,
+    errorMessage: null,
+    fetchDurationMs: 1200,
+    enrichDurationMs: 8400,
+    resolveDurationMs: 2100,
+    progressPhase: null,
+  },
+];
+
+let sourceRunsByName: Record<string, SourceRunMock[]> = {};
+
+export function seedSourceRuns(name: string, runs: SourceRunMock[]) {
+  sourceRunsByName[name] = runs;
+}
+
+export function resetSourceRuns() {
+  sourceRunsByName = {};
 }
 
 const DEFAULT_SEARCH_ENTRIES: SearchEntryMock[] = [
@@ -2346,6 +2412,26 @@ export const handlers = [
     const seriesId = Number(params.id);
     return HttpResponse.json({
       items: searchRuns.filter((r) => r.seriesId === seriesId),
+    });
+  }),
+
+  http.get("/api/v1/search/runs", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    return HttpResponse.json({
+      items: searchRuns.map((r) => ({
+        ...r,
+        seriesTitle: r.seriesTitle ?? `Series #${r.seriesId}`,
+      })),
+    });
+  }),
+
+  http.get("/api/v1/sources/:name/runs", ({ request, params }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const name = String(params.name);
+    return HttpResponse.json({
+      items: sourceRunsByName[name] ?? DEFAULT_SOURCE_RUNS,
     });
   }),
 ];

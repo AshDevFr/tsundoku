@@ -261,6 +261,41 @@ export function useSearchRuns(seriesId: number | undefined, poll = false) {
   });
 }
 
+/// Recent poll/backfill runs for one source, newest first. Admin-only on
+/// the server (error messages stay private). Short stale time so the
+/// timeline reflects a just-triggered run without a manual reload.
+export function useSourceRuns(name: string | undefined) {
+  const hasAdmin = useAdminAuth((s) => Boolean(s.token));
+  return useQuery({
+    queryKey: ["source-runs", name],
+    enabled: hasAdmin && Boolean(name),
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/sources/{name}/runs", {
+        params: { path: { name: name as string } },
+      });
+      if (error) throw new Error("failed to load source runs");
+      return data;
+    },
+    staleTime: 15_000,
+  });
+}
+
+/// Recent release-search runs across every series (with series titles),
+/// newest first, for the admin Sources page's global timeline.
+export function useGlobalSearchRuns() {
+  const hasAdmin = useAdminAuth((s) => Boolean(s.token));
+  return useQuery({
+    queryKey: ["search-runs-global", { admin: hasAdmin }],
+    enabled: hasAdmin,
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/search/runs");
+      if (error) throw new Error("failed to load search runs");
+      return data;
+    },
+    staleTime: 15_000,
+  });
+}
+
 export function useSeriesReleases(
   seriesId: number | undefined,
   page = 1,

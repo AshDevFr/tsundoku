@@ -12,7 +12,11 @@ import {
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminShell } from "@/components/admin/AdminShell";
-import { ADMIN_TEST_TOKEN } from "@/mocks/handlers";
+import {
+  ADMIN_TEST_TOKEN,
+  resetSourceRuns,
+  seedSourceRuns,
+} from "@/mocks/handlers";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { useAdminAuth } from "@/stores/auth";
 import { AdminCodexPage } from "./Codex";
@@ -348,6 +352,35 @@ describe("admin sources page", () => {
         screen.getByTestId("job-pill-source-english-manga-trusted"),
       ).toHaveTextContent(/done/i);
     });
+  });
+});
+
+describe("admin source detail recent runs", () => {
+  beforeEach(() => {
+    resetSourceRuns();
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+  });
+
+  it("renders the per-run timeline with counts and the failure message", async () => {
+    renderAt("/admin/sources/english-manga-trusted");
+    expect(await screen.findByTestId("source-recent-runs")).toBeInTheDocument();
+    // Default mock rows: a manual failure (newest) and a cron success.
+    const failed = screen.getByTestId("source-run-2");
+    expect(failed).toHaveTextContent("failed");
+    expect(failed).toHaveTextContent("via manual");
+    expect(failed).toHaveTextContent("nyaa.si timed out after 30s");
+    const ok = screen.getByTestId("source-run-1");
+    expect(ok).toHaveTextContent("success");
+    expect(ok).toHaveTextContent("75 fetched · 4 new · 3 resolved");
+    expect(ok).toHaveTextContent("11.7s");
+  });
+
+  it("hides the timeline when the source has no recorded runs", async () => {
+    seedSourceRuns("english-manga-trusted", []);
+    renderAt("/admin/sources/english-manga-trusted");
+    // Wait for the page to settle (config block renders), then assert.
+    await screen.findByText("Config");
+    expect(screen.queryByTestId("source-recent-runs")).not.toBeInTheDocument();
   });
 });
 

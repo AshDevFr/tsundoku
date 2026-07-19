@@ -1,6 +1,7 @@
 import {
   Alert,
   Anchor,
+  Badge,
   Button,
   Group,
   Paper,
@@ -11,7 +12,12 @@ import {
 } from "@mantine/core";
 import { Link, useParams } from "@tanstack/react-router";
 import { useState } from "react";
-import { useSourceMetricsDetail, useSources } from "@/api/queries";
+import {
+  useSourceMetricsDetail,
+  useSourceRuns,
+  useSources,
+} from "@/api/queries";
+import { formatAbsolute, formatRelative } from "@/api/utils";
 import { SourceMetricsCard } from "@/components/admin/MetricsCards";
 import {
   SourceConfigBlock,
@@ -89,11 +95,88 @@ export function AdminSourceDetailPage() {
         </Alert>
       )}
 
+      <SourceRecentRuns name={item.name} />
+
       <Group justify="flex-end">
         <Button component={Link} to="/admin/metrics" variant="subtle" size="xs">
           See cross-cutting metrics →
         </Button>
       </Group>
     </Stack>
+  );
+}
+
+const RUN_STATUS_META: Record<string, { color: string; label: string }> = {
+  success: { color: "green", label: "success" },
+  failure: { color: "red", label: "failed" },
+  running: { color: "blue", label: "running…" },
+  skipped: { color: "gray", label: "skipped" },
+};
+
+/// Codex-"Recent syncs"-style per-run timeline: the individual runs
+/// behind the aggregated metrics card. Polls, backfills, and re-enrich
+/// runs share the lane; `trigger` tells them apart. Renders nothing
+/// until the source has at least one recorded run.
+function SourceRecentRuns({ name }: { name: string }) {
+  const runs = useSourceRuns(name);
+  const items = runs.data?.items ?? [];
+  if (items.length === 0) return null;
+
+  return (
+    <Paper withBorder radius="md" p="md" data-testid="source-recent-runs">
+      <Stack gap="sm">
+        <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+          Recent runs
+        </Text>
+        <Stack gap="sm">
+          {items.map((r) => {
+            const meta = RUN_STATUS_META[r.status] ?? RUN_STATUS_META.failure;
+            const totalMs =
+              (r.fetchDurationMs ?? 0) +
+              (r.enrichDurationMs ?? 0) +
+              (r.resolveDurationMs ?? 0);
+            return (
+              <Stack key={r.id} gap={2} data-testid={`source-run-${r.id}`}>
+                <Group gap="xs" wrap="nowrap" align="center">
+                  <Badge
+                    size="xs"
+                    variant="light"
+                    color={meta.color}
+                    style={{ flexShrink: 0 }}
+                  >
+                    {meta.label}
+                  </Badge>
+                  <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                    via {r.trigger}
+                  </Text>
+                  <Text
+                    size="xs"
+                    c="dimmed"
+                    style={{ flex: 1, minWidth: 0, textAlign: "right" }}
+                    title={formatAbsolute(r.startedAt)}
+                  >
+                    {formatRelative(r.startedAt)}
+                  </Text>
+                </Group>
+                <Group gap="xs" wrap="wrap" align="baseline" pl={4}>
+                  {r.status === "success" && (
+                    <Text size="xs" c="dimmed">
+                      {r.fetchedCount ?? 0} fetched · {r.newCount ?? 0} new ·{" "}
+                      {r.resolvedCount ?? 0} resolved
+                      {totalMs > 0 && ` · ${(totalMs / 1000).toFixed(1)}s`}
+                    </Text>
+                  )}
+                  {r.status === "failure" && (
+                    <Text size="xs" c="red" lineClamp={2}>
+                      {r.errorMessage ?? r.errorKind ?? "unknown error"}
+                    </Text>
+                  )}
+                </Group>
+              </Stack>
+            );
+          })}
+        </Stack>
+      </Stack>
+    </Paper>
   );
 }

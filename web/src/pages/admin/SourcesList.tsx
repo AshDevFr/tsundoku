@@ -13,8 +13,14 @@ import {
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { Link } from "@tanstack/react-router";
 import { usePollAllSources } from "@/api/mutations";
-import { useSearchEntries, useSources } from "@/api/queries";
+import {
+  useGlobalSearchRuns,
+  useSearchEntries,
+  useSources,
+} from "@/api/queries";
+import { formatAbsolute, formatRelative } from "@/api/utils";
 import { SourceCard } from "@/components/admin/SourceCard";
 
 /// Sources list page. Identical surface to the old admin tab but now
@@ -93,6 +99,85 @@ export function AdminSourcesListPage() {
       )}
 
       <SearchEndpointsSection />
+      <GlobalRecentSearches />
+    </Stack>
+  );
+}
+
+const SEARCH_OUTCOME_META: Record<string, { color: string; label: string }> = {
+  success: { color: "green", label: "success" },
+  error: { color: "red", label: "failed" },
+  running: { color: "blue", label: "running…" },
+};
+
+/// Global timeline of per-series release searches across every series,
+/// newest first, each row linking back to its series. Hidden until at
+/// least one search has run.
+function GlobalRecentSearches() {
+  const runs = useGlobalSearchRuns();
+  const items = runs.data?.items ?? [];
+  if (items.length === 0) return null;
+
+  return (
+    <Stack gap="xs" data-testid="recent-searches-section">
+      <Stack gap={2}>
+        <Title order={4}>Recent searches</Title>
+        <Text size="sm" c="dimmed">
+          Latest per-series release searches across the catalog.
+        </Text>
+      </Stack>
+      <Paper withBorder radius="md" p="sm" style={{ overflowX: "auto" }}>
+        <Table verticalSpacing="xs" fz="sm">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>When</Table.Th>
+              <Table.Th>Series</Table.Th>
+              <Table.Th>Entry</Table.Th>
+              <Table.Th>Trigger</Table.Th>
+              <Table.Th>Outcome</Table.Th>
+              <Table.Th>New</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {items.map((r) => {
+              const meta =
+                SEARCH_OUTCOME_META[r.outcome] ?? SEARCH_OUTCOME_META.error;
+              return (
+                <Table.Tr key={r.id} data-testid={`recent-search-${r.id}`}>
+                  <Table.Td>
+                    <Text size="sm" c="dimmed" title={formatAbsolute(r.ranAt)}>
+                      {formatRelative(r.ranAt)}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    {/* Link directly (not Anchor component={Link}) so
+                        TanStack's typed params infer. */}
+                    <Link
+                      to="/series/$id"
+                      params={{ id: String(r.seriesId) }}
+                      style={{ textDecoration: "none" }}
+                    >
+                      <Text size="sm" c="blue.4" lineClamp={1}>
+                        {r.seriesTitle}
+                      </Text>
+                    </Link>
+                  </Table.Td>
+                  <Table.Td>{r.searchName}</Table.Td>
+                  <Table.Td>{r.trigger}</Table.Td>
+                  <Table.Td>
+                    <Badge size="xs" variant="light" color={meta.color}>
+                      {meta.label}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    {r.outcome === "success" ? (r.releasesNew ?? 0) : "—"}
+                  </Table.Td>
+                </Table.Tr>
+              );
+            })}
+          </Table.Tbody>
+        </Table>
+      </Paper>
     </Stack>
   );
 }

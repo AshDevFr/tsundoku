@@ -18,6 +18,7 @@ import {
   resetSearch,
   resetSeries,
   seedSearchEntries,
+  seedSearchRuns,
   setSearchBusy,
 } from "@/mocks/handlers";
 import { server } from "@/mocks/server";
@@ -375,6 +376,58 @@ describe("SeriesDetailPage", () => {
     expect(
       await screen.findByText(/already running/, undefined, { timeout: 3000 }),
     ).toBeInTheDocument();
+  });
+
+  it("shows the search history popover when the series has past runs", async () => {
+    seedSearchRuns([
+      {
+        id: 7,
+        ranAt: Math.floor(Date.now() / 1000) - 3600,
+        finishedAt: Math.floor(Date.now() / 1000) - 3540,
+        searchName: "Nyaa Literature - Eng",
+        seriesId: 1,
+        trigger: "manual",
+        outcome: "success",
+        queriesAttempted: 3,
+        pagesFetched: 4,
+        releasesSeen: 41,
+        releasesNew: 5,
+        error: null,
+      },
+      {
+        id: 6,
+        ranAt: Math.floor(Date.now() / 1000) - 7200,
+        finishedAt: Math.floor(Date.now() / 1000) - 7100,
+        searchName: "Nyaa Literature - Raw",
+        seriesId: 1,
+        trigger: "cli",
+        outcome: "error",
+        queriesAttempted: 1,
+        pagesFetched: 0,
+        releasesSeen: 0,
+        releasesNew: 0,
+        error: "nyaa unreachable",
+      },
+    ]);
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(1);
+    await screen.findByText("Chainsaw Man");
+
+    fireEvent.click(await screen.findByTestId("search-history"));
+    const ok = await screen.findByTestId("search-history-run-7");
+    expect(ok).toHaveTextContent("Nyaa Literature - Eng");
+    expect(ok).toHaveTextContent("41 hits → 5 new · via manual");
+    const failed = screen.getByTestId("search-history-run-6");
+    expect(failed).toHaveTextContent("failed");
+    expect(failed).toHaveTextContent("nyaa unreachable");
+  });
+
+  it("hides the search history affordance when the series has no runs", async () => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    renderSeriesDetail(1);
+    await screen.findByText("Chainsaw Man");
+    await screen.findByTestId("search-releases");
+    expect(screen.queryByTestId("search-history")).not.toBeInTheDocument();
   });
 
   it("lets the dropdown pick a non-default entry", async () => {

@@ -1,10 +1,26 @@
-import { Button, Menu, Tooltip } from "@mantine/core";
+import {
+  Badge,
+  Button,
+  Group,
+  Menu,
+  Popover,
+  Stack,
+  Text,
+  Tooltip,
+} from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useSearchReleases } from "@/api/mutations";
 import { useSearchEntries, useSearchRuns } from "@/api/queries";
+import { formatAbsolute, formatRelative } from "@/api/utils";
 import { useAdminAuth } from "@/stores/auth";
+
+const RUN_OUTCOME_META: Record<string, { color: string; label: string }> = {
+  success: { color: "green", label: "success" },
+  error: { color: "red", label: "failed" },
+  running: { color: "blue", label: "running…" },
+};
 
 /// Server-side release search for one series, driven by the configured
 /// `[[search]]` endpoints.
@@ -138,6 +154,80 @@ export function SearchReleasesButton({ seriesId }: { seriesId: number }) {
           </Menu.Dropdown>
         </Menu>
       )}
+      {(runs.data?.items?.length ?? 0) > 0 && (
+        <SearchHistoryPopover runs={runs.data?.items ?? []} />
+      )}
     </Button.Group>
+  );
+}
+
+type RunItem = NonNullable<
+  ReturnType<typeof useSearchRuns>["data"]
+>["items"][number];
+
+/// Compact per-series search history: which entry ran, when, and what it
+/// found. Rendered only once at least one run exists; reuses the runs
+/// query the button already holds for completion watching.
+function SearchHistoryPopover({ runs }: { runs: RunItem[] }) {
+  return (
+    <Popover position="bottom-end" withArrow shadow="md" width={300}>
+      <Popover.Target>
+        <Button
+          size="compact-xs"
+          variant="subtle"
+          color="gray"
+          px={4}
+          aria-label="Recent searches"
+          data-testid="search-history"
+        >
+          ⌚
+        </Button>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack gap="xs">
+          <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+            Recent searches
+          </Text>
+          {runs.map((r) => {
+            const meta = RUN_OUTCOME_META[r.outcome] ?? RUN_OUTCOME_META.error;
+            return (
+              <Stack
+                key={r.id}
+                gap={0}
+                data-testid={`search-history-run-${r.id}`}
+              >
+                <Group gap="xs" wrap="nowrap" align="center">
+                  <Badge
+                    size="xs"
+                    variant="light"
+                    color={meta.color}
+                    style={{ flexShrink: 0 }}
+                  >
+                    {meta.label}
+                  </Badge>
+                  <Text size="xs" fw={500} lineClamp={1} style={{ flex: 1 }}>
+                    {r.searchName}
+                  </Text>
+                  <Text
+                    size="xs"
+                    c="dimmed"
+                    style={{ flexShrink: 0 }}
+                    title={formatAbsolute(r.ranAt)}
+                  >
+                    {formatRelative(r.ranAt)}
+                  </Text>
+                </Group>
+                <Text size="xs" c="dimmed" pl={4}>
+                  {r.outcome === "success" &&
+                    `${r.releasesSeen ?? 0} hits → ${r.releasesNew ?? 0} new · via ${r.trigger}`}
+                  {r.outcome === "error" && (r.error ?? "unknown error")}
+                  {r.outcome === "running" && `via ${r.trigger}`}
+                </Text>
+              </Stack>
+            );
+          })}
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
   );
 }
