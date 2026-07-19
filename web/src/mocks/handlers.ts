@@ -280,6 +280,18 @@ const INITIAL_SERIES = SERIES.map((s) => ({
 // series_external_ids lookup). Reset alongside SERIES.
 const fromProviderIndex = new Map<string, number>();
 
+/// Clip fixture rows directly (bypassing the PUT handler) so wishlist-page
+/// tests can start from a populated list.
+export function seedWishlisted(ids: number[]) {
+  for (const id of ids) {
+    const found = SERIES.find((s) => s.id === id);
+    if (found) {
+      found.wishlisted = true;
+      found.wishlistedAt = NOW;
+    }
+  }
+}
+
 export function resetSeries() {
   SERIES.length = 0;
   fromProviderIndex.clear();
@@ -1431,6 +1443,156 @@ export const handlers = [
     return HttpResponse.json({
       releasesRewritten: 18,
       seriesUpdated: 5,
+    });
+  }),
+
+  // --- Series bulk actions -------------------------------------------------
+  // All three are static `bulk` segments registered before their
+  // `/series/:id/...` param siblings (MSW is first-match-wins, unlike axum;
+  // see memory: MSW static vs param route ordering).
+
+  http.put("/api/v1/series/bulk/wishlist", async ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const body = (await request.json()) as {
+      ids: number[];
+      wishlisted: boolean;
+    };
+    if (!body.ids || body.ids.length === 0) {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "bad_request",
+          message: "ids must not be empty",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    let updated = 0;
+    for (const id of body.ids) {
+      const found = SERIES.find((s) => s.id === id);
+      if (!found) continue;
+      found.wishlisted = body.wishlisted;
+      found.wishlistedAt = body.wishlisted ? NOW : null;
+      updated += 1;
+    }
+    return HttpResponse.json({ updated });
+  }),
+
+  http.post("/api/v1/series/bulk/refresh-metadata", async ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const body = (await request.json()) as { ids: number[] };
+    if (!body.ids || body.ids.length === 0) {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "bad_request",
+          message: "ids must not be empty",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    let refreshed = 0;
+    const skipped: { id: number; reason: string }[] = [];
+    for (const id of body.ids) {
+      const found = SERIES.find((s) => s.id === id);
+      if (!found) {
+        skipped.push({ id, reason: "series not found" });
+      } else if (found.metadataSource === "manual") {
+        // Mirrors the backend: manual rows carry no active-provider mapping.
+        skipped.push({
+          id,
+          reason: 'no mapping for active provider "mangabaka"',
+        });
+      } else {
+        refreshed += 1;
+      }
+    }
+    return HttpResponse.json({ refreshed, skipped });
+  }),
+
+  http.post("/api/v1/series/bulk/search-releases", async ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const body = (await request.json()) as { ids: number[]; search?: string };
+    if (!body.ids || body.ids.length === 0) {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "bad_request",
+          message: "ids must not be empty",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (searchEntries.length === 0) {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "misconfigured",
+          message: "no [[search]] entries configured",
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      );
+    }
+    const entry = body.search
+      ? searchEntries.find((e) => e.name === body.search)
+      : (searchEntries.find((e) => e.default) ?? searchEntries[0]);
+    if (!entry) {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "bad_request",
+          message: `unknown search entry ${JSON.stringify(body.search)}`,
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    const existing = body.ids.filter((id) => SERIES.some((s) => s.id === id));
+    if (existing.length === 0) {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "not_found",
+          message: "none of the listed series exist",
+        }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (searchBusy) {
+      return HttpResponse.json({
+        search: entry.name,
+        matched: existing.length,
+        triggered: false,
+        skipped: true,
+      });
+    }
+    // One completed-shortly run per series, like the single trigger mock.
+    for (const seriesId of existing) {
+      const run: SearchRunMock = {
+        id: nextSearchRunId++,
+        ranAt: NOW,
+        finishedAt: null,
+        searchName: entry.name,
+        seriesId,
+        trigger: "manual",
+        outcome: "running",
+        queriesAttempted: null,
+        pagesFetched: null,
+        releasesSeen: null,
+        releasesNew: null,
+        error: null,
+      };
+      searchRuns.unshift(run);
+      setTimeout(() => {
+        run.outcome = "success";
+        run.finishedAt = NOW + 2;
+        run.queriesAttempted = 3;
+        run.pagesFetched = 4;
+        run.releasesSeen = 41;
+        run.releasesNew = searchResultNewCount;
+      }, 700);
+    }
+    return HttpResponse.json({
+      search: entry.name,
+      matched: existing.length,
+      triggered: true,
+      skipped: false,
     });
   }),
 

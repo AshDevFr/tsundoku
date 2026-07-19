@@ -1653,6 +1653,55 @@ pub async fn set_wishlisted(
     Ok(Json(load_admin_detail(&state, id).await?))
 }
 
+/// Body for `PUT /api/v1/series/bulk/wishlist`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkWishlistRequest {
+    /// Series ids to clip or un-clip. Must be non-empty; ids with no series
+    /// row are silently dropped from the `updated` count.
+    pub ids: Vec<i32>,
+    /// `true` clips every listed series (stamping a fresh "clipped at"),
+    /// `false` removes them all. An explicit set, not a per-row toggle, so a
+    /// mixed selection converges to one state instead of flipping each row.
+    pub wishlisted: bool,
+}
+
+/// Response for `PUT /api/v1/series/bulk/wishlist`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkWishlistResponse {
+    /// Number of series rows actually written.
+    pub updated: u64,
+}
+
+/// Clip or un-clip a whole selection of series in one call — the selection-bar
+/// counterpart of `PUT /series/{id}/wishlist`, with the same column semantics
+/// (operator-owned flag, any provenance, refresh never touches it).
+#[utoipa::path(
+    put,
+    path = "/api/v1/series/bulk/wishlist",
+    tag = "series",
+    request_body = BulkWishlistRequest,
+    responses(
+        (status = 200, body = BulkWishlistResponse),
+        (status = 400, description = "Empty ids list")
+    ),
+    security(("admin" = []))
+)]
+pub async fn bulk_wishlist(
+    State(state): State<AppState>,
+    Json(req): Json<BulkWishlistRequest>,
+) -> ApiResult<Json<BulkWishlistResponse>> {
+    if req.ids.is_empty() {
+        return Err(ApiError::BadRequest("ids must not be empty".into()));
+    }
+    let now = Utc::now().timestamp();
+    let updated = series_repo::set_wishlisted_bulk(&state.db, &req.ids, req.wishlisted, now)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(BulkWishlistResponse { updated }))
+}
+
 fn default_true() -> bool {
     true
 }
@@ -1786,11 +1835,56 @@ pub async fn refresh_metadata(
     State(state): State<AppState>,
     Path(id): Path<i32>,
 ) -> ApiResult<Json<SeriesDetail>> {
-    let _ = series::Entity::find_by_id(id)
+    match refresh_metadata_core(&state, id).await? {
+        RefreshOutcome::Refreshed => {}
+        RefreshOutcome::NotFound => {
+            return Err(ApiError::NotFound(format!("series {id}")));
+        }
+        RefreshOutcome::NoActiveMapping { active_id } => {
+            return Err(ApiError::Conflict(format!(
+                "series {id} has no mapping for active provider {active_id:?}; link it manually first"
+            )));
+        }
+        RefreshOutcome::ProviderMissingRecord {
+            active_id,
+            external_id,
+        } => {
+            return Err(ApiError::NotFound(format!(
+                "active provider {active_id:?} has no record for {external_id}"
+            )));
+        }
+    }
+    // Re-hydrate via the read-path helper so the response matches GET (this
+    // endpoint is admin-gated by the router, so the Codex overlay is included).
+    Ok(Json(load_admin_detail(&state, id).await?))
+}
+
+/// Per-series outcome of a refresh attempt against the active provider.
+/// Typed (rather than an error) so the single endpoint can map to its
+/// specific 404/409 statuses while the bulk endpoint records per-id skips.
+enum RefreshOutcome {
+    Refreshed,
+    NotFound,
+    NoActiveMapping {
+        active_id: String,
+    },
+    ProviderMissingRecord {
+        active_id: String,
+        external_id: String,
+    },
+}
+
+/// Fetch one series' metadata from the active provider and re-persist it.
+/// Only infrastructure faults (DB, provider I/O) surface as `Err`.
+async fn refresh_metadata_core(state: &AppState, id: i32) -> ApiResult<RefreshOutcome> {
+    if series::Entity::find_by_id(id)
         .one(&state.db)
         .await
         .map_err(anyhow_err)?
-        .ok_or_else(|| ApiError::NotFound(format!("series {id}")))?;
+        .is_none()
+    {
+        return Ok(RefreshOutcome::NotFound);
+    }
 
     let active_id = state.metadata.active_id().to_string();
     let active = state.metadata.active().clone();
@@ -1798,24 +1892,22 @@ pub async fn refresh_metadata(
         .await
         .map_err(anyhow_err)?;
     let Some(active_mapping) = mappings.iter().find(|m| m.provider == active_id) else {
-        return Err(ApiError::Conflict(format!(
-            "series {id} has no mapping for active provider {active_id:?}; link it manually first"
-        )));
+        return Ok(RefreshOutcome::NoActiveMapping { active_id });
     };
 
-    let metadata: SeriesMetadata = active
+    let metadata: Option<SeriesMetadata> = active
         .get(&active_mapping.external_id)
         .await
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!("active.get failed: {e}")))?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "active provider {:?} has no record for {}",
-                active_id, active_mapping.external_id
-            ))
-        })?;
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("active.get failed: {e}")))?;
+    let Some(metadata) = metadata else {
+        return Ok(RefreshOutcome::ProviderMissingRecord {
+            active_id,
+            external_id: active_mapping.external_id.clone(),
+        });
+    };
 
-    // Explicit operator action: the per-series refresh button is the one
-    // path that opts in to overwriting a manual row.
+    // Explicit operator action: the refresh buttons are the one path that
+    // opts in to overwriting a manual row.
     let now = Utc::now();
     persist::upsert_series_from_metadata(
         &state.db,
@@ -1827,43 +1919,87 @@ pub async fn refresh_metadata(
     )
     .await
     .map_err(ApiError::Internal)?;
+    Ok(RefreshOutcome::Refreshed)
+}
 
-    let row = series::Entity::find_by_id(id)
-        .one(&state.db)
-        .await
-        .map_err(anyhow_err)?
-        .ok_or_else(|| ApiError::NotFound(format!("series {id}")))?;
-    let mappings = series_external_ids_repo::list_for_series(&state.db, id)
-        .await
-        .map_err(anyhow_err)?;
-    let tags_for_series = tagging_repo::list_tags_for_series(&state.db, id)
-        .await
-        .map_err(anyhow_err)?;
-    let genres_for_series = tagging_repo::list_genres_for_series(&state.db, id)
-        .await
-        .map_err(anyhow_err)?;
-    // This endpoint is admin-gated by the router, so the caller is always an
-    // admin — surface the Codex overlay like the read path does.
-    let codex = codex_link_repo::get(&state.db, id)
-        .await
-        .map_err(anyhow_err)?
-        .map(|l| {
-            build_codex_info(
-                &l,
-                row.ignore_completion,
-                row.highest_volume,
-                row.highest_chapter,
-                state.codex.normalized_base_url().as_deref(),
-            )
-        });
-    Ok(Json(model_to_detail(
-        row,
-        mappings,
-        genres_for_series,
-        tags_for_series,
-        codex,
-        true,
-    )))
+/// Body for `POST /api/v1/series/bulk/refresh-metadata`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkRefreshMetadataRequest {
+    /// Series ids to refresh. Must be non-empty.
+    pub ids: Vec<i32>,
+}
+
+/// One series a bulk refresh could not rewrite, and why.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkRefreshSkipDto {
+    pub id: i32,
+    /// Human-readable skip reason ("series not found", "no mapping for the
+    /// active provider", "provider has no record").
+    pub reason: String,
+}
+
+/// Response for `POST /api/v1/series/bulk/refresh-metadata`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkRefreshMetadataResponse {
+    /// Number of series rewritten from provider metadata.
+    pub refreshed: u64,
+    /// Series that could not be refreshed; the batch never aborts on these.
+    pub skipped: Vec<BulkRefreshSkipDto>,
+}
+
+/// Refresh a whole selection of series from the active provider in one call.
+///
+/// Runs synchronously: the active provider today resolves `get()` against its
+/// local offline dump, so a page-sized batch is fast and network-free. If a
+/// future active provider fetches remotely per `get()`, this must move to a
+/// dispatched background job with progress reporting instead.
+///
+/// Per-id problems (unknown id, no active-provider mapping, provider record
+/// missing) are reported in `skipped` — the batch never aborts on them.
+#[utoipa::path(
+    post,
+    path = "/api/v1/series/bulk/refresh-metadata",
+    tag = "series",
+    request_body = BulkRefreshMetadataRequest,
+    responses(
+        (status = 200, body = BulkRefreshMetadataResponse),
+        (status = 400, description = "Empty ids list")
+    ),
+    security(("admin" = []))
+)]
+pub async fn bulk_refresh_metadata(
+    State(state): State<AppState>,
+    Json(req): Json<BulkRefreshMetadataRequest>,
+) -> ApiResult<Json<BulkRefreshMetadataResponse>> {
+    if req.ids.is_empty() {
+        return Err(ApiError::BadRequest("ids must not be empty".into()));
+    }
+    let mut refreshed = 0u64;
+    let mut skipped = Vec::new();
+    for id in &req.ids {
+        match refresh_metadata_core(&state, *id).await? {
+            RefreshOutcome::Refreshed => refreshed += 1,
+            RefreshOutcome::NotFound => skipped.push(BulkRefreshSkipDto {
+                id: *id,
+                reason: "series not found".into(),
+            }),
+            RefreshOutcome::NoActiveMapping { active_id } => skipped.push(BulkRefreshSkipDto {
+                id: *id,
+                reason: format!("no mapping for active provider {active_id:?}"),
+            }),
+            RefreshOutcome::ProviderMissingRecord {
+                active_id,
+                external_id,
+            } => skipped.push(BulkRefreshSkipDto {
+                id: *id,
+                reason: format!("active provider {active_id:?} has no record for {external_id}"),
+            }),
+        }
+    }
+    Ok(Json(BulkRefreshMetadataResponse { refreshed, skipped }))
 }
 
 /// Trigger a bulk refresh of stale series rows against the active

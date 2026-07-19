@@ -207,6 +207,32 @@ pub async fn set_wishlisted(
     Ok(SetWishlistedOutcome::Updated(Box::new(updated)))
 }
 
+/// Set or clear `wishlisted_at` on every listed series in one UPDATE.
+///
+/// Same column semantics as [`set_wishlisted`] (`true` stamps `now`, `false`
+/// clears to NULL, works on any series regardless of provenance); ids with no
+/// series row are simply absent from the returned affected count — the bulk
+/// caller treats them as already gone, not as an error.
+pub async fn set_wishlisted_bulk(
+    db: &DatabaseConnection,
+    ids: &[i32],
+    wishlisted: bool,
+    now: i64,
+) -> Result<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let res = series::Entity::update_many()
+        .col_expr(
+            series::Column::WishlistedAt,
+            Expr::value(wishlisted.then_some(now)),
+        )
+        .filter(series::Column::Id.is_in(ids.iter().copied()))
+        .exec(db)
+        .await?;
+    Ok(res.rows_affected)
+}
+
 pub async fn find_by_id(db: &DatabaseConnection, id: i32) -> Result<Option<Model>> {
     Ok(series::Entity::find_by_id(id).one(db).await?)
 }
@@ -652,6 +678,51 @@ mod tests {
             set_wishlisted(&db, 9999, true, 1).await.unwrap(),
             SetWishlistedOutcome::NotFound
         ));
+    }
+
+    #[tokio::test]
+    async fn set_wishlisted_bulk_stamps_and_clears_counting_only_existing() {
+        let db = fresh().await;
+        let provider_backed = seed(&db, "Provider Backed", "api", Some("hash")).await;
+        let manual = seed(&db, "Manual Row", "manual", None).await;
+
+        // Unknown ids are silently dropped from the count.
+        let updated = set_wishlisted_bulk(&db, &[provider_backed, manual, 9999], true, 1234)
+            .await
+            .unwrap();
+        assert_eq!(updated, 2);
+        for id in [provider_backed, manual] {
+            let row = series::Entity::find_by_id(id)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.wishlisted_at, Some(1234), "stamps every listed row");
+        }
+
+        // Clearing one row leaves the other clipped.
+        let updated = set_wishlisted_bulk(&db, &[provider_backed], false, 5678)
+            .await
+            .unwrap();
+        assert_eq!(updated, 1);
+        let cleared = series::Entity::find_by_id(provider_backed)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(cleared.wishlisted_at, None);
+        let untouched = series::Entity::find_by_id(manual)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(untouched.wishlisted_at, Some(1234));
+    }
+
+    #[tokio::test]
+    async fn set_wishlisted_bulk_empty_ids_is_a_no_op() {
+        let db = fresh().await;
+        assert_eq!(set_wishlisted_bulk(&db, &[], true, 1).await.unwrap(), 0);
     }
 
     #[tokio::test]

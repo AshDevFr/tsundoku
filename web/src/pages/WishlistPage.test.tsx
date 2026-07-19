@@ -9,10 +9,20 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AdminShell } from "@/components/admin/AdminShell";
-import { ADMIN_TEST_TOKEN, resetSeries } from "@/mocks/handlers";
+import {
+  ADMIN_TEST_TOKEN,
+  resetSeries,
+  seedWishlisted,
+} from "@/mocks/handlers";
 import { useAdminAuth } from "@/stores/auth";
 import { WishlistPage } from "./WishlistPage";
 
@@ -127,6 +137,31 @@ describe("WishlistPage", () => {
       .getByTestId("search-hit-mb-1")
       .querySelector('a[href="https://mangabaka.org/mb-1"]');
     expect(viewLink).not.toBeNull();
+  });
+
+  it("bulk-removes a selection from the wishlist; the bar never offers Add", async () => {
+    seedWishlisted([1, 3]);
+    renderWishlist();
+    await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 });
+    expect(screen.getByText("Solo Leveling")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("series-select-1"));
+    const bar = await screen.findByTestId("series-selection-bar");
+    // Everything on this page is already clipped; offering "Add to
+    // wishlist" would be dead weight.
+    expect(
+      within(bar).queryByTestId("bulk-wishlist-add"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(within(bar).getByTestId("bulk-wishlist-remove"));
+    // The un-clipped series leaves the wishlist on refetch; the other stays.
+    await waitFor(
+      () => {
+        expect(screen.queryByText("Chainsaw Man")).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+    expect(screen.getByText("Solo Leveling")).toBeInTheDocument();
   });
 
   it("shows the synopsis and genres on a search hit", async () => {

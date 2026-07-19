@@ -15,7 +15,10 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ADMIN_TEST_TOKEN, resetSeries } from "@/mocks/handlers";
+import { useAdminAuth } from "@/stores/auth";
+import { useUiPrefs } from "@/stores/uiPrefs";
 import { FeedPage } from "./FeedPage";
 import { SeriesDetailPage } from "./SeriesDetailPage";
 
@@ -209,6 +212,138 @@ describe("FeedPage", () => {
       await screen.findByTestId("feed-list-view", undefined, { timeout: 3000 }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("series-row-1")).toBeInTheDocument();
+  });
+});
+
+describe("FeedPage bulk selection", () => {
+  beforeEach(() => {
+    resetSeries();
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    useUiPrefs.getState().setView("card");
+  });
+
+  afterEach(() => {
+    useAdminAuth.getState().clear();
+  });
+
+  it("hides selection checkboxes without an admin token", async () => {
+    useAdminAuth.getState().clear();
+    renderWithProviders("/");
+    expect(
+      await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("series-select-1")).not.toBeInTheDocument();
+  });
+
+  it("selecting a card shows the selection bar; bulk add-to-wishlist clips it and clears the selection", async () => {
+    renderWithProviders("/");
+    await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 });
+    expect(
+      screen.queryByTestId("series-selection-bar"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("series-select-1"));
+    const bar = await screen.findByTestId("series-selection-bar");
+    expect(within(bar).getByText("1 selected")).toBeInTheDocument();
+
+    fireEvent.click(within(bar).getByTestId("bulk-wishlist-add"));
+    // Success clears the selection (bar unmounts) and the refetched list
+    // shows the card's star filled.
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("series-selection-bar"),
+      ).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("wishlist-toggle-1")).toHaveAttribute(
+        "aria-label",
+        "Remove from wishlist",
+      );
+    });
+  });
+
+  it("shift+click selects the whole range between two cards", async () => {
+    renderWithProviders("/");
+    await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 });
+    const boxes = screen.getAllByTestId(/^series-select-/);
+    expect(boxes.length).toBeGreaterThanOrEqual(4);
+    fireEvent.click(boxes[0]);
+    fireEvent.click(boxes[3], { shiftKey: true });
+    const bar = await screen.findByTestId("series-selection-bar");
+    expect(within(bar).getByText("4 selected")).toBeInTheDocument();
+  });
+
+  it("select-all-on-page selects every visible card", async () => {
+    renderWithProviders("/");
+    await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 });
+    fireEvent.click(screen.getByTestId("series-select-1"));
+    const bar = await screen.findByTestId("series-selection-bar");
+    fireEvent.click(within(bar).getByTestId("series-select-page"));
+    expect(within(bar).getByText("10 selected")).toBeInTheDocument();
+  });
+
+  it("bulk search asks for confirmation, then launches and clears the selection", async () => {
+    renderWithProviders("/");
+    await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 });
+    fireEvent.click(screen.getByTestId("series-select-1"));
+    const bar = await screen.findByTestId("series-selection-bar");
+
+    fireEvent.click(within(bar).getByTestId("bulk-search"));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/Launch 1 release search\?/),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByTestId("bulk-search-confirm"));
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("series-selection-bar"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("bulk refresh-metadata reports the outcome and clears the selection", async () => {
+    renderWithProviders("/");
+    await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 });
+    fireEvent.click(screen.getByTestId("series-select-1"));
+    const bar = await screen.findByTestId("series-selection-bar");
+    fireEvent.click(within(bar).getByTestId("bulk-refresh"));
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("series-selection-bar"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("clears the selection when the query changes", async () => {
+    renderWithProviders("/");
+    await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 });
+    fireEvent.click(screen.getByTestId("series-select-1"));
+    await screen.findByTestId("series-selection-bar");
+    fireEvent.change(screen.getByTestId("feed-search-input"), {
+      target: { value: "solo" },
+    });
+    // The debounced q kicks in, the page refetches, and the selection is
+    // dropped (its ids referred to the old result set).
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByTestId("series-selection-bar"),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it("offers selection checkboxes in the list view too", async () => {
+    renderWithProviders("/");
+    await screen.findByText("Chainsaw Man", undefined, { timeout: 3000 });
+    const toggle = screen.getByTestId("feed-view-toggle");
+    fireEvent.click(within(toggle).getByText("List"));
+    await screen.findByTestId("feed-list-view", undefined, { timeout: 3000 });
+    const row = screen.getByTestId("series-row-1");
+    fireEvent.click(within(row).getByTestId("series-select-1"));
+    const bar = await screen.findByTestId("series-selection-bar");
+    expect(within(bar).getByText("1 selected")).toBeInTheDocument();
   });
 });
 

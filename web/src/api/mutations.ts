@@ -10,6 +10,11 @@ type BulkLinkRequest = components["schemas"]["BulkLinkRequest"];
 type SendToClientRequest = components["schemas"]["SendToClientRequest"];
 type CreateSeriesFromProviderRequest =
   components["schemas"]["CreateSeriesFromProviderRequest"];
+type BulkWishlistRequest = components["schemas"]["BulkWishlistRequest"];
+type BulkRefreshMetadataRequest =
+  components["schemas"]["BulkRefreshMetadataRequest"];
+type BulkSearchReleasesRequest =
+  components["schemas"]["BulkSearchReleasesRequest"];
 
 // Extract a useful error message from an openapi-fetch error payload, falling
 // back to a sentence the user can act on. The backend serializes errors as
@@ -247,6 +252,70 @@ export function useSetWishlisted() {
       qc.invalidateQueries({ queryKey: ["series-detail", id] });
       qc.invalidateQueries({ queryKey: ["series-list"] });
     },
+  });
+}
+
+/// Clip or un-clip a whole selection of series in one request (`wishlisted`
+/// is an explicit set, not a per-row toggle, so mixed selections converge).
+/// Same cache invalidation as the single-series [`useSetWishlisted`].
+export function useBulkSetWishlisted() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: BulkWishlistRequest) => {
+      const { data, error } = await api.PUT("/api/v1/series/bulk/wishlist", {
+        body,
+      });
+      if (error || !data)
+        throw new Error(describeError(error, "failed to update wishlist"));
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["series-detail"] });
+      qc.invalidateQueries({ queryKey: ["series-list"] });
+    },
+  });
+}
+
+/// Refresh a whole selection of series from the active provider. Synchronous
+/// on the backend (offline-dump reads); the response reports per-id skips
+/// (`skipped`) alongside the `refreshed` count — surface both to the operator.
+export function useBulkRefreshMetadata() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: BulkRefreshMetadataRequest) => {
+      const { data, error } = await api.POST(
+        "/api/v1/series/bulk/refresh-metadata",
+        { body },
+      );
+      if (error || !data)
+        throw new Error(describeError(error, "failed to refresh series"));
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["series-detail"] });
+      qc.invalidateQueries({ queryKey: ["series-list"] });
+    },
+  });
+}
+
+/// Launch release searches for a whole selection in one dispatched batch
+/// (sequential walks behind the entry's lock). `skipped: true` in the
+/// response means a walk was already in flight and nothing ran — callers
+/// should tell the operator rather than treat it as success. Invalidates the
+/// run-history root so every affected series' timeline picks up its new row.
+export function useBulkSearchReleases() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: BulkSearchReleasesRequest) => {
+      const { data, error } = await api.POST(
+        "/api/v1/series/bulk/search-releases",
+        { body },
+      );
+      if (error || !data)
+        throw new Error(describeError(error, "failed to start searches"));
+      return data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["search-runs"] }),
   });
 }
 

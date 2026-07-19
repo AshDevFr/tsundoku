@@ -196,6 +196,144 @@ pub async fn trigger(
     }))
 }
 
+/// Body for `POST /api/v1/series/bulk/search-releases`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkSearchReleasesRequest {
+    /// Series ids to search for. Must be non-empty; ids with no series row
+    /// are dropped from `matched` (the whole batch 404s only when none
+    /// exist).
+    pub ids: Vec<i32>,
+    /// `[[search]]` entry name. Omitted ⇒ the default entry.
+    #[serde(default)]
+    pub search: Option<String>,
+}
+
+/// Response for `POST /api/v1/series/bulk/search-releases`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkSearchReleasesResponse {
+    /// Entry the walks were (or would have been) dispatched against.
+    pub search: String,
+    /// Number of listed ids that exist and were queued for a walk.
+    pub matched: u64,
+    pub triggered: bool,
+    /// `true` when a walk against this entry was already in flight — the
+    /// whole batch is skipped, nothing partial runs.
+    pub skipped: bool,
+}
+
+/// Trigger a release search for a whole selection of series.
+///
+/// One dispatch against the entry's `search:<name>` lock; the detached job
+/// walks the series **sequentially**, so upstream rate-limiting sees one walk
+/// at a time and each series still gets its own `search_runs` audit row
+/// (feeding the run-history timelines). Poll `GET /series/{id}/search-runs`
+/// per series for completion, same as the single trigger.
+#[utoipa::path(
+    post,
+    path = "/api/v1/series/bulk/search-releases",
+    tag = "search",
+    request_body = BulkSearchReleasesRequest,
+    responses(
+        (status = 200, body = BulkSearchReleasesResponse),
+        (status = 400, description = "Empty ids list, or unknown/disabled search entry"),
+        (status = 404, description = "None of the listed series exist"),
+        (status = 503, description = "No [[search]] entries configured")
+    ),
+    security(("admin" = []))
+)]
+pub async fn bulk_trigger(
+    State(state): State<AppState>,
+    Json(req): Json<BulkSearchReleasesRequest>,
+) -> ApiResult<Json<BulkSearchReleasesResponse>> {
+    if req.ids.is_empty() {
+        return Err(ApiError::BadRequest("ids must not be empty".into()));
+    }
+    if state.search.is_empty() {
+        return Err(ApiError::Misconfigured(
+            "no [[search]] entries configured; add one to the config file".into(),
+        ));
+    }
+    let entry = match &req.search {
+        Some(name) => state.search.get(name).ok_or_else(|| {
+            ApiError::BadRequest(format!("unknown search entry {name:?} (or it is disabled)"))
+        })?,
+        None => state
+            .search
+            .default_entry()
+            .expect("non-empty registry always has a default entry"),
+    };
+
+    let mut existing = Vec::with_capacity(req.ids.len());
+    for id in &req.ids {
+        if series_repo::find_by_id(&state.db, *id)
+            .await
+            .map_err(ApiError::from)?
+            .is_some()
+        {
+            existing.push(*id);
+        }
+    }
+    if existing.is_empty() {
+        return Err(ApiError::NotFound("none of the listed series exist".into()));
+    }
+    let matched = existing.len() as u64;
+
+    let entry_name = entry.source.name().to_string();
+    let lock = state.locks.search_lock(&entry_name);
+    let source = entry.source.clone();
+    let max_pages = entry.max_pages;
+    let db = state.db.clone();
+    let metadata = state.metadata.clone();
+    let ingestion = state.ingestion.clone();
+    let query_builder = state.query_builder.clone();
+    let mu_redirector = state.mangaupdates_redirector.clone();
+    let triggered = dispatch::try_dispatch(
+        &state.job_events,
+        lock,
+        JobKind::Search,
+        entry_name.clone(),
+        // Skips are visible in the HTTP response itself; there is no
+        // metrics lane to write a "skipped" row into.
+        || async {},
+        move || async move {
+            for id in existing {
+                // Per-series errors are already recorded on the series'
+                // search_runs row (or logged for setup faults); keep
+                // walking the rest of the batch.
+                if let Err(e) = search_series::run(
+                    source.clone(),
+                    max_pages,
+                    db.clone(),
+                    metadata.clone(),
+                    ingestion.clone(),
+                    query_builder.clone(),
+                    mu_redirector.clone(),
+                    id,
+                    search_runs_repo::TRIGGER_MANUAL,
+                )
+                .await
+                {
+                    tracing::error!(error = ?e, series_id = id, "series search failed at setup");
+                }
+            }
+            JobResult {
+                triggered: true,
+                skipped: false,
+                ..Default::default()
+            }
+        },
+    );
+
+    Ok(Json(BulkSearchReleasesResponse {
+        search: entry_name,
+        matched,
+        triggered,
+        skipped: !triggered,
+    }))
+}
+
 /// One `search_runs` row. `outcome` is `running` | `success` | `error`;
 /// counts are set on completion only.
 #[derive(Debug, Serialize, ToSchema)]

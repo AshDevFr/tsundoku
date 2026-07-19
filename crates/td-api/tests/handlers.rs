@@ -6487,6 +6487,207 @@ async fn wishlist_is_hidden_from_non_admin() {
 }
 
 #[tokio::test]
+async fn bulk_wishlist_sets_and_clears_counting_only_existing() {
+    let db = fresh_db().await;
+    let a = seed_series(&db, "Bulk A", "manga").await;
+    let b = seed_series(&db, "Bulk B", "manga").await;
+    let app = wishlist_app(db.clone());
+
+    // Clip both; the unknown id is dropped from the count. The static
+    // `/series/bulk/wishlist` segment must not be captured by the
+    // `/series/{id}/wishlist` param sibling (which would 400 on "bulk").
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/series/bulk/wishlist")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(
+                    r#"{{"ids":[{a},{b},999999],"wishlisted":true}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["updated"], 2);
+    for id in [a, b] {
+        let row = series::Entity::find_by_id(id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(row.wishlisted_at.is_some(), "series {id} clipped");
+    }
+
+    // Un-clip only `a`; `b` stays clipped.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/series/bulk/wishlist")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(r#"{{"ids":[{a}],"wishlisted":false}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["updated"], 1);
+    let row_a = series::Entity::find_by_id(a)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(row_a.wishlisted_at.is_none());
+    let row_b = series::Entity::find_by_id(b)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(row_b.wishlisted_at.is_some());
+}
+
+#[tokio::test]
+async fn bulk_wishlist_empty_ids_is_bad_request() {
+    let db = fresh_db().await;
+    let app = wishlist_app(db);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/series/bulk/wishlist")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"ids":[],"wishlisted":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    // Assert on the handler's own message so this can't pass by accident via
+    // axum's path-param rejection on `/series/{id}/wishlist`.
+    let body = body_json(resp).await;
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("ids must not be empty"),
+        "expected the bulk handler's validation message, got: {body}"
+    );
+}
+
+#[tokio::test]
+async fn bulk_wishlist_requires_admin() {
+    let db = fresh_db().await;
+    let app = wishlist_app(db);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/series/bulk/wishlist")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"ids":[1],"wishlisted":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn bulk_refresh_metadata_mixed_batch_reports_per_id_outcomes() {
+    let db = fresh_db().await;
+    // Mapped to the active provider ⇒ refreshed (title rewritten from the stub).
+    let mapped = seed_series(&db, "Old Title", "manga").await;
+    series_external_ids_repo::upsert(&db, mapped, "mb", "1677", 100)
+        .await
+        .unwrap();
+    // No active-provider mapping ⇒ per-id skip, not a batch error.
+    let unmapped = seed_series(&db, "Unmapped", "manga").await;
+    let app = wishlist_app(db.clone());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/bulk/refresh-metadata")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(
+                    r#"{{"ids":[{mapped},{unmapped},999999]}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["refreshed"], 1);
+    let skipped = body["skipped"].as_array().unwrap();
+    assert_eq!(skipped.len(), 2);
+    let reason_for = |id: i64| {
+        skipped
+            .iter()
+            .find(|s| s["id"].as_i64() == Some(id))
+            .unwrap_or_else(|| panic!("no skip entry for {id}: {body}"))["reason"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(
+        reason_for(unmapped as i64).contains("no mapping"),
+        "unmapped reason: {}",
+        reason_for(unmapped as i64)
+    );
+    assert!(
+        reason_for(999999).contains("not found"),
+        "unknown-id reason: {}",
+        reason_for(999999)
+    );
+
+    // The mapped row was actually rewritten from provider metadata.
+    let row = series::Entity::find_by_id(mapped)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.canonical_title, "Chainsaw Man");
+}
+
+#[tokio::test]
+async fn bulk_refresh_metadata_empty_ids_is_bad_request() {
+    let db = fresh_db().await;
+    let app = wishlist_app(db);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/series/bulk/refresh-metadata")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"ids":[]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp).await;
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("ids must not be empty"),
+        "expected the bulk handler's validation message, got: {body}"
+    );
+}
+
+#[tokio::test]
 async fn from_provider_creates_wishlisted_series_idempotently() {
     let db = fresh_db().await;
     let app = wishlist_app(db.clone());
@@ -6789,6 +6990,134 @@ async fn search_trigger_skips_when_the_entry_is_busy() {
     let body = body_json(resp).await;
     assert_eq!(body["triggered"], false);
     assert_eq!(body["skipped"], true);
+}
+
+async fn post_bulk_search(app: axum::Router, body: &str) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/series/bulk/search-releases")
+            .header(header::AUTHORIZATION, "Bearer write-token")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn bulk_search_walks_each_series_and_records_audit_rows() {
+    let db = fresh_db().await;
+    let a = seed_series(&db, "Solo Leveling", "manhwa").await;
+    let b = seed_series(&db, "Omniscient Reader", "manhwa").await;
+    let hit = sample_release("bulk-sr-1", "eng", "Solo Leveling v01");
+    let app = build_app_with_search(
+        db.clone(),
+        open_auth(),
+        vec![(search_stub("eng", vec![hit]), true)],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+
+    // Unknown ids are dropped from `matched`, not errors.
+    let resp = post_bulk_search(app, &format!(r#"{{"ids":[{a},{b},999999]}}"#)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["search"], "eng");
+    assert_eq!(body["matched"], 2);
+    assert_eq!(body["triggered"], true);
+    assert_eq!(body["skipped"], false);
+
+    // One detached job walks both series sequentially; each gets its own
+    // completed audit row (this is what feeds the run-history timelines).
+    for sid in [a, b] {
+        let mut done = None;
+        for _ in 0..100 {
+            let runs = td_db::repos::search_runs_repo::recent_for_series(&db, sid, 5)
+                .await
+                .unwrap();
+            if let Some(r) = runs.first()
+                && r.outcome != td_db::repos::search_runs_repo::OUTCOME_RUNNING
+            {
+                done = Some(r.clone());
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let run = done.unwrap_or_else(|| panic!("series {sid} search run should complete"));
+        assert_eq!(run.outcome, td_db::repos::search_runs_repo::OUTCOME_SUCCESS);
+        assert_eq!(run.trigger, "manual");
+        assert_eq!(run.search_name, "eng");
+    }
+}
+
+#[tokio::test]
+async fn bulk_search_skips_whole_batch_when_the_entry_is_busy() {
+    let db = fresh_db().await;
+    let a = seed_series(&db, "Solo Leveling", "manhwa").await;
+    let locks = std::sync::Arc::new(td_scheduler::JobLocks::default());
+    let held = locks.search_lock("eng");
+    let _guard = held.try_lock().expect("test should hold the lock first");
+
+    let app = build_app_with_search(
+        db.clone(),
+        open_auth(),
+        vec![(search_stub("eng", vec![]), true)],
+        locks,
+    );
+    let resp = post_bulk_search(app, &format!(r#"{{"ids":[{a}]}}"#)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["triggered"], false);
+    assert_eq!(body["skipped"], true);
+
+    // Nothing ran: no audit row was created for the series.
+    let runs = td_db::repos::search_runs_repo::recent_for_series(&db, a, 5)
+        .await
+        .unwrap();
+    assert!(runs.is_empty(), "busy lock must not start any walk");
+}
+
+#[tokio::test]
+async fn bulk_search_validates_entry_registry_and_ids() {
+    let db = fresh_db().await;
+    let a = seed_series(&db, "Solo Leveling", "manhwa").await;
+
+    // Unknown entry → 400.
+    let app = build_app_with_search(
+        db.clone(),
+        open_auth(),
+        vec![(search_stub("eng", vec![]), true)],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = post_bulk_search(app.clone(), &format!(r#"{{"ids":[{a}],"search":"nope"}}"#)).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Empty ids → 400 with the handler's own message.
+    let resp = post_bulk_search(app.clone(), r#"{"ids":[]}"#).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp).await;
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("ids must not be empty"),
+        "expected the bulk handler's validation message, got: {body}"
+    );
+
+    // All ids unknown → 404.
+    let resp = post_bulk_search(app, r#"{"ids":[999999]}"#).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // No entries configured → 503.
+    let empty_app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = post_bulk_search(empty_app, &format!(r#"{{"ids":[{a}]}}"#)).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]

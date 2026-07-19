@@ -1735,6 +1735,131 @@
         ]
       }
     },
+    "/api/v1/series/bulk/refresh-metadata": {
+      "post": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Refresh a whole selection of series from the active provider in one call.",
+        "description": "Runs synchronously: the active provider today resolves `get()` against its\nlocal offline dump, so a page-sized batch is fast and network-free. If a\nfuture active provider fetches remotely per `get()`, this must move to a\ndispatched background job with progress reporting instead.\n\nPer-id problems (unknown id, no active-provider mapping, provider record\nmissing) are reported in `skipped` — the batch never aborts on them.",
+        "operationId": "bulk_refresh_metadata",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkRefreshMetadataRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkRefreshMetadataResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty ids list"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/series/bulk/search-releases": {
+      "post": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Trigger a release search for a whole selection of series.",
+        "description": "One dispatch against the entry's `search:<name>` lock; the detached job\nwalks the series **sequentially**, so upstream rate-limiting sees one walk\nat a time and each series still gets its own `search_runs` audit row\n(feeding the run-history timelines). Poll `GET /series/{id}/search-runs`\nper series for completion, same as the single trigger.",
+        "operationId": "bulk_trigger",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkSearchReleasesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSearchReleasesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty ids list, or unknown/disabled search entry"
+          },
+          "404": {
+            "description": "None of the listed series exist"
+          },
+          "503": {
+            "description": "No [[search]] entries configured"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/series/bulk/wishlist": {
+      "put": {
+        "tags": [
+          "series"
+        ],
+        "summary": "Clip or un-clip a whole selection of series in one call — the selection-bar\ncounterpart of `PUT /series/{id}/wishlist`, with the same column semantics\n(operator-owned flag, any provenance, refresh never touches it).",
+        "operationId": "bulk_wishlist",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkWishlistRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkWishlistResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty ids list"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/series/export": {
       "get": {
         "tags": [
@@ -2974,6 +3099,64 @@
           }
         }
       },
+      "BulkRefreshMetadataRequest": {
+        "type": "object",
+        "description": "Body for `POST /api/v1/series/bulk/refresh-metadata`.",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "Series ids to refresh. Must be non-empty."
+          }
+        }
+      },
+      "BulkRefreshMetadataResponse": {
+        "type": "object",
+        "description": "Response for `POST /api/v1/series/bulk/refresh-metadata`.",
+        "required": [
+          "refreshed",
+          "skipped"
+        ],
+        "properties": {
+          "refreshed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of series rewritten from provider metadata.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkRefreshSkipDto"
+            },
+            "description": "Series that could not be refreshed; the batch never aborts on these."
+          }
+        }
+      },
+      "BulkRefreshSkipDto": {
+        "type": "object",
+        "description": "One series a bulk refresh could not rewrite, and why.",
+        "required": [
+          "id",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Human-readable skip reason (\"series not found\", \"no mapping for the\nactive provider\", \"provider has no record\")."
+          }
+        }
+      },
       "BulkRejectResponse": {
         "type": "object",
         "required": [
@@ -3068,6 +3251,96 @@
               "null"
             ],
             "default": null
+          }
+        }
+      },
+      "BulkSearchReleasesRequest": {
+        "type": "object",
+        "description": "Body for `POST /api/v1/series/bulk/search-releases`.",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "Series ids to search for. Must be non-empty; ids with no series row\nare dropped from `matched` (the whole batch 404s only when none\nexist)."
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`[[search]]` entry name. Omitted ⇒ the default entry."
+          }
+        }
+      },
+      "BulkSearchReleasesResponse": {
+        "type": "object",
+        "description": "Response for `POST /api/v1/series/bulk/search-releases`.",
+        "required": [
+          "search",
+          "matched",
+          "triggered",
+          "skipped"
+        ],
+        "properties": {
+          "matched": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of listed ids that exist and were queued for a walk.",
+            "minimum": 0
+          },
+          "search": {
+            "type": "string",
+            "description": "Entry the walks were (or would have been) dispatched against."
+          },
+          "skipped": {
+            "type": "boolean",
+            "description": "`true` when a walk against this entry was already in flight — the\nwhole batch is skipped, nothing partial runs."
+          },
+          "triggered": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BulkWishlistRequest": {
+        "type": "object",
+        "description": "Body for `PUT /api/v1/series/bulk/wishlist`.",
+        "required": [
+          "ids",
+          "wishlisted"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "Series ids to clip or un-clip. Must be non-empty; ids with no series\nrow are silently dropped from the `updated` count."
+          },
+          "wishlisted": {
+            "type": "boolean",
+            "description": "`true` clips every listed series (stamping a fresh \"clipped at\"),\n`false` removes them all. An explicit set, not a per-row toggle, so a\nmixed selection converges to one state instead of flipping each row."
+          }
+        }
+      },
+      "BulkWishlistResponse": {
+        "type": "object",
+        "description": "Response for `PUT /api/v1/series/bulk/wishlist`.",
+        "required": [
+          "updated"
+        ],
+        "properties": {
+          "updated": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of series rows actually written.",
+            "minimum": 0
           }
         }
       },

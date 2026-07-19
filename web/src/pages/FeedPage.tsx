@@ -18,11 +18,15 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { useNavigate } from "@tanstack/react-router";
+import type { MouseEvent } from "react";
 import { useSeriesList } from "@/api/queries";
 import { FilterPanel } from "@/components/FilterPanel";
 import { SeriesCard } from "@/components/SeriesCard";
 import { SeriesListRow } from "@/components/SeriesListRow";
+import { SeriesSelectionBar } from "@/components/SeriesSelectionBar";
+import { useSeriesSelection } from "@/hooks/useSeriesSelection";
 import { feedRoute } from "@/router";
+import { useAdminAuth } from "@/stores/auth";
 import { countActiveFilters, type FilterSearch } from "@/stores/filters";
 import {
   DEFAULT_PAGE_SIZE,
@@ -57,6 +61,22 @@ export function FeedPage() {
   // Only show Codex badges once a sweep has succeeded (admin-only signal);
   // absent for non-admins, so badges never leak to the public read tier.
   const codexSynced = Boolean(list.data?.codexSyncedAt);
+
+  // Bulk selection (admin-only: every bulk action is an admin write, so
+  // non-admins never see the checkboxes). The hook itself drops the
+  // selection whenever the visible id set changes (filters, sort, page).
+  const isAdmin = useAdminAuth((s) => Boolean(s.token));
+  const items = list.data?.items ?? [];
+  const pageIds = items.map((i) => i.id);
+  const selection = useSeriesSelection(pageIds);
+  const selectionFor = (index: number, id: number) =>
+    isAdmin
+      ? {
+          selected: selection.selected.has(id),
+          active: selection.selected.size > 0,
+          onToggle: (e: MouseEvent) => selection.toggleAt(index, e.shiftKey),
+        }
+      : undefined;
 
   return (
     <Container size={wideMode ? "100%" : "xl"} py="lg">
@@ -169,6 +189,16 @@ export function FeedPage() {
               </Alert>
             )}
 
+            {isAdmin && selection.selected.size > 0 && (
+              <SeriesSelectionBar
+                selectedIds={[...selection.selected]}
+                allPageSelected={selection.allPageSelected}
+                somePageSelected={selection.somePageSelected}
+                onToggleAll={selection.toggleAllOnPage}
+                onClear={selection.clear}
+              />
+            )}
+
             {list.data && list.data.items.length > 0 && view === "card" && (
               // Fluid grid: a fixed min track width means freeing horizontal
               // space (wide mode, a bigger monitor) turns into more columns
@@ -186,19 +216,25 @@ export function FeedPage() {
                     "repeat(auto-fill, minmax(min(45%, 175px), 1fr))",
                 }}
               >
-                {list.data.items.map((s) => (
-                  <SeriesCard key={s.id} series={s} codexSynced={codexSynced} />
+                {list.data.items.map((s, i) => (
+                  <SeriesCard
+                    key={s.id}
+                    series={s}
+                    codexSynced={codexSynced}
+                    selection={selectionFor(i, s.id)}
+                  />
                 ))}
               </Box>
             )}
 
             {list.data && list.data.items.length > 0 && view === "list" && (
               <Stack gap="xs" data-testid="feed-list-view">
-                {list.data.items.map((s) => (
+                {list.data.items.map((s, i) => (
                   <SeriesListRow
                     key={s.id}
                     series={s}
                     codexSynced={codexSynced}
+                    selection={selectionFor(i, s.id)}
                   />
                 ))}
               </Stack>

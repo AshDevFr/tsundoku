@@ -2,6 +2,7 @@ import {
   AspectRatio,
   Badge,
   Box,
+  Checkbox,
   Group,
   Image,
   Paper,
@@ -10,10 +11,14 @@ import {
   Title,
 } from "@mantine/core";
 import { Link } from "@tanstack/react-router";
+import { useState } from "react";
 import type { SeriesListItem } from "@/api/queries";
 import { coverProxyForSeries, formatRelative } from "@/api/utils";
 import { CodexBadge, codexBorderColor } from "@/components/CodexBadge";
-import { spanBadgeLabel } from "@/components/SeriesCard";
+import {
+  type SeriesSelectionProps,
+  spanBadgeLabel,
+} from "@/components/SeriesCard";
 
 const COVER_PLACEHOLDER =
   "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 3 4%22%3E%3Crect width=%223%22 height=%224%22 fill=%22%23ced4da%22/%3E%3C/svg%3E";
@@ -30,10 +35,13 @@ const MAX_TAG_CHIPS = 4;
 export function SeriesListRow({
   series,
   codexSynced = false,
+  selection,
 }: {
   series: SeriesListItem;
   /// See `SeriesCard` — gates the Codex badge on a successful first sweep.
   codexSynced?: boolean;
+  /// See `SeriesCard` — bulk-selection wiring, admin pages only.
+  selection?: SeriesSelectionProps;
 }) {
   const genres = series.genres ?? [];
   const tags = series.tags ?? [];
@@ -53,6 +61,12 @@ export function SeriesListRow({
     codexSynced && series.codex
       ? codexBorderColor(series.codex.status)
       : undefined;
+  // See `SeriesCard` — invisible until hover, forced visible while a
+  // selection is active on the page (or this row is selected).
+  const [hovered, setHovered] = useState(false);
+  const selectionVisible =
+    Boolean(selection) &&
+    (hovered || Boolean(selection?.active) || Boolean(selection?.selected));
   return (
     <Link
       to="/series/$id"
@@ -62,6 +76,8 @@ export function SeriesListRow({
       search={(prev) => prev}
       style={{ textDecoration: "none", color: "inherit" }}
       data-testid={`series-row-${series.id}`}
+      onMouseEnter={selection ? () => setHovered(true) : undefined}
+      onMouseLeave={selection ? () => setHovered(false) : undefined}
     >
       <Paper
         withBorder
@@ -72,6 +88,40 @@ export function SeriesListRow({
         }
       >
         <Group gap="md" wrap="nowrap" align="flex-start">
+          {selection && (
+            <Box
+              data-selection-overlay
+              style={{
+                alignSelf: "center",
+                opacity: selectionVisible ? 1 : 0,
+                transition: "opacity 120ms ease",
+              }}
+              onClick={(e) => {
+                // The whole row is a <Link>; selecting must not navigate.
+                e.preventDefault();
+                e.stopPropagation();
+                selection.onToggle(e);
+              }}
+            >
+              <Checkbox
+                checked={selection.selected}
+                onChange={() => {
+                  // Toggled by the wrapping Box's onClick (which sees
+                  // shiftKey); selection state lives in the page.
+                }}
+                // See SeriesCard: pointer-transparent so the preventDefault-ed
+                // native checkbox toggle can't desync the visual state.
+                style={{ pointerEvents: "none" }}
+                size="md"
+                aria-label={
+                  selection.selected
+                    ? `Deselect ${series.canonicalTitle}`
+                    : `Select ${series.canonicalTitle}`
+                }
+                data-testid={`series-select-${series.id}`}
+              />
+            </Box>
+          )}
           <Box w={120} style={{ flexShrink: 0 }}>
             <AspectRatio ratio={3 / 4}>
               <Image

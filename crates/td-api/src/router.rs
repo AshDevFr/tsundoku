@@ -48,6 +48,13 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
             put(series::set_ignore_completion),
         )
         .route("/series/{id}/wishlist", put(series::set_wishlisted))
+        // Series bulk actions (static `bulk` segment wins over `{id}` in
+        // axum's matcher, same coexistence as `/series/lookup`).
+        .route("/series/bulk/wishlist", put(series::bulk_wishlist))
+        .route(
+            "/series/bulk/refresh-metadata",
+            post(series::bulk_refresh_metadata),
+        )
         .route("/releases/{id}/link", post(releases::link))
         .route("/releases/{id}/reject", post(releases::reject))
         .route("/releases/{id}/keep", post(releases::keep))
@@ -91,6 +98,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/search/entries", get(search::entries))
         .route("/search/runs", get(search::global_runs))
         .route("/series/{id}/search-releases", post(search::trigger))
+        .route("/series/bulk/search-releases", post(search::bulk_trigger))
         .route("/series/{id}/search-runs", get(search::runs))
         // Per-run history behind the aggregated metrics: admin-only like
         // every other run/audit surface (error messages stay private).

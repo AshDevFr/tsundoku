@@ -2,7 +2,9 @@ import {
   ActionIcon,
   AspectRatio,
   Badge,
+  Box,
   Card,
+  Checkbox,
   Divider,
   Group,
   Image,
@@ -12,7 +14,7 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { Link } from "@tanstack/react-router";
-import type { MouseEvent } from "react";
+import { type MouseEvent, useState } from "react";
 import { useSetWishlisted } from "@/api/mutations";
 import type { SeriesListItem } from "@/api/queries";
 import { coverProxyForSeries, formatRelative } from "@/api/utils";
@@ -37,15 +39,32 @@ export function spanBadgeLabel(
     : `${prefix} ${available}`;
 }
 
+/// Selection wiring a page passes down when its cards are bulk-selectable.
+/// The page only passes this for admins (all bulk actions are admin writes),
+/// so the checkbox never renders on the public read tier.
+export interface SeriesSelectionProps {
+  /// Whether this card is currently in the page's selection.
+  selected: boolean;
+  /// True while any selection exists on the page — forces the checkbox
+  /// visible on every card so an in-progress range stays extendable
+  /// (and gives touch devices, which never hover, a way in).
+  active: boolean;
+  /// Toggle this card. Receives the click event so the caller can read
+  /// `shiftKey` for range selection.
+  onToggle: (e: MouseEvent) => void;
+}
+
 export function SeriesCard({
   series,
   codexSynced = false,
+  selection,
 }: {
   series: SeriesListItem;
   /// Whether at least one Codex sweep has succeeded (from the list page's
   /// `codexSyncedAt`). Gates the Codex badge so a pre-first-sync admin sees
   /// no stale/empty state.
   codexSynced?: boolean;
+  selection?: SeriesSelectionProps;
 }) {
   const volLabel = spanBadgeLabel(
     "vol",
@@ -76,6 +95,15 @@ export function SeriesCard({
     toggleWishlist.mutate({ id: series.id, wishlisted: !series.wishlisted });
   };
 
+  // The selection checkbox stays invisible (but clickable) until the card is
+  // hovered, and is forced visible whenever the page has an active selection
+  // or this card is selected — an in-progress range must stay visible while
+  // it's being extended.
+  const [hovered, setHovered] = useState(false);
+  const selectionVisible =
+    Boolean(selection) &&
+    (hovered || Boolean(selection?.active) || Boolean(selection?.selected));
+
   return (
     <Link
       to="/series/$id"
@@ -85,6 +113,8 @@ export function SeriesCard({
       search={(prev) => prev}
       style={{ textDecoration: "none", color: "inherit", height: "100%" }}
       data-testid={`series-card-${series.id}`}
+      onMouseEnter={selection ? () => setHovered(true) : undefined}
+      onMouseLeave={selection ? () => setHovered(false) : undefined}
     >
       <Card
         shadow="sm"
@@ -109,6 +139,47 @@ export function SeriesCard({
               loading="lazy"
             />
           </AspectRatio>
+          {selection && (
+            <Box
+              data-selection-overlay
+              pos="absolute"
+              top={6}
+              left={6}
+              style={{
+                opacity: selectionVisible ? 1 : 0,
+                transition: "opacity 120ms ease",
+              }}
+              onClick={(e) => {
+                // The whole card is a <Link>; selecting must not navigate.
+                e.preventDefault();
+                e.stopPropagation();
+                selection.onToggle(e);
+              }}
+            >
+              <Checkbox
+                checked={selection.selected}
+                onChange={() => {
+                  // Selection state lives in the page; the wrapping Box's
+                  // onClick is the single toggle path (it also sees shiftKey).
+                }}
+                // Pointer-transparent so clicks land on the wrapping Box and
+                // the input's native activation never runs: a real browser
+                // reverts a preventDefault-ed checkbox toggle *after* React's
+                // sync flush, leaving the clicked box visually stale.
+                // Keyboard activation still works — Space dispatches a click
+                // that bubbles to the Box (pointer-events only gates
+                // hit-testing, not focus).
+                style={{ pointerEvents: "none" }}
+                size="md"
+                aria-label={
+                  selection.selected
+                    ? `Deselect ${series.canonicalTitle}`
+                    : `Select ${series.canonicalTitle}`
+                }
+                data-testid={`series-select-${series.id}`}
+              />
+            </Box>
+          )}
           {isAdmin && (
             <Tooltip
               label={

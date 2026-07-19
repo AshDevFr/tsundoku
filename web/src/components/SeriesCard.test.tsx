@@ -9,10 +9,10 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SeriesListItem } from "@/api/queries";
 import { useAdminAuth } from "@/stores/auth";
-import { SeriesCard } from "./SeriesCard";
+import { SeriesCard, type SeriesSelectionProps } from "./SeriesCard";
 
 function base(overrides: Partial<SeriesListItem>): SeriesListItem {
   return {
@@ -37,12 +37,22 @@ function base(overrides: Partial<SeriesListItem>): SeriesListItem {
 
 // SeriesCard renders a <Link> (needs a router) and uses a mutation hook (needs
 // a QueryClient).
-function renderCard(series: SeriesListItem, codexSynced = false) {
+function renderCard(
+  series: SeriesListItem,
+  codexSynced = false,
+  selection?: SeriesSelectionProps,
+) {
   const root = createRootRoute({ component: Outlet });
   const index = createRoute({
     getParentRoute: () => root,
     path: "/",
-    component: () => <SeriesCard series={series} codexSynced={codexSynced} />,
+    component: () => (
+      <SeriesCard
+        series={series}
+        codexSynced={codexSynced}
+        selection={selection}
+      />
+    ),
   });
   const router = createRouter({
     routeTree: root.addChildren([index]),
@@ -148,6 +158,65 @@ describe("SeriesCard", () => {
     renderCard(base({ wishlisted: false }));
     expect(await screen.findByText("Test Series")).toBeInTheDocument();
     expect(screen.queryByTestId("wishlist-toggle-1")).not.toBeInTheDocument();
+  });
+
+  it("renders no selection checkbox without a selection prop", async () => {
+    renderCard(base({}));
+    expect(await screen.findByText("Test Series")).toBeInTheDocument();
+    expect(screen.queryByTestId("series-select-1")).not.toBeInTheDocument();
+  });
+
+  it("selection checkbox toggles without navigating away", async () => {
+    const onToggle = vi.fn();
+    renderCard(base({}), false, {
+      selected: false,
+      active: false,
+      onToggle,
+    });
+    const box = await screen.findByTestId("series-select-1");
+    fireEvent.click(box);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    // Navigation to the detail route would unmount the card; it must stay.
+    expect(screen.getByText("Test Series")).toBeInTheDocument();
+  });
+
+  it("selection checkbox forwards shift+click for range selection", async () => {
+    const onToggle = vi.fn();
+    renderCard(base({}), false, {
+      selected: false,
+      active: false,
+      onToggle,
+    });
+    fireEvent.click(await screen.findByTestId("series-select-1"), {
+      shiftKey: true,
+    });
+    expect(onToggle).toHaveBeenCalledWith(
+      expect.objectContaining({ shiftKey: true }),
+    );
+  });
+
+  it("selection checkbox is hidden until hover, forced visible while a selection exists", async () => {
+    renderCard(base({}), false, {
+      selected: false,
+      active: false,
+      onToggle: () => {},
+    });
+    const box = await screen.findByTestId("series-select-1");
+    const overlay = box.closest("[data-selection-overlay]") as HTMLElement;
+    expect(overlay.style.opacity).toBe("0");
+    fireEvent.mouseEnter(overlay.closest("a") as HTMLElement);
+    expect(overlay.style.opacity).toBe("1");
+  });
+
+  it("selection checkbox stays visible when the page selection is active", async () => {
+    renderCard(base({}), false, {
+      selected: false,
+      active: true,
+      onToggle: () => {},
+    });
+    const box = await screen.findByTestId("series-select-1");
+    const overlay = box.closest("[data-selection-overlay]") as HTMLElement;
+    expect(overlay.style.opacity).toBe("1");
   });
 
   it("surfaces the full title, rating and description in a hover tooltip", async () => {

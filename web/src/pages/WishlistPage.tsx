@@ -13,11 +13,13 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { useState } from "react";
+import { type MouseEvent, useState } from "react";
 import { useCreateSeriesFromProvider } from "@/api/mutations";
 import { useSeriesList } from "@/api/queries";
 import { ProviderSearchControls } from "@/components/ReleaseLinking";
 import { SeriesCard } from "@/components/SeriesCard";
+import { SeriesSelectionBar } from "@/components/SeriesSelectionBar";
+import { useSeriesSelection } from "@/hooks/useSeriesSelection";
 import { DEFAULT_PAGE_SIZE } from "@/stores/uiPrefs";
 
 /// Admin-only curated "download later" list: the series the operator has
@@ -39,6 +41,13 @@ export function WishlistPage() {
   const total = list.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / DEFAULT_PAGE_SIZE));
   const codexSynced = Boolean(list.data?.codexSyncedAt);
+
+  // Bulk selection. This page is already admin-gated (AdminShell), so unlike
+  // the feed there is no token check here. The hook drops the selection when
+  // the visible id set changes (e.g. a bulk un-clip shrinking the list).
+  const items = list.data?.items ?? [];
+  const pageIds = items.map((i) => i.id);
+  const selection = useSeriesSelection(pageIds);
 
   return (
     <Stack gap="md">
@@ -75,6 +84,19 @@ export function WishlistPage() {
         </Alert>
       )}
 
+      {selection.selected.size > 0 && (
+        <SeriesSelectionBar
+          selectedIds={[...selection.selected]}
+          allPageSelected={selection.allPageSelected}
+          somePageSelected={selection.somePageSelected}
+          onToggleAll={selection.toggleAllOnPage}
+          onClear={selection.clear}
+          // Everything on this page is already clipped; offering "Add to
+          // wishlist" would be dead weight.
+          hideAddToWishlist
+        />
+      )}
+
       {list.data && list.data.items.length > 0 && (
         <Box
           data-testid="wishlist-card-grid"
@@ -84,8 +106,17 @@ export function WishlistPage() {
             gridTemplateColumns: "repeat(auto-fill, minmax(175px, 1fr))",
           }}
         >
-          {list.data.items.map((s) => (
-            <SeriesCard key={s.id} series={s} codexSynced={codexSynced} />
+          {list.data.items.map((s, i) => (
+            <SeriesCard
+              key={s.id}
+              series={s}
+              codexSynced={codexSynced}
+              selection={{
+                selected: selection.selected.has(s.id),
+                active: selection.selected.size > 0,
+                onToggle: (e: MouseEvent) => selection.toggleAt(i, e.shiftKey),
+              }}
+            />
           ))}
         </Box>
       )}

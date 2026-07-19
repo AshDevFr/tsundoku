@@ -770,6 +770,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/series/bulk/refresh-metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh a whole selection of series from the active provider in one call.
+         * @description Runs synchronously: the active provider today resolves `get()` against its
+         *     local offline dump, so a page-sized batch is fast and network-free. If a
+         *     future active provider fetches remotely per `get()`, this must move to a
+         *     dispatched background job with progress reporting instead.
+         *
+         *     Per-id problems (unknown id, no active-provider mapping, provider record
+         *     missing) are reported in `skipped` — the batch never aborts on them.
+         */
+        post: operations["bulk_refresh_metadata"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/series/bulk/search-releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger a release search for a whole selection of series.
+         * @description One dispatch against the entry's `search:<name>` lock; the detached job
+         *     walks the series **sequentially**, so upstream rate-limiting sees one walk
+         *     at a time and each series still gets its own `search_runs` audit row
+         *     (feeding the run-history timelines). Poll `GET /series/{id}/search-runs`
+         *     per series for completion, same as the single trigger.
+         */
+        post: operations["bulk_trigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/series/bulk/wishlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Clip or un-clip a whole selection of series in one call — the selection-bar
+         *     counterpart of `PUT /series/{id}/wishlist`, with the same column semantics
+         *     (operator-owned flag, any provenance, refresh never touches it).
+         */
+        put: operations["bulk_wishlist"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/series/export": {
         parameters: {
             query?: never;
@@ -1344,6 +1415,31 @@ export interface components {
              */
             seriesId: number;
         };
+        /** @description Body for `POST /api/v1/series/bulk/refresh-metadata`. */
+        BulkRefreshMetadataRequest: {
+            /** @description Series ids to refresh. Must be non-empty. */
+            ids: number[];
+        };
+        /** @description Response for `POST /api/v1/series/bulk/refresh-metadata`. */
+        BulkRefreshMetadataResponse: {
+            /**
+             * Format: int64
+             * @description Number of series rewritten from provider metadata.
+             */
+            refreshed: number;
+            /** @description Series that could not be refreshed; the batch never aborts on these. */
+            skipped: components["schemas"]["BulkRefreshSkipDto"][];
+        };
+        /** @description One series a bulk refresh could not rewrite, and why. */
+        BulkRefreshSkipDto: {
+            /** Format: int32 */
+            id: number;
+            /**
+             * @description Human-readable skip reason ("series not found", "no mapping for the
+             *     active provider", "provider has no record").
+             */
+            reason: string;
+        };
         BulkRejectResponse: {
             /**
              * Format: int64
@@ -1396,6 +1492,55 @@ export interface components {
             sourceName: string | null;
             /** @default null */
             status: string | null;
+        };
+        /** @description Body for `POST /api/v1/series/bulk/search-releases`. */
+        BulkSearchReleasesRequest: {
+            /**
+             * @description Series ids to search for. Must be non-empty; ids with no series row
+             *     are dropped from `matched` (the whole batch 404s only when none
+             *     exist).
+             */
+            ids: number[];
+            /** @description `[[search]]` entry name. Omitted ⇒ the default entry. */
+            search?: string | null;
+        };
+        /** @description Response for `POST /api/v1/series/bulk/search-releases`. */
+        BulkSearchReleasesResponse: {
+            /**
+             * Format: int64
+             * @description Number of listed ids that exist and were queued for a walk.
+             */
+            matched: number;
+            /** @description Entry the walks were (or would have been) dispatched against. */
+            search: string;
+            /**
+             * @description `true` when a walk against this entry was already in flight — the
+             *     whole batch is skipped, nothing partial runs.
+             */
+            skipped: boolean;
+            triggered: boolean;
+        };
+        /** @description Body for `PUT /api/v1/series/bulk/wishlist`. */
+        BulkWishlistRequest: {
+            /**
+             * @description Series ids to clip or un-clip. Must be non-empty; ids with no series
+             *     row are silently dropped from the `updated` count.
+             */
+            ids: number[];
+            /**
+             * @description `true` clips every listed series (stamping a fresh "clipped at"),
+             *     `false` removes them all. An explicit set, not a per-row toggle, so a
+             *     mixed selection converges to one state instead of flipping each row.
+             */
+            wishlisted: boolean;
+        };
+        /** @description Response for `PUT /api/v1/series/bulk/wishlist`. */
+        BulkWishlistResponse: {
+            /**
+             * Format: int64
+             * @description Number of series rows actually written.
+             */
+            updated: number;
         };
         /**
          * @description Admin-only presence object embedded on a series. Absent (the `codex` field
@@ -4089,6 +4234,110 @@ export interface operations {
                 };
             };
             /** @description canonicalTitle is empty */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    bulk_refresh_metadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkRefreshMetadataRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkRefreshMetadataResponse"];
+                };
+            };
+            /** @description Empty ids list */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    bulk_trigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkSearchReleasesRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkSearchReleasesResponse"];
+                };
+            };
+            /** @description Empty ids list, or unknown/disabled search entry */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description None of the listed series exist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No [[search]] entries configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    bulk_wishlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkWishlistRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkWishlistResponse"];
+                };
+            };
+            /** @description Empty ids list */
             400: {
                 headers: {
                     [name: string]: unknown;
