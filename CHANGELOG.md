@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.18.0] - 2026-07-19
+
+### Features
+
+- Add bulk actions on series cards (wishlist, search, refresh)
+
 ## [1.17.1] - 2026-07-19
 
 ### Bug Fixes
