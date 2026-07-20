@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.18.2] - 2026-07-20
+
+### Features
+
+- *(web)* Bulk-move selected releases to another series from the series page
+
 ## [1.18.1] - 2026-07-19
 
 ### Features
