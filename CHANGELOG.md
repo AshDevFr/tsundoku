@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.18.3] - 2026-07-29
+
+### Bug Fixes
+
+- *(mangabaka)* Move API host defaults to api.mangabaka.org
+
 ## [1.18.2] - 2026-07-20
 
 ### Features
