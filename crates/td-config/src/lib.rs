@@ -500,7 +500,7 @@ impl Default for MangabakaProviderConfig {
         Self {
             enabled: true,
             api_key: None,
-            api_base_url: "https://api.mangabaka.dev".into(),
+            api_base_url: "https://api.mangabaka.org".into(),
             offline_dump_url: None,
             offline_refresh_cron: None,
             // api_fallback defaults to false so a freshly-installed binary
@@ -788,7 +788,7 @@ impl Default for HttpConfig {
                     retry_max_backoff_ms: None,
                 },
                 HostLimitConfig {
-                    host: "api.mangabaka.dev".into(),
+                    host: "api.mangabaka.org".into(),
                     concurrency: 2,
                     min_gap_ms: 250,
                     retry_max_attempts: None,
@@ -978,7 +978,7 @@ mod tests {
         assert!(cfg.providers.mangabaka.enabled);
         assert_eq!(
             cfg.providers.mangabaka.api_base_url,
-            "https://api.mangabaka.dev"
+            "https://api.mangabaka.org"
         );
     }
 
@@ -1277,7 +1277,7 @@ concurrency = 1
 min_gap_ms = 2000
 
 [[ingestion.http.hosts]]
-host = "api.mangabaka.dev"
+host = "api.mangabaka.org"
 concurrency = 3
 min_gap_ms = 500
             "#
@@ -1324,7 +1324,7 @@ retry_max_attempts       = 2
 retry_initial_backoff_ms = 2000
 
 [[ingestion.http.hosts]]
-host        = "api.mangabaka.dev"
+host        = "api.mangabaka.org"
 concurrency = 2
 min_gap_ms  = 250
             "#
@@ -1355,7 +1355,7 @@ min_gap_ms  = 250
             .http
             .hosts
             .iter()
-            .find(|h| h.host == "api.mangabaka.dev")
+            .find(|h| h.host == "api.mangabaka.org")
             .unwrap();
         assert_eq!(mb.retry_max_attempts, None);
     }
@@ -1371,8 +1371,30 @@ min_gap_ms  = 250
             .map(|h| h.host.as_str())
             .collect();
         assert!(hosts.contains(&"nyaa.si"));
-        assert!(hosts.contains(&"api.mangabaka.dev"));
+        assert!(hosts.contains(&"api.mangabaka.org"));
         assert!(hosts.contains(&"www.mangaupdates.com"));
+    }
+
+    #[test]
+    fn mangabaka_api_host_has_a_matching_rate_limit_override() {
+        // Per-host overrides match on the URL's host component, so moving
+        // api_base_url to a new host without moving the [[ingestion.http.hosts]]
+        // entry silently orphans the override and falls back to the defaults.
+        let cfg = AppConfig::default();
+        let host = cfg
+            .providers
+            .mangabaka
+            .api_base_url
+            .split("://")
+            .nth(1)
+            .expect("api_base_url has a scheme")
+            .split('/')
+            .next()
+            .expect("api_base_url has a host");
+        assert!(
+            cfg.ingestion.http.hosts.iter().any(|h| h.host == host),
+            "no rate-limit override for the default MangaBaka API host {host}"
+        );
     }
 
     #[test]

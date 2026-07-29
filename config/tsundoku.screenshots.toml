@@ -37,7 +37,7 @@ active_provider = "mangabaka"
 
 [providers.mangabaka]
 enabled = true
-api_base_url = "https://api.mangabaka.dev"
+api_base_url = "https://api.mangabaka.org"
 negative_cache_ttl_days = 7
 timeout_seconds = 60
 

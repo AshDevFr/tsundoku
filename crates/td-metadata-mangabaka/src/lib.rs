@@ -6,7 +6,7 @@
 //! and the nested migrator / ingest pipeline land.
 //!
 //! Constants and naming follow the Codex `metadata-mangabaka` plugin
-//! (`https://api.mangabaka.dev`, `x-api-key` header, `/v1/series/...`).
+//! (`https://api.mangabaka.org`, `x-api-key` header, `/v1/series/...`).
 
 pub mod client;
 pub mod mapping;

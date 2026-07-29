@@ -41,7 +41,7 @@ pub const DUMP_FILENAME: &str = "series.sqlite";
 pub const TMP_SUBDIR: &str = ".tmp";
 
 /// Default URL for the SQLite dump tarball.
-pub const DEFAULT_DUMP_URL: &str = "https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz";
+pub const DEFAULT_DUMP_URL: &str = "https://api.mangabaka.org/v1/database/series.sqlite.tar.gz";
 
 /// Path the live OfflineStore opens from.
 pub fn dump_path(cache_dir: impl AsRef<Path>) -> PathBuf {
@@ -189,4 +189,21 @@ pub async fn count_records(store: &OfflineStore) -> anyhow::Result<u64> {
         .ok_or_else(|| anyhow!("COUNT(*) returned no row"))?;
     let n: i64 = row.try_get("", "n")?;
     Ok(n.max(0) as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_dump_url_is_hosted_under_the_default_api_base_url() {
+        // The published dump is served by the same host as the API. Keeping the
+        // two in sync is what makes the per-host rate-limit override in
+        // `[[ingestion.http.hosts]]` cover the download as well as the queries.
+        let api_base_url = td_config::MangabakaProviderConfig::default().api_base_url;
+        assert!(
+            DEFAULT_DUMP_URL.starts_with(&format!("{api_base_url}/")),
+            "default dump URL {DEFAULT_DUMP_URL} is not hosted under {api_base_url}"
+        );
+    }
 }

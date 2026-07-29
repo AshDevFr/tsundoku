@@ -4,7 +4,7 @@
 //! MangaBaka dataset without re-downloading on every test run:
 //!
 //! ```bash
-//! curl -sL -o /tmp/mb.tar.gz https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz
+//! curl -sL -o /tmp/mb.tar.gz https://api.mangabaka.org/v1/database/series.sqlite.tar.gz
 //! tar -xzf /tmp/mb.tar.gz -C /tmp/mb-inspect
 //! TSUNDOKU_MB_DUMP_FIXTURE=/tmp/mb-inspect/series.sqlite cargo test -p td-metadata-mangabaka --test real_dump -- --nocapture
 //! ```

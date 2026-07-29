@@ -49,7 +49,7 @@ Live API calls only fire when explicitly enabled via `api_fallback`.
 ### Offline dump lifecycle
 
 MangaBaka publishes nightly dumps at
-`https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz`
+`https://api.mangabaka.org/v1/database/series.sqlite.tar.gz`
 (~476 MB compressed).
 
 `tsundoku refresh-provider-cache`:

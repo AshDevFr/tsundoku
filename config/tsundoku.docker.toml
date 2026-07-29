@@ -24,7 +24,7 @@ active_provider = "mangabaka"
 
 [providers.mangabaka]
 enabled = true
-api_base_url = "https://api.mangabaka.dev"
+api_base_url = "https://api.mangabaka.org"
 # Offline dump URL + api_fallback are set in docker-compose.yml so both
 # profiles share the same MangaBaka wiring; api_key lives in .env.
 negative_cache_ttl_days = 7

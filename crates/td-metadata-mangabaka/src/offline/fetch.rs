@@ -109,8 +109,16 @@ mod tests {
     #[test]
     fn sidecar_url_appends_sha1() {
         assert_eq!(
-            sha1_sidecar_url("https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz"),
-            "https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz.sha1"
+            sha1_sidecar_url("https://api.mangabaka.org/v1/database/series.sqlite.tar.gz"),
+            "https://api.mangabaka.org/v1/database/series.sqlite.tar.gz.sha1"
+        );
+    }
+
+    #[test]
+    fn sidecar_url_derives_from_the_default_dump_url() {
+        assert_eq!(
+            sha1_sidecar_url(crate::offline::DEFAULT_DUMP_URL),
+            "https://api.mangabaka.org/v1/database/series.sqlite.tar.gz.sha1"
         );
     }
 }

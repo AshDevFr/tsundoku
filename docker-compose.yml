@@ -29,7 +29,7 @@ services:
       # MangaBaka provider: offline dump + live API fallback. Set
       # TSUNDOKU_PROVIDERS__MANGABAKA__API_KEY in .env to enable the
       # fallback path; without a key cache misses surface as Ok(None).
-      TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_DUMP_URL: https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz
+      TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_DUMP_URL: https://api.mangabaka.org/v1/database/series.sqlite.tar.gz
       TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_REFRESH_CRON: "0 4 * * 0"
       TSUNDOKU_PROVIDERS__MANGABAKA__API_FALLBACK: "true"
     restart: unless-stopped
@@ -61,7 +61,7 @@ services:
     environment:
       RUST_BACKTRACE: "1"
       RUST_LOG: debug
-      TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_DUMP_URL: https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz
+      TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_DUMP_URL: https://api.mangabaka.org/v1/database/series.sqlite.tar.gz
       TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_REFRESH_CRON: "0 4 * * 0"
       TSUNDOKU_PROVIDERS__MANGABAKA__API_FALLBACK: "true"
     profiles:
@@ -118,7 +118,7 @@ services:
       # Wired so the per-host MangaBaka offline dump + live fallback
       # match the prod profile. Set TSUNDOKU_PROVIDERS__MANGABAKA__API_KEY
       # in your .env to unlock the live API fallback during screenshots.
-      TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_DUMP_URL: https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz
+      TSUNDOKU_PROVIDERS__MANGABAKA__OFFLINE_DUMP_URL: https://api.mangabaka.org/v1/database/series.sqlite.tar.gz
       TSUNDOKU_PROVIDERS__MANGABAKA__API_FALLBACK: "true"
       # Admin token override hook — bumping it here automatically lines
       # up with ADMIN_TOKEN on the playwright service below, since both

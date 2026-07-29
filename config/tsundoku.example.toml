@@ -61,7 +61,7 @@ active_provider = "mangabaka"
 # block + a line in the registry builder.
 [providers.mangabaka]
 enabled = true
-api_base_url = "https://api.mangabaka.dev"
+api_base_url = "https://api.mangabaka.org"
 # Set api_key + api_fallback = true to enable live API calls. Without an
 # api_key the provider runs in offline-only mode; cache misses surface as
 # `Ok(None)` to the resolver.
@@ -130,7 +130,7 @@ poll_write_batch_size = 10
 # `default_*` apply to any host not listed in `[[ingestion.http.hosts]]`.
 # Per-host overrides match case-insensitively on the URL's host
 # component (no scheme, no port). The shipped defaults already cover
-# nyaa.si, api.mangabaka.dev, and www.mangaupdates.com — operators only
+# nyaa.si, api.mangabaka.org, and www.mangaupdates.com — operators only
 # need to add entries here for new hosts or to tighten/relax limits.
 #
 # Retry behavior. On a 429 / 502 / 503 / 504 the limiter retries up to
@@ -157,7 +157,7 @@ poll_write_batch_size = 10
 # # default_retry_* settings above.
 #
 # [[ingestion.http.hosts]]
-# host        = "api.mangabaka.dev"
+# host        = "api.mangabaka.org"
 # concurrency = 2
 # min_gap_ms  = 250
 

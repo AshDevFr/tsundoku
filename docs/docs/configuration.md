@@ -146,7 +146,7 @@ The full operator-facing story (UI, CLI, endpoints) is on the
 ```toml
 [providers.mangabaka]
 enabled = true
-api_base_url           = "https://api.mangabaka.dev"
+api_base_url           = "https://api.mangabaka.org"
 # api_key              = "mb-..."
 # api_fallback         = true
 # offline_dump_url     = "https://..."

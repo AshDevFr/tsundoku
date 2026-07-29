@@ -761,15 +761,15 @@ export const handlers = [
             cacheVersion: "abc123",
             recordCount: 585_000,
             sourceUrl:
-              "https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz",
+              "https://api.mangabaka.org/v1/database/series.sqlite.tar.gz",
             bytesDownloaded: 476_000_000,
           },
           config: {
             apiFallback: true,
             apiKeySet: true,
-            apiBaseUrl: "https://api.mangabaka.dev",
+            apiBaseUrl: "https://api.mangabaka.org",
             offlineDumpUrl:
-              "https://api.mangabaka.dev/v1/database/series.sqlite.tar.gz",
+              "https://api.mangabaka.org/v1/database/series.sqlite.tar.gz",
             offlineDumpConfigured: true,
             offlineCacheLoaded: true,
             offlineRefreshCron: "0 4 * * *",
