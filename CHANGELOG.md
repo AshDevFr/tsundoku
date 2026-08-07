@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.18.4] - 2026-08-07
+
+### Features
+
+- *(web)* Sort filter presets and update the loaded one from the save modal
+
 ## [1.18.3] - 2026-07-29
 
 ### Bug Fixes
