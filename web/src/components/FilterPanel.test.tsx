@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAdminAuth } from "@/stores/auth";
-import type { FilterSearch } from "@/stores/filters";
+import { type FilterSearch, useFilterPresets } from "@/stores/filters";
 import { FilterPanel } from "./FilterPanel";
 
 function renderPanel(
@@ -227,5 +227,275 @@ describe("FilterPanel — manual/auto source filter", () => {
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ metadataSource: undefined, page: 1 }),
     );
+  });
+});
+
+describe("FilterPanel — presets menu", () => {
+  afterEach(() => {
+    useFilterPresets.setState({ presets: [], activePresetId: undefined });
+    localStorage.clear();
+  });
+
+  it("renders presets alphabetically regardless of save order", async () => {
+    useFilterPresets.setState({
+      presets: [
+        { id: "1", name: "Magic", search: {} },
+        { id: "2", name: "Dungeons", search: {} },
+        { id: "3", name: "isekai", search: {} },
+      ],
+    });
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Presets" }));
+
+    const items = await screen.findAllByRole("menuitem");
+    expect(items.map((i) => i.textContent)).toEqual([
+      "Dungeons",
+      "isekai",
+      "Magic",
+    ]);
+  });
+
+  it("applies the preset and records it as loaded", async () => {
+    useFilterPresets.setState({
+      presets: [
+        { id: "1", name: "Dungeons", search: { kind: ["manga"] } },
+        { id: "2", name: "Isekai", search: { kind: ["manhwa"] } },
+      ],
+    });
+    const onChange = vi.fn();
+    renderPanel({}, onChange);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Presets" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Isekai" }));
+
+    expect(onChange).toHaveBeenCalledWith({ kind: ["manhwa"], page: 1 });
+    expect(useFilterPresets.getState().activePresetId).toBe("2");
+  });
+
+  it("marks the loaded preset's row and no other", async () => {
+    useFilterPresets.setState({
+      presets: [
+        { id: "1", name: "Dungeons", search: { kind: ["manga"] } },
+        { id: "2", name: "Isekai", search: { kind: ["manhwa"] } },
+      ],
+      activePresetId: "2",
+    });
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Presets" }));
+
+    // One query, one assertion: Mantine's portalled dropdown does not reliably
+    // survive several sequential awaits in jsdom. Rows are alphabetical, so
+    // Dungeons precedes the loaded Isekai.
+    const items = await screen.findAllByRole("menuitem");
+    expect(items.map((i) => i.getAttribute("aria-current"))).toEqual([
+      null,
+      "true",
+    ]);
+  });
+
+  it("clears the marker when filters are cleared", async () => {
+    useFilterPresets.setState({
+      presets: [{ id: "1", name: "Isekai", search: { kind: ["manhwa"] } }],
+      activePresetId: "1",
+    });
+    renderPanel({ kind: ["manhwa"] });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Clear filters/i }),
+    );
+
+    expect(useFilterPresets.getState().activePresetId).toBeUndefined();
+  });
+});
+
+describe("FilterPanel — preset name field", () => {
+  afterEach(() => {
+    useFilterPresets.setState({ presets: [], activePresetId: undefined });
+    localStorage.clear();
+  });
+
+  it("prefills the name with the loaded preset", async () => {
+    useFilterPresets.setState({
+      presets: [{ id: "1", name: "Isekai", search: {} }],
+      activePresetId: "1",
+    });
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("Isekai");
+  });
+
+  it("opens blank when no preset is loaded", async () => {
+    useFilterPresets.setState({
+      presets: [{ id: "1", name: "Isekai", search: {} }],
+      activePresetId: undefined,
+    });
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("");
+  });
+
+  it("clears the name with the clear button", async () => {
+    useFilterPresets.setState({
+      presets: [{ id: "1", name: "Isekai", search: {} }],
+      activePresetId: "1",
+    });
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Clear preset name" }),
+    );
+
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("");
+  });
+});
+
+describe("FilterPanel — preset write paths", () => {
+  afterEach(() => {
+    useFilterPresets.setState({ presets: [], activePresetId: undefined });
+    localStorage.clear();
+  });
+
+  function loaded() {
+    useFilterPresets.setState({
+      presets: [{ id: "1", name: "Isekai", search: { kind: ["manga"] } }],
+      activePresetId: "1",
+    });
+  }
+
+  it("requires a second click, then writes current filters into the preset", async () => {
+    loaded();
+    renderPanel({ kind: ["manhwa"] });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: 'Update "Isekai"' }),
+    );
+    expect(useFilterPresets.getState().presets[0].search).toEqual({
+      kind: ["manga"],
+    });
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Click again to confirm" }),
+    );
+
+    const { presets } = useFilterPresets.getState();
+    expect(presets).toHaveLength(1);
+    expect(presets[0]).toEqual({
+      id: "1",
+      name: "Isekai",
+      search: { kind: ["manhwa"], page: 1 },
+    });
+  });
+
+  it("hides Update once the name no longer matches the loaded preset", async () => {
+    loaded();
+    renderPanel({ kind: ["manga"] });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByRole("button", { name: 'Update "Isekai"' }),
+    ).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("Name"), {
+      target: { value: "Reincarnation" },
+    });
+
+    expect(
+      within(dialog).queryByRole("button", { name: /^Update/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Save as new" }),
+    ).toBeEnabled();
+  });
+
+  it("warns that another preset's name will be overwritten by Save as new", async () => {
+    useFilterPresets.setState({
+      presets: [
+        { id: "1", name: "Isekai", search: {} },
+        { id: "2", name: "Magic", search: {} },
+      ],
+      activePresetId: "1",
+    });
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Name"), {
+      target: { value: "magic" },
+    });
+
+    expect(
+      within(dialog).queryByRole("button", { name: /^Update/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        'This name is taken — saving will overwrite "Magic".',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("Save as new adds a preset without touching the loaded one", async () => {
+    loaded();
+    renderPanel({ kind: ["manhwa"] });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Name"), {
+      target: { value: "Isekai (tweaked)" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Save as new" }),
+    );
+
+    const { presets } = useFilterPresets.getState();
+    expect(presets).toHaveLength(2);
+    expect(presets[0].search).toEqual({ kind: ["manga"] });
+    expect(presets[1].name).toBe("Isekai (tweaked)");
+  });
+
+  it("leaves no usable write button when the name is cleared", async () => {
+    loaded();
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Clear preset name" }),
+    );
+
+    expect(
+      within(dialog).getByRole("button", { name: "Save as new" }),
+    ).toBeDisabled();
+    expect(
+      within(dialog).queryByRole("button", { name: /^Update/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers only Save preset when nothing is loaded", async () => {
+    useFilterPresets.setState({ presets: [], activePresetId: undefined });
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog");
+
+    expect(
+      within(dialog).getByRole("button", { name: "Save preset" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("button", { name: /^Update/ }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Autocomplete,
   Box,
   Button,
   CloseButton,
@@ -30,6 +31,7 @@ import { useAdminAuth } from "@/stores/auth";
 import {
   countActiveFilters,
   type FilterSearch,
+  sortPresets,
   type TagFilterMode,
   useFilterPresets,
 } from "@/stores/filters";
@@ -96,17 +98,35 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
   // token, so there's no point showing it to anon sessions.
   const isAdmin = useAdminAuth((s) => Boolean(s.token));
   const presets = useFilterPresets((s) => s.presets);
+  const activePresetId = useFilterPresets((s) => s.activePresetId);
+  const setActivePreset = useFilterPresets((s) => s.setActivePreset);
   const savePreset = useFilterPresets((s) => s.savePreset);
+  const updatePreset = useFilterPresets((s) => s.updatePreset);
   const deletePreset = useFilterPresets((s) => s.deletePreset);
-  const [saveOpen, { open: openSave, close: closeSaveModal }] =
+  const activePreset = useMemo(
+    () => presets.find((p) => p.id === activePresetId),
+    [presets, activePresetId],
+  );
+  const [saveOpen, { open: openSaveModal, close: closeSaveModal }] =
     useDisclosure(false);
   const [presetName, setPresetName] = useState("");
   // Two-step guard so overwriting an existing preset needs an explicit
-  // second click rather than silently clobbering it.
+  // second click rather than silently clobbering it. Update gets its own flag
+  // for the same reason: arming one button must not arm the other.
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
+  const [confirmUpdate, setConfirmUpdate] = useState(false);
   const closeSave = () => {
     setConfirmOverwrite(false);
+    setConfirmUpdate(false);
     closeSaveModal();
+  };
+  const openSave = () => {
+    // Seed from the preset the operator loaded, so updating it is a click
+    // rather than an exercise in reproducing its name exactly.
+    setPresetName(activePreset?.name ?? "");
+    setConfirmOverwrite(false);
+    setConfirmUpdate(false);
+    openSaveModal();
   };
   // Local mirror of the URL `q` so the input stays responsive while the
   // debounced commit catches up. Initialized from the URL and re-synced
@@ -134,12 +154,17 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     onChange({ ...search, q: next || undefined, page: 1 });
   }, SEARCH_DEBOUNCE_MS);
 
-  const clearAll = () =>
+  const clearAll = () => {
+    // Clearing filters abandons the loaded preset. Tweaking an individual
+    // filter deliberately does not, so the save modal can still offer to
+    // write the tweak back into it.
+    setActivePreset(undefined);
     onChange({
       sort: search.sort,
       order: search.order,
       page: 1,
     });
+  };
 
   const hasActiveFilters = countActiveFilters(search) > 0;
 
@@ -181,12 +206,40 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
     [sourceCounts.data?.items],
   );
 
+  const sortedPresets = useMemo(() => sortPresets(presets), [presets]);
+
   const trimmedName = presetName.trim();
   const overwriting = useMemo(
     () =>
       presets.find((p) => p.name.toLowerCase() === trimmedName.toLowerCase()),
     [presets, trimmedName],
   );
+
+  // Update targets the loaded preset, so it is only offered while the field
+  // still names it. Editing the name means the operator is describing a new
+  // preset, and an "Update <old name>" button next to a different name reads
+  // as a mistake. Save as new stands down in the reverse case, so exactly one
+  // write button is meaningful at a time.
+  const savingOverLoaded = Boolean(
+    activePreset && trimmedName === activePreset.name,
+  );
+
+  const nameDescription = useMemo(() => {
+    if (activePreset && savingOverLoaded)
+      return `Update writes the current filters into "${activePreset.name}".`;
+    if (overwriting)
+      return `This name is taken — saving will overwrite "${overwriting.name}".`;
+    return undefined;
+  }, [activePreset, savingOverLoaded, overwriting]);
+
+  const saveLabel = useMemo(() => {
+    if (savingOverLoaded) return "Save as new";
+    if (overwriting)
+      return confirmOverwrite
+        ? "Click again to confirm"
+        : `Overwrite "${overwriting.name}"`;
+    return activePreset ? "Save as new" : "Save preset";
+  }, [savingOverLoaded, overwriting, confirmOverwrite, activePreset]);
 
   const handleSave = () => {
     if (!trimmedName) return;
@@ -199,6 +252,21 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
       message: overwriting
         ? `Preset "${trimmedName}" updated`
         : `Preset "${trimmedName}" saved`,
+      color: "green",
+    });
+    setPresetName("");
+    closeSave();
+  };
+
+  const handleUpdate = () => {
+    if (!activePreset || !savingOverLoaded) return;
+    if (!confirmUpdate) {
+      setConfirmUpdate(true);
+      return;
+    }
+    updatePreset(activePreset.id, { ...search, page: 1 });
+    notifications.show({
+      message: `Preset "${activePreset.name}" updated`,
       color: "green",
     });
     setPresetName("");
@@ -225,11 +293,22 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
                 {presets.length === 0 && (
                   <Menu.Label>No saved presets</Menu.Label>
                 )}
-                {presets.map((p) => (
+                {sortedPresets.map((p) => (
                   <Group key={p.id} gap={0} wrap="nowrap" pr="xs">
                     <Menu.Item
                       flex={1}
-                      onClick={() => onChange({ ...p.search, page: 1 })}
+                      aria-current={
+                        p.id === activePresetId ? "true" : undefined
+                      }
+                      leftSection={
+                        <Text size="xs" c="dimmed" w={8} aria-hidden>
+                          {p.id === activePresetId ? "✓" : ""}
+                        </Text>
+                      }
+                      onClick={() => {
+                        setActivePreset(p.id);
+                        onChange({ ...p.search, page: 1 });
+                      }}
                     >
                       {p.name}
                     </Menu.Item>
@@ -465,23 +544,35 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
         centered
       >
         <Stack>
-          <TextInput
+          <Autocomplete
             label="Name"
             placeholder="Ongoing manga, hidden owned…"
+            data={sortedPresets.map((p) => p.name)}
+            clearable
+            // The field is autofocused, and Mantine opens the dropdown on
+            // focus by default. With the name prefilled that means the modal
+            // opens under a suggestion list containing the value already in
+            // the field. Open it on typing instead.
+            openOnFocus={false}
+            // Mantine hides the clear button from the accessibility tree by
+            // default. It stays out of the tab order (tabIndex -1), but a
+            // labelled button is discoverable to a screen reader's virtual
+            // cursor, which is worth more here than hiding it.
+            clearButtonProps={{
+              "aria-label": "Clear preset name",
+              "aria-hidden": false,
+            }}
             value={presetName}
-            onChange={(e) => {
-              setPresetName(e.currentTarget.value);
+            onChange={(value) => {
+              setPresetName(value);
               setConfirmOverwrite(false);
+              setConfirmUpdate(false);
             }}
             data-autofocus
             onKeyDown={(e) => {
               if (e.key === "Enter") handleSave();
             }}
-            description={
-              overwriting
-                ? `This name is taken — saving will overwrite "${overwriting.name}".`
-                : undefined
-            }
+            description={nameDescription}
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={closeSave}>
@@ -489,15 +580,18 @@ export function FilterPanel({ search, onChange }: FilterPanelProps) {
             </Button>
             <Button
               onClick={handleSave}
-              disabled={!trimmedName}
-              color={overwriting ? "yellow" : undefined}
+              disabled={!trimmedName || savingOverLoaded}
+              color={overwriting && !savingOverLoaded ? "yellow" : undefined}
             >
-              {!overwriting
-                ? "Save preset"
-                : confirmOverwrite
-                  ? "Click again to confirm"
-                  : "Overwrite preset"}
+              {saveLabel}
             </Button>
+            {activePreset && savingOverLoaded && (
+              <Button color="yellow" onClick={handleUpdate}>
+                {confirmUpdate
+                  ? "Click again to confirm"
+                  : `Update "${activePreset.name}"`}
+              </Button>
+            )}
           </Group>
         </Stack>
       </Modal>

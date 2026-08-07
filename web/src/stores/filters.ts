@@ -85,9 +85,39 @@ export function countActiveFilters(search: FilterSearch): number {
   return n;
 }
 
+/// Presentation order for the presets menu. Case-insensitive so "default
+/// search" and "Default Search" don't split, and numeric-aware so "Isekai 2"
+/// sorts before "Isekai 10".
+///
+/// Returns a new array and leaves the store in insertion order: order here is
+/// a display concern, so nothing persisted has to change. Callers own
+/// memoization. Do not call this inside a zustand selector, which would hand
+/// React a fresh array identity on every snapshot read and trip the
+/// "getSnapshot should be cached" check in useSyncExternalStore.
+export function sortPresets(presets: FilterPreset[]): FilterPreset[] {
+  return [...presets].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, {
+      sensitivity: "base",
+      numeric: true,
+    }),
+  );
+}
+
 interface PresetState {
   presets: FilterPreset[];
+  /// Id of the preset most recently applied, so the save modal can offer to
+  /// write back to it. Session-scoped and deliberately not persisted: after a
+  /// reload the filters on screen come from the URL, and a stale id would
+  /// prefill a name that has nothing to do with them.
+  activePresetId?: string;
+  setActivePreset: (id: string | undefined) => void;
   savePreset: (name: string, search: FilterSearch) => FilterPreset;
+  /// Replace an existing preset's filters, keyed on id and keeping its name.
+  /// Distinct from [[savePreset]], which looks presets up by name: id-keying
+  /// is what lets the save modal write back to the preset the operator
+  /// loaded without having to reproduce its name. Returns undefined without
+  /// writing when the id is unknown.
+  updatePreset: (id: string, search: FilterSearch) => FilterPreset | undefined;
   deletePreset: (id: string) => void;
 }
 
@@ -95,6 +125,8 @@ export const useFilterPresets = create<PresetState>()(
   persist(
     (set, get) => ({
       presets: [],
+      activePresetId: undefined,
+      setActivePreset: (id) => set({ activePresetId: id }),
       savePreset: (name, search) => {
         // Names are unique case-insensitively: saving over an existing name
         // overwrites that preset (keeping its id) rather than adding a clone.
@@ -113,11 +145,25 @@ export const useFilterPresets = create<PresetState>()(
         }));
         return preset;
       },
+      updatePreset: (id, search) => {
+        const { presets } = get();
+        const target = presets.find((p) => p.id === id);
+        if (!target) return undefined;
+        const updated: FilterPreset = { ...target, search };
+        set({ presets: presets.map((p) => (p.id === id ? updated : p)) });
+        return updated;
+      },
       deletePreset: (id) =>
-        set((state) => ({ presets: state.presets.filter((p) => p.id !== id) })),
+        set((state) => ({
+          presets: state.presets.filter((p) => p.id !== id),
+          activePresetId:
+            state.activePresetId === id ? undefined : state.activePresetId,
+        })),
     }),
     {
       name: "tsundoku.filter-presets.v1",
+      // Only the presets themselves are durable. See activePresetId above.
+      partialize: (state) => ({ presets: state.presets }),
     },
   ),
 );
