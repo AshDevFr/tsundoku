@@ -8,6 +8,7 @@ import {
   Paper,
   SimpleGrid,
   Stack,
+  Switch,
   Table,
   Text,
   TextInput,
@@ -24,6 +25,7 @@ import {
 } from "@/api/queries";
 import { formatAbsolute, formatRelative } from "@/api/utils";
 import { SourceCard } from "@/components/admin/SourceCard";
+import { useUiPrefs } from "@/stores/uiPrefs";
 
 /// Sources list page. Identical surface to the old admin tab but now
 /// addressable at `/admin/sources` and with each card titled as a link
@@ -31,6 +33,8 @@ import { SourceCard } from "@/components/admin/SourceCard";
 export function AdminSourcesListPage() {
   const sources = useSources();
   const pollAll = usePollAllSources();
+  const sourceCardDetails = useUiPrefs((s) => s.sourceCardDetails);
+  const toggleSourceCardDetails = useUiPrefs((s) => s.toggleSourceCardDetails);
 
   const handlePollAll = () => {
     pollAll.mutate(undefined, {
@@ -53,25 +57,52 @@ export function AdminSourcesListPage() {
 
   return (
     <Stack gap="md">
+      <Stack gap={2}>
+        <Title order={3}>Discovery sources</Title>
+        <Text size="sm" c="dimmed">
+          The feeds tsundoku polls, plus the search endpoints it can pull a
+          single post from.
+        </Text>
+      </Stack>
+
+      {/* First section: a frequent, deliberate action that depends on nothing
+          below it. The source grid runs to twenty-odd cards on a real
+          deployment, so anything under it costs a full scroll. */}
+      <ImportReleaseCard />
+
+      {/* The count and "Trigger all" describe the grid, so they head it rather
+          than floating next to the page title. */}
       <Group justify="space-between" align="baseline" wrap="wrap">
         <Stack gap={2}>
-          <Title order={3}>Discovery sources</Title>
+          <Title order={4}>Configured sources</Title>
           <Text size="sm" c="dimmed">
             {sources.isLoading
               ? "loading…"
               : `${sources.data?.items.length ?? 0} configured`}
           </Text>
         </Stack>
-        <Button
-          size="xs"
-          variant="light"
-          onClick={handlePollAll}
-          loading={pollAll.isPending}
-          disabled={!sources.data?.items.length}
-          data-testid="poll-all-sources"
-        >
-          Trigger all
-        </Button>
+        <Group gap="xs" wrap="nowrap">
+          {/* One switch for every card rather than a control per card:
+              twenty-odd individual toggles to shorten the page would be worse
+              than the scroll. Persisted, so it stays how you left it. */}
+          <Switch
+            size="xs"
+            label="Details"
+            checked={sourceCardDetails}
+            onChange={toggleSourceCardDetails}
+            data-testid="toggle-source-details"
+          />
+          <Button
+            size="xs"
+            variant="light"
+            onClick={handlePollAll}
+            loading={pollAll.isPending}
+            disabled={!sources.data?.items.length}
+            data-testid="poll-all-sources"
+          >
+            Trigger all
+          </Button>
+        </Group>
       </Group>
 
       {sources.isError && (
@@ -95,12 +126,15 @@ export function AdminSourcesListPage() {
       {sources.data && sources.data.items.length > 0 && (
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
           {sources.data.items.map((src) => (
-            <SourceCard key={src.name} source={src} />
+            <SourceCard
+              key={src.name}
+              source={src}
+              showDetails={sourceCardDetails}
+            />
           ))}
         </SimpleGrid>
       )}
 
-      <ImportReleaseCard />
       <SearchEndpointsSection />
       <GlobalRecentSearches />
     </Stack>

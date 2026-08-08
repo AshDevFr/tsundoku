@@ -29,10 +29,16 @@ interface UiPrefsState {
   reviewPageSize: number;
   /// Feed results layout: `card` grid (default) or compact `list` rows.
   view: "card" | "list";
+  /// Whether source cards show their config block (cron, feed_url, …).
+  /// Defaults **off**: twenty-odd cards with a five-row config block each run
+  /// several screens deep, and the config is reference material you look up
+  /// occasionally rather than scan. Persisted so the choice survives a reload.
+  sourceCardDetails: boolean;
   toggleWideMode: () => void;
   setPageSize: (size: number) => void;
   setReviewPageSize: (size: number) => void;
   setView: (view: "card" | "list") => void;
+  toggleSourceCardDetails: () => void;
 }
 
 export const useUiPrefs = create<UiPrefsState>()(
@@ -42,10 +48,13 @@ export const useUiPrefs = create<UiPrefsState>()(
       pageSize: DEFAULT_PAGE_SIZE,
       reviewPageSize: DEFAULT_REVIEW_PAGE_SIZE,
       view: "card",
+      sourceCardDetails: false,
       toggleWideMode: () => set((state) => ({ wideMode: !state.wideMode })),
       setPageSize: (size) => set({ pageSize: size }),
       setReviewPageSize: (size) => set({ reviewPageSize: size }),
       setView: (view) => set({ view }),
+      toggleSourceCardDetails: () =>
+        set((state) => ({ sourceCardDetails: !state.sourceCardDetails })),
     }),
     {
       name: "tsundoku.ui-prefs.v1",

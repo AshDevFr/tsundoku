@@ -9,7 +9,7 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -20,6 +20,7 @@ import {
 } from "@/mocks/handlers";
 import { server } from "@/mocks/server";
 import { useAdminAuth } from "@/stores/auth";
+import { useUiPrefs } from "@/stores/uiPrefs";
 import { AdminSourcesListPage } from "./SourcesList";
 
 function renderPage() {
@@ -217,5 +218,94 @@ describe("AdminSourcesListPage import by url", () => {
     renderPage();
     await screen.findByText(/No sources registered/);
     expect(screen.queryByTestId("import-release-card")).not.toBeInTheDocument();
+  });
+});
+
+/// Like `renderPage`, but leaves the default sources fixture in place so the
+/// card grid actually renders.
+function renderPageWithSources() {
+  const root = createRootRoute({ component: Outlet });
+  const page = createRoute({
+    getParentRoute: () => root,
+    path: "/",
+    component: AdminSourcesListPage,
+  });
+  const series = createRoute({
+    getParentRoute: () => root,
+    path: "/series/$id",
+    component: () => null,
+  });
+  const router = createRouter({
+    routeTree: root.addChildren([page, series]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <MantineProvider>
+      <Notifications />
+      <QueryClientProvider client={client}>
+        {/* biome-ignore lint/suspicious/noExplicitAny: route-tree shape differs between test + prod routers */}
+        <RouterProvider router={router as any} />
+      </QueryClientProvider>
+    </MantineProvider>,
+  );
+}
+
+function detailsSwitch(): HTMLInputElement {
+  const el = screen.getByTestId("toggle-source-details");
+  return (
+    el.tagName === "INPUT" ? el : el.querySelector("input")
+  ) as HTMLInputElement;
+}
+
+describe("AdminSourcesListPage — source card details toggle", () => {
+  beforeEach(() => {
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+    // The store persists to localStorage, so reset it between cases or one
+    // toggle leaks into every later test.
+    useUiPrefs.setState({ sourceCardDetails: false });
+  });
+  afterEach(() => useAdminAuth.getState().clear());
+
+  // Off by default: the config block is reference material, and twenty-odd
+  // cards carrying five rows each is what made the page unusable.
+  it("hides card config details by default", async () => {
+    renderPageWithSources();
+    const card = await screen.findByTestId("source-card-english-manga-trusted");
+    expect(card).not.toHaveTextContent("cron");
+    // The card itself, and its status line, must still be there.
+    expect(card).toHaveTextContent("english-manga-trusted");
+    expect(card).toHaveTextContent("75 new releases");
+  });
+
+  it("reveals them for every card at once when switched on", async () => {
+    renderPageWithSources();
+    await screen.findByTestId("source-card-english-manga-trusted");
+    fireEvent.click(detailsSwitch());
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("source-card-english-manga-trusted"),
+      ).toHaveTextContent("cron"),
+    );
+    expect(
+      screen.getByTestId("source-card-english-manga-trusted"),
+    ).toHaveTextContent("timeout");
+  });
+
+  it("remembers the choice across remounts", async () => {
+    const first = renderPageWithSources();
+    await screen.findByTestId("source-card-english-manga-trusted");
+    fireEvent.click(detailsSwitch());
+    await waitFor(() =>
+      expect(useUiPrefs.getState().sourceCardDetails).toBe(true),
+    );
+    first.unmount();
+
+    renderPageWithSources();
+    const card = await screen.findByTestId("source-card-english-manga-trusted");
+    expect(card).toHaveTextContent("cron");
   });
 });

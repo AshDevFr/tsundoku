@@ -28,7 +28,15 @@ const LINK_STYLE = { textDecoration: "none", color: "inherit" } as const;
 /// Full-detail card used on the sources list. The "Open" link takes
 /// the operator into the per-source page; "Trigger" runs the manual
 /// poll. Both are independent of which page the card lives on.
-export function SourceCard({ source }: { source: SourceDto }) {
+export function SourceCard({
+  source,
+  showDetails = true,
+}: {
+  source: SourceDto;
+  /// Render the config block (cron, feed_url, timeout, …). Hiding it keeps a
+  /// long sources list compact; the per-source page always shows everything.
+  showDetails?: boolean;
+}) {
   const poll = usePollSource();
 
   const handlePoll = () => {
@@ -110,7 +118,7 @@ export function SourceCard({ source }: { source: SourceDto }) {
             </Button>
           </Group>
         </Group>
-        <SourceConfigBlock config={source.config} />
+        {showDetails && <SourceConfigBlock config={source.config} />}
       </Stack>
     </Paper>
   );
