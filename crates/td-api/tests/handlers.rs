@@ -8559,3 +8559,165 @@ async fn import_requires_admin_token() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// The orphan purge is the one destructive admin action, so its endpoints are
+/// covered end to end: the dry run must agree with what the purge removes, and
+/// neither may be reachable without an admin token.
+#[tokio::test]
+async fn orphan_series_preview_and_purge_agree_and_require_admin() {
+    let db = fresh_db().await;
+    // Unreferenced: the only thing either endpoint may touch.
+    let doomed = seed_series(&db, "Unreferenced", "manga").await;
+    // Referenced by a release.
+    let kept = seed_series(&db, "Has releases", "manga").await;
+    let r = sample_release("1", "feed", "Something v01");
+    let rid = releases_repo::persist_discovered(&db, &r, 100)
+        .await
+        .unwrap();
+    releases_repo::set_resolution(
+        &db,
+        &rid,
+        Some(kept),
+        Some("fuzzy_title".into()),
+        None,
+        "resolved",
+        100,
+    )
+    .await
+    .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    // Both endpoints are admin-only: this is the surface that deletes data.
+    for (method, uri) in [
+        ("GET", "/api/v1/maintenance/orphan-series"),
+        ("POST", "/api/v1/maintenance/orphan-series/purge"),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri} must require an admin token",
+        );
+    }
+
+    let preview = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/maintenance/orphan-series")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), StatusCode::OK);
+    let body = body_json(preview).await;
+    assert_eq!(body["count"], 1);
+    assert_eq!(body["sample"][0]["id"], doomed);
+    assert_eq!(body["sample"][0]["canonicalTitle"], "Unreferenced");
+
+    let purge = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/maintenance/orphan-series/purge")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"excludeWishlisted":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(purge.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(purge).await["deleted"],
+        1,
+        "the purge deletes exactly what the dry run counted",
+    );
+
+    // The referenced series is still there, and a second dry run is empty.
+    let after = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/maintenance/orphan-series")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(body_json(after).await["count"], 0);
+}
+
+/// An omitted body must not widen the purge. The default has to be the *safe*
+/// reading, or a malformed client call silently deletes wishlisted series.
+#[tokio::test]
+async fn orphan_purge_defaults_to_sparing_wishlisted_series() {
+    let db = fresh_db().await;
+    let wishlisted = seed_series(&db, "Wishlisted orphan", "manga").await;
+    td_db::repos::series_repo::set_wishlisted(&db, wishlisted, true, 100)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/maintenance/orphan-series/purge")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await["deleted"], 0);
+
+    // Explicitly opting in is the only way to reach it.
+    let opted_in = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/maintenance/orphan-series/purge")
+                .header(header::AUTHORIZATION, "Bearer write-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"excludeWishlisted":false}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(body_json(opted_in).await["deleted"], 1);
+}

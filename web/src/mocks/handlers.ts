@@ -1423,6 +1423,39 @@ export const handlers = [
   // (`/api/v1/covers/{id}`, `/api/v1/covers/by-url`) are intentionally
   // not mocked: in dev the Vite proxy reaches the real backend, and in
   // tests the component tree we exercise never renders a cover.
+  // Orphan-series maintenance. The fixture mirrors the server's shape,
+  // including the wishlisted toggle widening the set, so the card's default-on
+  // behaviour is exercised rather than assumed.
+  http.get("/api/v1/maintenance/orphan-series", ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const url = new URL(request.url);
+    const excludeWishlisted =
+      (url.searchParams.get("excludeWishlisted") ?? "true") !== "false";
+    const sample = [
+      { id: 901, canonicalTitle: "Orphan One", type: "manga", firstSeenAt: 1 },
+      { id: 902, canonicalTitle: "Orphan Two", type: null, firstSeenAt: 2 },
+    ];
+    if (!excludeWishlisted) {
+      sample.push({
+        id: 903,
+        canonicalTitle: "Wishlisted Orphan",
+        type: "novel",
+        firstSeenAt: 3,
+      });
+    }
+    return HttpResponse.json({ count: sample.length, sample });
+  }),
+
+  http.post("/api/v1/maintenance/orphan-series/purge", async ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const body = (await request.json()) as { excludeWishlisted?: boolean };
+    return HttpResponse.json({
+      deleted: body?.excludeWishlisted === false ? 3 : 2,
+    });
+  }),
+
   http.post("/api/v1/covers/invalidate-cache", ({ request }) => {
     const denied = requireAdmin(request);
     if (denied) return denied;

@@ -364,6 +364,155 @@ pub async fn search_fts_ids(db: &DatabaseConnection, match_expr: &str) -> Result
         .collect())
 }
 
+/// A series row with nothing left pointing at it, safe to delete.
+///
+/// The predicate is deliberately five-way, and every arm is load-bearing —
+/// "has no releases" alone is nowhere near sufficient:
+///
+/// - **No linked releases.** The obvious arm, and the only one the operator
+///   usually thinks of.
+/// - **Not a review candidate.** The resolver has to persist a `series` row
+///   for every candidate it records, so most release-less series are the
+///   *options* the review queue is currently offering. Deleting them empties
+///   the "pick the right match" panel.
+/// - **No Codex link.** Deleting one destroys the operator's mapping to their
+///   library.
+/// - **Not owned.**
+/// - **Not wishlisted**, when `exclude_wishlisted` — deliberately a toggle,
+///   since a wishlisted orphan may be a series the operator added by hand
+///   and is waiting on.
+///
+/// The first three matter more than they look: `review_candidates.series_id`
+/// and `codex_series_link.series_id` both declare `ON DELETE CASCADE`, so a
+/// wrong predicate does not fail loudly — it succeeds and silently takes the
+/// child rows with it. SQLite will not protect this operation; the query has
+/// to.
+///
+/// Shared verbatim by the dry run and the purge so the count the operator
+/// confirms is the set that actually gets deleted.
+pub fn orphan_series_condition(exclude_wishlisted: bool) -> Condition {
+    use sea_orm::sea_query::{Expr, Query};
+
+    let has_release = Query::select()
+        .expr(Expr::val(1))
+        .from(crate::entities::releases::Entity)
+        .and_where(
+            Expr::col((
+                crate::entities::releases::Entity,
+                crate::entities::releases::Column::SeriesId,
+            ))
+            .equals((series::Entity, series::Column::Id)),
+        )
+        .to_owned();
+    let is_candidate = Query::select()
+        .expr(Expr::val(1))
+        .from(crate::entities::review_candidates::Entity)
+        .and_where(
+            Expr::col((
+                crate::entities::review_candidates::Entity,
+                crate::entities::review_candidates::Column::SeriesId,
+            ))
+            .equals((series::Entity, series::Column::Id)),
+        )
+        .to_owned();
+    let has_codex_link = Query::select()
+        .expr(Expr::val(1))
+        .from(crate::entities::codex_series_link::Entity)
+        .and_where(
+            Expr::col((
+                crate::entities::codex_series_link::Entity,
+                crate::entities::codex_series_link::Column::SeriesId,
+            ))
+            .equals((series::Entity, series::Column::Id)),
+        )
+        .to_owned();
+
+    let mut cond = Condition::all()
+        .add(Expr::exists(has_release).not())
+        .add(Expr::exists(is_candidate).not())
+        .add(Expr::exists(has_codex_link).not())
+        .add(series::Column::Owned.eq(0));
+    if exclude_wishlisted {
+        cond = cond.add(series::Column::WishlistedAt.is_null());
+    }
+    cond
+}
+
+/// How many series the purge would delete, and a sample to show the operator
+/// before they commit. Same predicate as [`purge_orphan_series`].
+pub async fn count_orphan_series(db: &DatabaseConnection, exclude_wishlisted: bool) -> Result<u64> {
+    Ok(series::Entity::find()
+        .filter(orphan_series_condition(exclude_wishlisted))
+        .count(db)
+        .await?)
+}
+
+/// A bounded sample of the rows [`count_orphan_series`] counted, oldest ids
+/// first so the listing is stable between the dry run and the purge.
+pub async fn sample_orphan_series(
+    db: &DatabaseConnection,
+    exclude_wishlisted: bool,
+    limit: u64,
+) -> Result<Vec<Model>> {
+    Ok(series::Entity::find()
+        .filter(orphan_series_condition(exclude_wishlisted))
+        .order_by_asc(series::Column::Id)
+        .limit(limit)
+        .all(db)
+        .await?)
+}
+
+/// Delete every series matching [`orphan_series_condition`]. Returns how many
+/// rows went.
+///
+/// Child rows in `series_external_ids` / `series_genres` / `series_tags` are
+/// deleted explicitly rather than left to `ON DELETE CASCADE`. Cascade needs
+/// `PRAGMA foreign_keys=ON`, which is per-connection and set by the pool — an
+/// invariant that holds today but is exactly the kind of thing a future
+/// refactor drops silently. For an irreversible operation, leaving stale
+/// `series_external_ids` rows behind would be nasty: their
+/// `UNIQUE(provider, external_id)` would then reject the series ever being
+/// rediscovered. Belt and braces is three statements.
+///
+/// The whole thing runs in one transaction so a partial purge cannot leave
+/// dangling children.
+pub async fn purge_orphan_series(db: &DatabaseConnection, exclude_wishlisted: bool) -> Result<u64> {
+    use sea_orm::TransactionTrait;
+
+    let txn = db.begin().await?;
+    let ids: Vec<i32> = series::Entity::find()
+        .filter(orphan_series_condition(exclude_wishlisted))
+        .select_only()
+        .column(series::Column::Id)
+        .into_tuple::<i32>()
+        .all(&txn)
+        .await?;
+    if ids.is_empty() {
+        txn.commit().await?;
+        return Ok(0);
+    }
+
+    crate::entities::series_external_ids::Entity::delete_many()
+        .filter(crate::entities::series_external_ids::Column::SeriesId.is_in(ids.iter().copied()))
+        .exec(&txn)
+        .await?;
+    crate::entities::series_genres::Entity::delete_many()
+        .filter(crate::entities::series_genres::Column::SeriesId.is_in(ids.iter().copied()))
+        .exec(&txn)
+        .await?;
+    crate::entities::series_tags::Entity::delete_many()
+        .filter(crate::entities::series_tags::Column::SeriesId.is_in(ids.iter().copied()))
+        .exec(&txn)
+        .await?;
+    // The `series_ad` trigger keeps `series_fts` in step with this delete.
+    let res = series::Entity::delete_many()
+        .filter(series::Column::Id.is_in(ids.iter().copied()))
+        .exec(&txn)
+        .await?;
+    txn.commit().await?;
+    Ok(res.rows_affected)
+}
+
 /// Clear `metadata_hash` for every provider-backed series row, so the
 /// next provider refresh tick rewrites them instead of short-circuiting
 /// on a hash match.
@@ -935,5 +1084,234 @@ mod tests {
 
         let hit = search_fts_ids(&db, "\"griffin\"*").await.unwrap();
         assert_eq!(hit, vec![id]);
+    }
+}
+
+#[cfg(test)]
+mod orphan_purge_tests {
+    use super::*;
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, EntityTrait, Set};
+
+    /// Unlike the other test harnesses here, this one turns **foreign keys on**
+    /// — SQLite defaults them off, and the production pool pins the pragma. A
+    /// purge test against a database without FK enforcement is testing a
+    /// different database from the one that ships, and would quietly miss the
+    /// cascade behaviour that makes a wrong predicate destructive.
+    async fn fresh_with_fks() -> DatabaseConnection {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        db.execute_unprepared("PRAGMA foreign_keys=ON")
+            .await
+            .unwrap();
+        db
+    }
+
+    async fn seed_series(db: &DatabaseConnection, title: &str) -> i32 {
+        series::ActiveModel {
+            canonical_title: Set(title.into()),
+            metadata_source: Set("api".into()),
+            metadata_fetched_at: Set(0),
+            first_seen_at: Set(0),
+            last_release_at: Set(0),
+            owned: Set(0),
+            ..Default::default()
+        }
+        .insert(db)
+        .await
+        .unwrap()
+        .id
+    }
+
+    async fn seed_release(db: &DatabaseConnection, id: &str, series_id: Option<i32>) {
+        crate::entities::releases::ActiveModel {
+            id: Set(id.into()),
+            source_kind: Set("nyaa".into()),
+            source_name: Set("feed".into()),
+            external_id: Set(id.into()),
+            title: Set("A release".into()),
+            link: Set(format!("https://nyaa.si/view/{id}")),
+            posted_at: Set(0),
+            observed_at: Set(0),
+            series_id: Set(series_id),
+            resolution_status: Set("resolved".into()),
+            resolution_attempts: Set(0),
+            ..Default::default()
+        }
+        .insert(db)
+        .await
+        .unwrap();
+    }
+
+    /// Every exclusion arm, asserted independently. A series that satisfies
+    /// four of the five must still be spared.
+    #[tokio::test]
+    async fn orphan_predicate_spares_every_referenced_series() {
+        let db = fresh_with_fks().await;
+
+        let safe = seed_series(&db, "Unreferenced").await;
+
+        let with_release = seed_series(&db, "Has a release").await;
+        seed_release(&db, "r1", Some(with_release)).await;
+
+        let candidate = seed_series(&db, "Is a review candidate").await;
+        seed_release(&db, "r2", None).await;
+        crate::entities::review_candidates::ActiveModel {
+            release_id: Set("r2".into()),
+            series_id: Set(candidate),
+            score: Set(0.5),
+            reason: Set(None),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+
+        let codex_linked = seed_series(&db, "Linked to Codex").await;
+        crate::entities::codex_series_link::ActiveModel {
+            series_id: Set(codex_linked),
+            codex_series_uuid: Set("codex-uuid".into()),
+            link_kind: Set("auto".into()),
+            synced_at: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+
+        let owned = seed_series(&db, "Owned").await;
+        series::ActiveModel {
+            id: Set(owned),
+            owned: Set(1),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
+
+        let wishlisted = seed_series(&db, "Wishlisted").await;
+        series::ActiveModel {
+            id: Set(wishlisted),
+            wishlisted_at: Set(Some(100)),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
+
+        let ids: Vec<i32> = sample_orphan_series(&db, true, 100)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![safe],
+            "only the genuinely unreferenced series is selectable",
+        );
+        assert_eq!(count_orphan_series(&db, true).await.unwrap(), 1);
+
+        // The toggle is the one arm that can be relaxed.
+        let mut relaxed: Vec<i32> = sample_orphan_series(&db, false, 100)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        relaxed.sort();
+        assert_eq!(relaxed, vec![safe, wishlisted]);
+    }
+
+    /// The purge deletes exactly what the dry run counted, and leaves no
+    /// dangling child rows behind it.
+    #[tokio::test]
+    async fn purge_removes_only_orphans_and_cleans_their_children() {
+        let db = fresh_with_fks().await;
+        let doomed = seed_series(&db, "Doomed").await;
+        let kept = seed_series(&db, "Kept").await;
+        seed_release(&db, "r1", Some(kept)).await;
+
+        crate::repos::series_external_ids_repo::upsert(&db, doomed, "mangabaka", "111", 0)
+            .await
+            .unwrap();
+        crate::repos::series_external_ids_repo::upsert(&db, kept, "mangabaka", "222", 0)
+            .await
+            .unwrap();
+        crate::repos::tagging_repo::set_series_genres(&db, doomed, &["action".into()])
+            .await
+            .unwrap();
+        crate::repos::tagging_repo::set_series_tags(&db, doomed, &["isekai".into()])
+            .await
+            .unwrap();
+
+        let expected = count_orphan_series(&db, true).await.unwrap();
+        assert_eq!(expected, 1);
+        assert_eq!(purge_orphan_series(&db, true).await.unwrap(), expected);
+
+        let remaining: Vec<i32> = series::Entity::find()
+            .all(&db)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(remaining, vec![kept]);
+
+        // No stale mapping rows: a leftover `series_external_ids` row would
+        // make the series impossible to rediscover, since its
+        // `UNIQUE(provider, external_id)` would reject the re-insert.
+        let mappings = crate::entities::series_external_ids::Entity::find()
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].series_id, kept);
+        assert!(
+            crate::entities::series_genres::Entity::find()
+                .all(&db)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::entities::series_tags::Entity::find()
+                .all(&db)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Idempotent: a second run finds nothing left to do.
+        assert_eq!(purge_orphan_series(&db, true).await.unwrap(), 0);
+    }
+
+    /// The regression that matters most: a review candidate's series row must
+    /// survive a purge, because `review_candidates` cascades and would be
+    /// stripped silently along with it.
+    #[tokio::test]
+    async fn purge_never_strips_a_live_review_candidate() {
+        let db = fresh_with_fks().await;
+        let candidate = seed_series(&db, "Candidate").await;
+        seed_release(&db, "r1", None).await;
+        crate::entities::review_candidates::ActiveModel {
+            release_id: Set("r1".into()),
+            series_id: Set(candidate),
+            score: Set(0.9),
+            reason: Set(Some("fuzzy_title:0.900".into())),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+
+        assert_eq!(purge_orphan_series(&db, true).await.unwrap(), 0);
+        assert_eq!(
+            crate::entities::review_candidates::Entity::find()
+                .all(&db)
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "the review queue's candidate must be untouched",
+        );
     }
 }

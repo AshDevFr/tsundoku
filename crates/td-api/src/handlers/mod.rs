@@ -10,6 +10,7 @@ pub mod download;
 pub mod events;
 pub mod health;
 pub mod info;
+pub mod maintenance;
 pub mod metrics;
 pub mod pagination;
 pub mod providers;

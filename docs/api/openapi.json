@@ -341,6 +341,81 @@
         }
       }
     },
+    "/api/v1/maintenance/orphan-series": {
+      "get": {
+        "tags": [
+          "maintenance"
+        ],
+        "summary": "Dry run: what the orphan purge *would* delete.",
+        "description": "\"Orphan\" is narrower than \"has no releases\". The resolver persists a\n`series` row for every review candidate it records, so most release-less\nseries are the options the review queue is currently offering; deleting\nthose would empty the \"pick the right match\" panel. Series with a Codex\nlink, owned series, and (by default) wishlisted ones are spared too. See\n`series_repo::orphan_series_condition`.",
+        "operationId": "orphan_series_preview",
+        "parameters": [
+          {
+            "name": "excludeWishlisted",
+            "in": "query",
+            "description": "Keep wishlisted series even when they are otherwise unreferenced.\nDefaults to `true`: a wishlisted orphan is usually a series the\noperator added by hand and is waiting on, so the safe reading of an\nabsent parameter is \"spare them\".",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrphanSeriesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
+    "/api/v1/maintenance/orphan-series/purge": {
+      "post": {
+        "tags": [
+          "maintenance"
+        ],
+        "summary": "Delete the orphan series. **Irreversible** — there is no undo and no\ntombstone; restoring means restoring the database file.",
+        "description": "Uses the exact predicate the dry run counted, so what the operator\nconfirmed is what goes.",
+        "operationId": "purge_orphan_series",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurgeOrphanSeriesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeOrphanSeriesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/metrics/id-maps": {
       "get": {
         "tags": [
@@ -4349,6 +4424,55 @@
           }
         }
       },
+      "OrphanSeriesResponse": {
+        "type": "object",
+        "required": [
+          "count",
+          "sample"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total rows the purge would delete under these settings.",
+            "minimum": 0
+          },
+          "sample": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrphanSeriesRow"
+            },
+            "description": "A bounded preview of them, oldest id first."
+          }
+        }
+      },
+      "OrphanSeriesRow": {
+        "type": "object",
+        "required": [
+          "id",
+          "canonicalTitle",
+          "firstSeenAt"
+        ],
+        "properties": {
+          "canonicalTitle": {
+            "type": "string"
+          },
+          "firstSeenAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "PollAllResponse": {
         "type": "object",
         "required": [
@@ -4798,6 +4922,29 @@
           },
           "provider": {
             "type": "string"
+          }
+        }
+      },
+      "PurgeOrphanSeriesRequest": {
+        "type": "object",
+        "properties": {
+          "excludeWishlisted": {
+            "type": "boolean",
+            "description": "See [`OrphanSeriesQuery::exclude_wishlisted`]. Same default, so a body\nthat omits it cannot accidentally widen the purge.",
+            "default": true
+          }
+        }
+      },
+      "PurgeOrphanSeriesResponse": {
+        "type": "object",
+        "required": [
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },

@@ -774,6 +774,29 @@ export function useReleaseSearch(
   });
 }
 
+export type OrphanSeriesResponse =
+  components["schemas"]["OrphanSeriesResponse"];
+
+/// Dry run for the orphan-series purge. Admin-only server-side, so it stays
+/// disabled without a token rather than rendering a misleading zero.
+export function useOrphanSeries(excludeWishlisted: boolean) {
+  const hasAdmin = useAdminAuth((s) => Boolean(s.token));
+  return useQuery({
+    queryKey: ["orphan-series", excludeWishlisted, hasAdmin],
+    enabled: hasAdmin,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/api/v1/maintenance/orphan-series",
+        {
+          params: { query: { excludeWishlisted } },
+        },
+      );
+      if (error) throw new Error("failed to load orphan series");
+      return data;
+    },
+  });
+}
+
 export function useKeptReleases(page = 1, pageSize = DEFAULT_REVIEW_PAGE_SIZE) {
   return useQuery({
     queryKey: ["releases-kept", page, pageSize],

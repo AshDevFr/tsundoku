@@ -241,6 +241,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/maintenance/orphan-series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dry run: what the orphan purge *would* delete.
+         * @description "Orphan" is narrower than "has no releases". The resolver persists a
+         *     `series` row for every review candidate it records, so most release-less
+         *     series are the options the review queue is currently offering; deleting
+         *     those would empty the "pick the right match" panel. Series with a Codex
+         *     link, owned series, and (by default) wishlisted ones are spared too. See
+         *     `series_repo::orphan_series_condition`.
+         */
+        get: operations["orphan_series_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/maintenance/orphan-series/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete the orphan series. **Irreversible** — there is no undo and no
+         *     tombstone; restoring means restoring the database file.
+         * @description Uses the exact predicate the dry run counted, so what the operator
+         *     confirmed is what goes.
+         */
+        post: operations["purge_orphan_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/metrics/id-maps": {
         parameters: {
             query?: never;
@@ -2016,6 +2063,23 @@ export interface components {
             source: string;
             triggered: boolean;
         };
+        OrphanSeriesResponse: {
+            /**
+             * Format: int64
+             * @description Total rows the purge would delete under these settings.
+             */
+            count: number;
+            /** @description A bounded preview of them, oldest id first. */
+            sample: components["schemas"]["OrphanSeriesRow"][];
+        };
+        OrphanSeriesRow: {
+            canonicalTitle: string;
+            /** Format: int64 */
+            firstSeenAt: number;
+            /** Format: int32 */
+            id: number;
+            type?: string | null;
+        };
         PollAllResponse: {
             results: components["schemas"]["ManualPollResponse"][];
         };
@@ -2158,6 +2222,18 @@ export interface components {
         ProviderSearchResponse: {
             hits: components["schemas"]["ProviderSearchHit"][];
             provider: string;
+        };
+        PurgeOrphanSeriesRequest: {
+            /**
+             * @description See [`OrphanSeriesQuery::exclude_wishlisted`]. Same default, so a body
+             *     that omits it cannot accidentally widen the purge.
+             * @default true
+             */
+            excludeWishlisted: boolean;
+        };
+        PurgeOrphanSeriesResponse: {
+            /** Format: int64 */
+            deleted: number;
         };
         /**
          * @description Response from `POST /api/v1/series/recompute-spans`. The endpoint runs
@@ -3456,6 +3532,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppInfo"];
+                };
+            };
+        };
+    };
+    orphan_series_preview: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Keep wishlisted series even when they are otherwise unreferenced.
+                 *     Defaults to `true`: a wishlisted orphan is usually a series the
+                 *     operator added by hand and is waiting on, so the safe reading of an
+                 *     absent parameter is "spare them".
+                 */
+                excludeWishlisted?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrphanSeriesResponse"];
+                };
+            };
+        };
+    };
+    purge_orphan_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PurgeOrphanSeriesRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurgeOrphanSeriesResponse"];
                 };
             };
         };

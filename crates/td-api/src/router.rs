@@ -17,8 +17,8 @@ use crate::auth;
 use crate::docs::ApiDoc;
 use crate::embed::serve_static;
 use crate::handlers::{
-    codex, covers, download, events, health, info, metrics, providers, releases, search, series,
-    series_export, sources, stats, tagging,
+    codex, covers, download, events, health, info, maintenance, metrics, providers, releases,
+    search, series, series_export, sources, stats, tagging,
 };
 use crate::state::AppState;
 
@@ -80,6 +80,16 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         )
         .route("/providers/refresh-all", post(providers::refresh_all))
         .route("/covers/invalidate-cache", post(covers::invalidate_cache))
+        // Destructive housekeeping. Admin-only and manual: no cron reaches
+        // these. The GET is the dry run the confirmation dialog is built on.
+        .route(
+            "/maintenance/orphan-series",
+            get(maintenance::orphan_series_preview),
+        )
+        .route(
+            "/maintenance/orphan-series/purge",
+            post(maintenance::purge_orphan_series),
+        )
         // Codex presence: admin-only. `GET /codex/status` lives here (not in
         // the reads group) because it exposes what is in the operator's Codex
         // library, which must never reach the public read tier.

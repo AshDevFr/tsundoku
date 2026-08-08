@@ -18,11 +18,12 @@ import { useState } from "react";
 import {
   useInvalidateCoverCache,
   useInvalidateMetadataHashes,
+  usePurgeOrphanSeries,
   useRecomputeSpans,
   useReenrichReleases,
   useRefreshAllSeries,
 } from "@/api/mutations";
-import { useSearchEntries, useSources } from "@/api/queries";
+import { useOrphanSeries, useSearchEntries, useSources } from "@/api/queries";
 
 /// Resolution statuses a release can carry, mirrored from the backend's
 /// `VALID_STATUSES`. Used to populate the re-enrich status picker.
@@ -56,6 +57,7 @@ export function AdminMaintenancePage() {
           per-provider pages.
         </Text>
       </Stack>
+      <PurgeOrphanSeriesCard />
       <InvalidateMetadataHashesCard />
       <RefreshAllSeriesCard />
       <RecomputeSpansCard />
@@ -604,6 +606,139 @@ function RefreshAllSeriesCard() {
           </Button>
         </Group>
       </Stack>
+    </Card>
+  );
+}
+
+/// Delete series rows nothing points at any more.
+///
+/// These accumulate because the resolver has to persist a `series` row for
+/// every review candidate it records, and `review_candidates` is rewritten on
+/// each re-resolve — the candidate rows go, the series rows stay.
+///
+/// Manual only, and dry-run first: the exclusions are what make this safe, and
+/// they are not obvious. `review_candidates` and `codex_series_link` both
+/// declare `ON DELETE CASCADE`, so a wrong predicate would not fail loudly, it
+/// would succeed and take live review candidates or a Codex link with it.
+function PurgeOrphanSeriesCard() {
+  const [excludeWishlisted, setExcludeWishlisted] = useState(true);
+  const [opened, { open, close }] = useDisclosure(false);
+  const preview = useOrphanSeries(excludeWishlisted);
+  const purge = usePurgeOrphanSeries();
+
+  const count = preview.data?.count ?? 0;
+  const sample = preview.data?.sample ?? [];
+
+  const handleConfirm = () => {
+    purge.mutate(excludeWishlisted, {
+      onSuccess: (data) => {
+        close();
+        notifications.show({
+          color: (data?.deleted ?? 0) > 0 ? "blue" : "gray",
+          title: "Orphan series purged",
+          message:
+            (data?.deleted ?? 0) > 0
+              ? `${data?.deleted} series deleted.`
+              : "Nothing matched; nothing was deleted.",
+        });
+      },
+      onError: (e) =>
+        notifications.show({
+          color: "red",
+          title: "Purge failed",
+          message: (e as Error).message,
+        }),
+    });
+  };
+
+  return (
+    <Card
+      withBorder
+      radius="md"
+      p="md"
+      data-testid="maintenance-purge-orphans-card"
+    >
+      <Stack gap="sm">
+        <Stack gap={2}>
+          <Title order={4}>Purge orphan series</Title>
+          <Text size="sm" c="dimmed">
+            Delete series with no releases left pointing at them. Series that
+            are still offered as a review candidate, linked to Codex, or owned
+            are never touched, whatever this says.
+          </Text>
+        </Stack>
+        <Checkbox
+          label="Exclude wishlisted series"
+          description="A wishlisted orphan is usually one you added by hand and are waiting on."
+          checked={excludeWishlisted}
+          onChange={(e) => setExcludeWishlisted(e.currentTarget.checked)}
+          data-testid="purge-orphans-exclude-wishlisted"
+        />
+        <Text size="sm" data-testid="purge-orphans-count">
+          {preview.isLoading
+            ? "counting…"
+            : `${count.toLocaleString()} series would be deleted`}
+        </Text>
+        {sample.length > 0 && (
+          <List size="xs" c="dimmed" data-testid="purge-orphans-sample">
+            {sample.map((s) => (
+              <List.Item key={s.id}>
+                {s.canonicalTitle}
+                {s.type ? ` (${s.type})` : ""}
+              </List.Item>
+            ))}
+          </List>
+        )}
+        {count > sample.length && (
+          <Text size="xs" c="dimmed">
+            …and {(count - sample.length).toLocaleString()} more.
+          </Text>
+        )}
+        <Group>
+          <Button
+            color="red"
+            variant="light"
+            onClick={open}
+            disabled={count === 0}
+            data-testid="purge-orphans-open"
+          >
+            Purge {count.toLocaleString()} series
+          </Button>
+        </Group>
+      </Stack>
+
+      <Modal
+        opened={opened}
+        onClose={close}
+        title="Purge orphan series"
+        centered
+      >
+        <Stack>
+          <Alert color="red" title="This cannot be undone">
+            {count.toLocaleString()} series will be deleted, along with their
+            provider ID mappings, genres, and tags. There is no undo — restoring
+            means restoring the database file.
+          </Alert>
+          <Text size="sm" c="dimmed">
+            {excludeWishlisted
+              ? "Wishlisted series are excluded."
+              : "Wishlisted series are INCLUDED in this purge."}
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={close}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              onClick={handleConfirm}
+              loading={purge.isPending}
+              data-testid="purge-orphans-confirm"
+            >
+              Delete {count.toLocaleString()} series
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Card>
   );
 }

@@ -647,6 +647,29 @@ export function useRefreshSeriesMetadata() {
 /// again, so the cost is bandwidth, not correctness. Use this when an
 /// upstream cover was corrected and you want the proxy to pull the new
 /// bytes immediately instead of waiting for the URL to rotate.
+/// Delete the orphan series the dry run listed. Irreversible; the caller is
+/// responsible for confirming first.
+export function usePurgeOrphanSeries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (excludeWishlisted: boolean) => {
+      const { data, error } = await api.POST(
+        "/api/v1/maintenance/orphan-series/purge",
+        { body: { excludeWishlisted } },
+      );
+      if (error)
+        throw new Error(describeError(error, "failed to purge orphan series"));
+      return data;
+    },
+    onSuccess: () => {
+      // The dry run and every series listing just changed.
+      qc.invalidateQueries({ queryKey: ["orphan-series"] });
+      qc.invalidateQueries({ queryKey: ["series"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+}
+
 export function useInvalidateCoverCache() {
   return useMutation({
     mutationFn: async () => {
