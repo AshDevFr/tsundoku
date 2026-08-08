@@ -329,26 +329,39 @@ pub async fn find_by_hash(db: &DatabaseConnection, hash: &str) -> Result<Option<
         .await?)
 }
 
-/// FTS5 match against `series_fts`. Returns matching series rows ordered by
-/// FTS relevance (best first). The caller supplies a raw FTS5 MATCH expression
-/// (e.g. a quoted phrase or column-prefixed term); the function does not
+/// Every series id whose FTS5 entry matches `match_expr` — the whole match
+/// set, deliberately unlimited.
+///
+/// The catalog-wide search treats an FTS hit as a match in its own right, so
+/// truncating this set silently drops candidates: a one-word query scores far
+/// below the Dice floor against a long title, leaving FTS as the only thing
+/// keeping that row alive. A `LIMIT 200` here dropped roughly half the match
+/// set for common tokens like "World" (374 matches) or "Girl" (305).
+///
+/// Unbounded is safe because the result is bounded by the catalog itself and
+/// carries ids only — the pathological "matches everything" query returns a
+/// few KB of `i32`, against a Dice scan that already walks every row. Ordering
+/// is not returned: the caller ranks by its own score, using membership here
+/// only as a boost and a floor bypass.
+///
+/// The caller supplies a raw FTS5 MATCH expression; the function does not
 /// escape the input.
-pub async fn search_fts(
-    db: &DatabaseConnection,
-    match_expr: &str,
-    limit: u64,
-) -> Result<Vec<Model>> {
+pub async fn search_fts_ids(db: &DatabaseConnection, match_expr: &str) -> Result<Vec<i32>> {
+    #[derive(FromQueryResult)]
+    struct IdRow {
+        id: i32,
+    }
     let backend = db.get_database_backend();
-    let sql = "SELECT s.*
-               FROM series s
-               JOIN series_fts f ON f.rowid = s.id
-               WHERE series_fts MATCH ?1
-               ORDER BY rank
-               LIMIT ?2";
-    let stmt =
-        Statement::from_sql_and_values(backend, sql, [match_expr.into(), (limit as i64).into()]);
-    let rows = Model::find_by_statement(stmt).all(db).await?;
-    Ok(rows)
+    let sql = "SELECT f.rowid AS id
+               FROM series_fts f
+               WHERE series_fts MATCH ?1";
+    let stmt = Statement::from_sql_and_values(backend, sql, [match_expr.into()]);
+    Ok(IdRow::find_by_statement(stmt)
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|r| r.id)
+        .collect())
 }
 
 /// Clear `metadata_hash` for every provider-backed series row, so the
@@ -880,7 +893,7 @@ mod tests {
 
         // Title-scoped expression (default search mode) must NOT surface a
         // description-only hit — reproducing pre-description-column behavior.
-        let scoped = search_fts(&db, "{title alternate_titles} : (\"dragon\"*)", 10)
+        let scoped = search_fts_ids(&db, "{title alternate_titles} : (\"dragon\"*)")
             .await
             .unwrap();
         assert!(
@@ -889,14 +902,14 @@ mod tests {
         );
 
         // Unscoped expression (toggle on) now spans the description column.
-        let unscoped = search_fts(&db, "\"dragon\"*", 10).await.unwrap();
-        assert_eq!(unscoped.iter().map(|s| s.id).collect::<Vec<_>>(), vec![id]);
+        let unscoped = search_fts_ids(&db, "\"dragon\"*").await.unwrap();
+        assert_eq!(unscoped, vec![id]);
 
         // A genuine title term still matches in the scoped mode.
-        let title_hit = search_fts(&db, "{title alternate_titles} : (\"solo\"*)", 10)
+        let title_hit = search_fts_ids(&db, "{title alternate_titles} : (\"solo\"*)")
             .await
             .unwrap();
-        assert_eq!(title_hit.iter().map(|s| s.id).collect::<Vec<_>>(), vec![id]);
+        assert_eq!(title_hit, vec![id]);
     }
 
     #[tokio::test]
@@ -904,7 +917,7 @@ mod tests {
         let db = fresh().await;
         let id = seed_with_description(&db, "Untitled", "no keyword yet").await;
         assert!(
-            search_fts(&db, "\"griffin\"*", 10)
+            search_fts_ids(&db, "\"griffin\"*")
                 .await
                 .unwrap()
                 .is_empty()
@@ -920,7 +933,7 @@ mod tests {
         row.description = Set(Some("now mentions a griffin".into()));
         row.update(&db).await.unwrap();
 
-        let hit = search_fts(&db, "\"griffin\"*", 10).await.unwrap();
-        assert_eq!(hit.iter().map(|s| s.id).collect::<Vec<_>>(), vec![id]);
+        let hit = search_fts_ids(&db, "\"griffin\"*").await.unwrap();
+        assert_eq!(hit, vec![id]);
     }
 }

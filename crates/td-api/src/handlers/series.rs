@@ -396,18 +396,24 @@ impl Default for SeriesListQuery {
 /// Score floor for the Dice rerank. Hits below this are treated as
 /// no-match (avoids returning random titles for nonsense queries).
 const SEARCH_DICE_FLOOR: f32 = 0.30;
-/// Upper bound on the in-memory Dice scan. Personal-scale catalogs are
-/// nowhere near this; the cap exists so a degenerate dataset can't
-/// accidentally hold the request thread for seconds.
-const SEARCH_DICE_CANDIDATE_CAP: u64 = 5000;
+/// Catalog size past which the in-memory Dice scan is worth revisiting. This
+/// is a *log* threshold, not a cap: the scan stays exhaustive above it.
+///
+/// A hard `LIMIT` used to sit here instead, which silently dropped every row
+/// past it — and because the query had no `ORDER BY`, SQLite scanned in rowid
+/// order, so what got dropped was always the most recently added series. A
+/// search that cannot find new titles is worse than a slow one, and the scan
+/// is measured in single-digit milliseconds at personal scale anyway.
+const SEARCH_SCAN_WARN_ROWS: usize = 50_000;
 /// Additive boost applied to a series' Dice score when FTS5 also matched
 /// the query. Big enough to break ties confidently in favor of the
 /// "user spelled it right" path without overriding a genuinely better
 /// fuzzy match elsewhere.
 const SEARCH_FTS_BOOST: f32 = 0.50;
-/// FTS5 candidate-set size. 200 is plenty for personal scale and keeps
-/// the boost set bounded.
-const SEARCH_FTS_FETCH_LIMIT: u64 = 200;
+// The FTS pass is deliberately unbounded — see
+// `series_repo::search_fts_ids`. It used to fetch a top-200 slice, which
+// dropped over half the match set for common tokens and, because an FTS hit
+// bypasses the Dice floor, silently lost those candidates entirely.
 
 impl SeriesListQuery {
     fn pagination(&self) -> Pagination {
@@ -896,59 +902,85 @@ async fn search_list(
 ) -> ApiResult<Json<SeriesListPage>> {
     let pagination = q.pagination();
 
-    // FTS5 boost set. An empty match expression (all-punctuation input,
-    // for example) skips the FTS pass entirely; Dice still runs.
+    // FTS5 match set: a ranking boost *and* a floor bypass, so it has to be
+    // the whole set rather than a top-N slice. An empty match expression
+    // (all-punctuation input, for example) skips the FTS pass entirely; Dice
+    // still runs.
     let fts_expr = build_fts_match_expression(q_raw, q.search_descriptions.unwrap_or(false));
     let fts_ids: HashSet<i32> = if fts_expr.is_empty() {
         HashSet::new()
     } else {
-        series_repo::search_fts(&state.db, &fts_expr, SEARCH_FTS_FETCH_LIMIT)
+        series_repo::search_fts_ids(&state.db, &fts_expr)
             .await
             .map_err(anyhow_err)?
-            .iter()
-            .map(|m| m.id)
+            .into_iter()
             .collect()
     };
 
     let cleaned = state.query_builder.clean(q_raw);
     let cleaned_primary = cleaned.primary().to_string();
 
-    // Score every row (capped). At personal scale the table is tiny;
-    // the cap exists so a runaway catalog can't pin the request thread.
-    let all_rows = series::Entity::find()
-        .limit(SEARCH_DICE_CANDIDATE_CAP)
+    // Score every row — no cap. A `LIMIT` here without an `ORDER BY` made
+    // SQLite stop at whatever it reached in rowid order, which silently made
+    // the *newest* series unfindable and got worse with every row added.
+    //
+    // Only the scoring columns are selected. Full models would drag
+    // `metadata_json` and `description` through every search for data the
+    // scorer never reads — on a 5k-row catalog that is ~16MB of payload to
+    // rank against ~1.6MB of titles.
+    let candidates: Vec<(i32, String, Option<String>, i64)> = series::Entity::find()
+        .select_only()
+        .column(series::Column::Id)
+        .column(series::Column::CanonicalTitle)
+        .column(series::Column::AlternateTitlesJson)
+        .column(series::Column::LastReleaseAt)
+        .into_tuple()
         .all(&state.db)
         .await
         .map_err(anyhow_err)?;
+    if candidates.len() > SEARCH_SCAN_WARN_ROWS {
+        tracing::warn!(
+            rows = candidates.len(),
+            threshold = SEARCH_SCAN_WARN_ROWS,
+            "series catalog is large enough that the in-memory search scan is worth revisiting; \
+             scoring is still exhaustive (never truncated)"
+        );
+    }
 
-    let mut scored: Vec<(f32, series::Model)> = all_rows
+    let mut scored: Vec<(f32, i32, i64)> = candidates
         .into_iter()
-        .map(|m| {
-            let mut titles: Vec<String> = vec![m.canonical_title.clone()];
-            if let Some(json) = m.alternate_titles_json.as_deref()
-                && let Ok(alts) = serde_json::from_str::<Vec<String>>(json)
-            {
-                titles.extend(alts);
-            }
-            let mut score = best_dice(&cleaned_primary, titles.iter().map(|s| s.as_str()));
-            if fts_ids.contains(&m.id) {
-                score += SEARCH_FTS_BOOST;
-            }
-            (score, m)
-        })
-        .filter(|(s, _)| *s >= SEARCH_DICE_FLOOR)
+        .filter_map(
+            |(id, canonical_title, alternate_titles_json, last_release_at)| {
+                let mut titles: Vec<String> = vec![canonical_title];
+                if let Some(json) = alternate_titles_json.as_deref()
+                    && let Ok(alts) = serde_json::from_str::<Vec<String>>(json)
+                {
+                    titles.extend(alts);
+                }
+                let is_fts_hit = fts_ids.contains(&id);
+                let mut score = best_dice(&cleaned_primary, titles.iter().map(|s| s.as_str()));
+                if is_fts_hit {
+                    score += SEARCH_FTS_BOOST;
+                }
+                // An FTS5 hit is a match whatever Dice thinks of it — a one-word
+                // query against a long title scores far below the floor. The boost
+                // currently clears the floor on its own, but stating the rule
+                // explicitly stops the two constants from being silently coupled.
+                (is_fts_hit || score >= SEARCH_DICE_FLOOR).then_some((score, id, last_release_at))
+            },
+        )
         .collect();
     // Highest score first; ties break by recency so a deterministic
     // ordering survives equal scores.
     scored.sort_by(|a, b| {
         b.0.partial_cmp(&a.0)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.1.last_release_at.cmp(&a.1.last_release_at))
+            .then_with(|| b.2.cmp(&a.2))
     });
 
     // Intersect with the user filters via SQL. Using a single SELECT
     // keeps genre / tag joins on the server where they belong.
-    let candidate_ids: Vec<i32> = scored.iter().map(|(_, m)| m.id).collect();
+    let candidate_ids: Vec<i32> = scored.iter().map(|(_, id, _)| *id).collect();
     let allowed: HashSet<i32> = if candidate_ids.is_empty() {
         HashSet::new()
     } else {
@@ -968,24 +1000,34 @@ async fn search_list(
         id_only.into_iter().collect()
     };
 
-    let final_rows: Vec<series::Model> = scored
+    let final_ids: Vec<i32> = scored
         .into_iter()
-        .filter_map(|(_, m)| {
-            if allowed.contains(&m.id) {
-                Some(m)
-            } else {
-                None
-            }
-        })
+        .filter_map(|(_, id, _)| allowed.contains(&id).then_some(id))
         .collect();
-    let total = final_rows.len() as u64;
+    let total = final_ids.len() as u64;
     let start = pagination.offset() as usize;
-    let end = (start + pagination.limit() as usize).min(final_rows.len());
-    let page_rows: Vec<series::Model> = if start >= final_rows.len() {
-        Vec::new()
+    let end = (start + pagination.limit() as usize).min(final_ids.len());
+    let page_ids: &[i32] = if start >= final_ids.len() {
+        &[]
     } else {
-        final_rows[start..end].to_vec()
+        &final_ids[start..end]
     };
+    // Now — and only now — pull the full rows, for the one page being
+    // returned rather than the whole catalog. `is_in` loses the ranked order,
+    // so reindex by id to restore it.
+    let mut by_id: HashMap<i32, series::Model> = if page_ids.is_empty() {
+        HashMap::new()
+    } else {
+        series::Entity::find()
+            .filter(series::Column::Id.is_in(page_ids.iter().copied()))
+            .all(&state.db)
+            .await
+            .map_err(anyhow_err)?
+            .into_iter()
+            .map(|m| (m.id, m))
+            .collect()
+    };
+    let page_rows: Vec<series::Model> = page_ids.iter().filter_map(|id| by_id.remove(id)).collect();
     let items = decorate_list_items(&state, page_rows, is_admin).await?;
     Ok(Json(SeriesListPage {
         items,

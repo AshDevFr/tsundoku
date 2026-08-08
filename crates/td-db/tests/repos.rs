@@ -734,23 +734,20 @@ async fn fts5_returns_series_matched_by_title_and_alternate_titles() {
         .await
         .unwrap();
 
-    let hits = series_repo::search_fts(&db, "chainsaw", 10).await.unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].id, s1.id);
+    let hits = series_repo::search_fts_ids(&db, "chainsaw").await.unwrap();
+    assert_eq!(hits, vec![s1.id]);
 
     // Alternate-title hit lives in the alternate_titles FTS column.
-    let hits = series_repo::search_fts(&db, "swordsman", 10).await.unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].id, s2.id);
+    let hits = series_repo::search_fts_ids(&db, "swordsman").await.unwrap();
+    assert_eq!(hits, vec![s2.id]);
 
     // Update-trigger keeps FTS in sync.
     let mut updated = sample_series("Vinland Saga", Some(r#"["Wikingr"]"#));
     updated.id = Set(s3.id);
     updated.last_release_at = Set(1_800_000_000);
     series_repo::upsert(&db, updated).await.unwrap();
-    let hits = series_repo::search_fts(&db, "wikingr", 10).await.unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].id, s3.id);
+    let hits = series_repo::search_fts_ids(&db, "wikingr").await.unwrap();
+    assert_eq!(hits, vec![s3.id]);
 }
 
 #[tokio::test]

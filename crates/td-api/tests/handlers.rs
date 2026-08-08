@@ -5314,6 +5314,190 @@ async fn series_list_sorts_by_publication_date_with_nulls_last() {
     assert_eq!(titles("asc").await, ["Oldest", "Mid", "Newest", "Undated"]);
 }
 
+/// Free-text search used to scan `LIMIT 5000` with no `ORDER BY`, so SQLite
+/// stopped after the first 5000 rows in rowid order and the newest series were
+/// silently unscoreable. Reproduces the production shape: two same-titled rows
+/// straddling the old cap, where only the *older* one was ever returned.
+#[tokio::test]
+async fn series_search_finds_rows_past_the_old_candidate_cap() {
+    let db = fresh_db().await;
+    let now = Utc::now().timestamp();
+
+    // The row that always worked: comfortably inside the old scan window.
+    let early = seed_series(&db, "My Quiet Blacksmith Life in Another World", "novel").await;
+
+    // Filler up past the old 5000-row cap. Inserted in batches so the test
+    // stays quick despite the FTS triggers firing per row.
+    let mut filler = Vec::with_capacity(500);
+    for i in 0..5_200 {
+        filler.push(series::ActiveModel {
+            canonical_title: Set(format!("Filler Series {i}")),
+            metadata_source: Set("api".into()),
+            metadata_fetched_at: Set(now),
+            first_seen_at: Set(now),
+            last_release_at: Set(now),
+            owned: Set(0),
+            ..Default::default()
+        });
+        if filler.len() == 500 {
+            series::Entity::insert_many(std::mem::take(&mut filler))
+                .exec(&db)
+                .await
+                .unwrap();
+            filler = Vec::with_capacity(500);
+        }
+    }
+    if !filler.is_empty() {
+        series::Entity::insert_many(filler).exec(&db).await.unwrap();
+    }
+
+    // The row that was invisible: same title, created last, past the cap.
+    let late = seed_series(&db, "My Quiet Blacksmith Life in Another World", "manga").await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?q=My%20Quiet%20Blacksmith%20Life%20in%20Another%20World")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let ids: Vec<i64> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_i64().unwrap())
+        .collect();
+
+    assert!(
+        ids.contains(&(early as i64)),
+        "the row inside the old scan window must still be found",
+    );
+    assert!(
+        ids.contains(&(late as i64)),
+        "an exact title match past the old 5000-row cap must be found; got {ids:?}",
+    );
+}
+
+/// An exact FTS5 match must survive the Dice floor. Today the `+0.50` FTS boost
+/// happens to clear the `0.30` floor on its own, so this pins that contract
+/// rather than the arithmetic that currently upholds it: raising the floor
+/// above the boost must not silently start dropping exact matches.
+#[tokio::test]
+async fn series_search_keeps_fts_matches_scoring_below_the_dice_floor() {
+    let db = fresh_db().await;
+    // Dice between "naruto" and this title is far below the 0.30 floor — the
+    // query is a tiny fraction of the title's bigrams — but FTS matches the
+    // token exactly.
+    let long = seed_series(
+        &db,
+        "Naruto Gaiden: The Seventh Hokage and the Scarlet Spring Flower",
+        "manga",
+    )
+    .await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?q=Naruto")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let ids: Vec<i64> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_i64().unwrap())
+        .collect();
+    assert!(
+        ids.contains(&(long as i64)),
+        "an exact FTS token match must not be filtered out by the Dice floor",
+    );
+}
+
+/// The FTS pass used to fetch only the top 200 by rank. A common token matches
+/// far more than that in a real catalog ("World" hits 374 of 5342 in
+/// production), and a one-word query scores well under the Dice floor against a
+/// long title — so every match past 200 was dropped outright rather than merely
+/// ranked lower. Seeds a match set comfortably over the old limit and asserts
+/// the whole set survives.
+#[tokio::test]
+async fn series_search_keeps_every_fts_match_past_the_old_fetch_limit() {
+    let db = fresh_db().await;
+    let now = Utc::now().timestamp();
+
+    // 300 long titles sharing one token. Dice("world", <long title>) is far
+    // below the 0.30 floor, so FTS membership is the only thing keeping any of
+    // them in the running.
+    let mut batch = Vec::with_capacity(300);
+    for i in 0..300 {
+        batch.push(series::ActiveModel {
+            canonical_title: Set(format!(
+                "Reincarnated in Another World as a Wandering Alchemist Volume {i}"
+            )),
+            metadata_source: Set("api".into()),
+            metadata_fetched_at: Set(now),
+            first_seen_at: Set(now),
+            last_release_at: Set(now),
+            owned: Set(0),
+            ..Default::default()
+        });
+    }
+    series::Entity::insert_many(batch).exec(&db).await.unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series?q=World&pageSize=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    // `total` reflects the whole candidate set, independent of page size.
+    assert_eq!(
+        body["total"].as_u64().unwrap(),
+        300,
+        "every FTS match must be a candidate, not just the first 200 by rank",
+    );
+}
+
 /// The discovery sort exists precisely because `last_release_at` (the upstream
 /// post date) buries a series found today from a year-old post. Seeded so the
 /// two orderings disagree completely: the newest *discovery* is the oldest
