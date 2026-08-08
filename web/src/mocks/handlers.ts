@@ -2207,6 +2207,37 @@ export const handlers = [
   // so `/releases/:id/reject` would otherwise swallow `/releases/bulk/reject`
   // with id="bulk". (axum prioritizes the static segment, so the server is
   // fine — this ordering only matters for the mock.)
+  http.post("/api/v1/releases/import", async ({ request }) => {
+    const denied = requireAdmin(request);
+    if (denied) return denied;
+    const { url } = (await request.json()) as { url: string };
+    if (!url.startsWith("https://nyaa.si/")) {
+      return new HttpResponse(
+        JSON.stringify({
+          error: "bad_request",
+          message: `no configured search entry recognizes "${url}" as one of its post urls`,
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    const externalId = url.split("/").pop() ?? "0";
+    const alreadyKnown = externalId === "known";
+    return HttpResponse.json({
+      alreadyKnown,
+      release: {
+        ...INITIAL_KEPT[0],
+        id: `nyaa:${externalId}`,
+        externalId,
+        title: "ReZero - Starting Life in Another World - Volume 01 [MTBBooks]",
+        link: url,
+        seriesId: 1,
+        resolutionPath: "fuzzy_title",
+        resolutionConfidence: 0.94,
+        resolutionStatus: alreadyKnown ? "unresolved" : "resolved",
+      },
+    });
+  }),
+
   http.post("/api/v1/releases/bulk/reject", async ({ request }) => {
     const denied = requireAdmin(request);
     if (denied) return denied;

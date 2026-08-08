@@ -7,6 +7,7 @@
 use std::sync::OnceLock;
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use regex::Regex;
 use scraper::{ElementRef, Html, Selector};
 use td_source::ExternalLinks;
@@ -33,12 +34,29 @@ pub struct DetailFields {
     /// it as the uploader's cited source. `None` when the row is absent or
     /// holds plain text (e.g. Nyaa's "No information.").
     pub information_url: Option<String>,
+    /// Post title from the panel heading. The poll path takes its title
+    /// from the feed and ignores this; it exists for callers that only
+    /// have the detail page (URL ingest), where nothing else supplies it.
+    pub title: Option<String>,
+    /// Absolute `/download/N.torrent` URL from the panel footer.
+    pub torrent_url: Option<String>,
+    /// Byte count parsed from the "File size:" row.
+    pub size_bytes: Option<u64>,
+    /// Lowercase btih hex from the "Info hash:" row.
+    pub info_hash: Option<String>,
+    /// Upload time from the "Date:" row's `data-timestamp` (epoch seconds).
+    pub posted_at: Option<DateTime<Utc>>,
 }
 
-pub fn parse_detail(html: &str, _site_base_url: &str) -> Result<DetailFields> {
+pub fn parse_detail(html: &str, site_base_url: &str) -> Result<DetailFields> {
     let doc = Html::parse_document(html);
 
     let mut out = DetailFields::default();
+    out.title = parse_title(&doc);
+    out.torrent_url = parse_torrent_url(&doc, site_base_url);
+    out.size_bytes = label_text(&doc, "File size:").and_then(|s| crate::parser::parse_size(&s));
+    out.info_hash = label_text(&doc, "Info hash:").map(|s| s.to_ascii_lowercase());
+    out.posted_at = parse_posted_at(&doc);
     out.files = parse_file_list(&doc);
     out.magnet = parse_magnet(html);
     out.description_html = parse_description_html(&doc);
@@ -97,32 +115,79 @@ fn subtract_links(mut base: ExternalLinks, remove: &ExternalLinks) -> ExternalLi
 /// link from the sibling cell (anchor `href` first, then bare-URL text).
 /// Returns `None` when the row is missing or its value is not a URL.
 fn parse_information_url(doc: &Html) -> Option<String> {
-    static LABEL_SEL: OnceLock<Selector> = OnceLock::new();
     static A_SEL: OnceLock<Selector> = OnceLock::new();
+    let a_sel = A_SEL.get_or_init(|| Selector::parse("a").expect("static selector"));
+    let value = value_cell_for_label(doc, "Information:")?;
+    if let Some(href) = value
+        .select(a_sel)
+        .next()
+        .and_then(|a| a.value().attr("href"))
+    {
+        let href = href.trim();
+        if is_http_url(href) {
+            return Some(href.to_string());
+        }
+    }
+    let text = value.text().collect::<String>();
+    let text = text.trim();
+    is_http_url(text).then(|| text.to_string())
+}
+
+/// The detail page lays each field out as a `col-md-1` label cell followed
+/// by its `col-md-5` value cell. Find the label whose text is `label` and
+/// return the sibling value cell. The "Info hash:" label carries an extra
+/// `col-md-offset-6` class, which the class selector tolerates.
+fn value_cell_for_label<'a>(doc: &'a Html, label: &str) -> Option<ElementRef<'a>> {
+    static LABEL_SEL: OnceLock<Selector> = OnceLock::new();
     let label_sel =
         LABEL_SEL.get_or_init(|| Selector::parse("div.col-md-1").expect("static selector"));
-    let a_sel = A_SEL.get_or_init(|| Selector::parse("a").expect("static selector"));
-    for label in doc.select(label_sel) {
-        if label.text().collect::<String>().trim() != "Information:" {
-            continue;
-        }
-        // The value lives in the next sibling element (a `col-md-5`).
-        let value = label.next_siblings().find_map(ElementRef::wrap)?;
-        if let Some(href) = value
-            .select(a_sel)
-            .next()
-            .and_then(|a| a.value().attr("href"))
-        {
-            let href = href.trim();
-            if is_http_url(href) {
-                return Some(href.to_string());
-            }
-        }
-        let text = value.text().collect::<String>();
-        let text = text.trim();
-        return is_http_url(text).then(|| text.to_string());
-    }
-    None
+    doc.select(label_sel)
+        .find(|el| el.text().collect::<String>().trim() == label)
+        .and_then(|el| el.next_siblings().find_map(ElementRef::wrap))
+}
+
+fn label_text(doc: &Html, label: &str) -> Option<String> {
+    let raw = value_cell_for_label(doc, label)?
+        .text()
+        .collect::<String>()
+        .trim()
+        .to_string();
+    (!raw.is_empty()).then_some(raw)
+}
+
+/// Post title from the panel heading. The page uses `h3.panel-title` for
+/// the heading of every panel (file list, comments, …); the post title is
+/// the first one.
+fn parse_title(doc: &Html) -> Option<String> {
+    static TITLE_SEL: OnceLock<Selector> = OnceLock::new();
+    let sel = TITLE_SEL.get_or_init(|| Selector::parse("h3.panel-title").expect("static selector"));
+    let raw = doc
+        .select(sel)
+        .next()?
+        .text()
+        .collect::<String>()
+        .trim()
+        .to_string();
+    (!raw.is_empty()).then_some(raw)
+}
+
+/// Upload time from the "Date:" cell's `data-timestamp` (epoch seconds).
+/// The cell's human text is deliberately ignored: it is rendered in the
+/// viewer's locale, the attribute is not.
+fn parse_posted_at(doc: &Html) -> Option<DateTime<Utc>> {
+    static TS_SEL: OnceLock<Selector> = OnceLock::new();
+    let sel = TS_SEL.get_or_init(|| Selector::parse("[data-timestamp]").expect("static selector"));
+    let raw = doc.select(sel).next()?.value().attr("data-timestamp")?;
+    DateTime::from_timestamp(raw.trim().parse::<i64>().ok()?, 0)
+}
+
+/// Absolute `/download/N.torrent` URL from the panel footer.
+fn parse_torrent_url(doc: &Html, site_base_url: &str) -> Option<String> {
+    static DL_SEL: OnceLock<Selector> = OnceLock::new();
+    let sel = DL_SEL
+        .get_or_init(|| Selector::parse(r#"a[href^="/download/"]"#).expect("static selector"));
+    let href = doc.select(sel).next()?.value().attr("href")?;
+    Some(crate::listing::absolutize(site_base_url, href.trim()))
 }
 
 fn is_http_url(s: &str) -> bool {
@@ -207,6 +272,30 @@ mod tests {
         assert_eq!(
             detail.information_url.as_deref(),
             Some("https://discord.gg/r9gyPwJeqW")
+        );
+    }
+
+    #[test]
+    fn parses_header_fields_needed_to_build_a_release_from_the_page_alone() {
+        // The URL-ingest path has no feed or listing row to start from, so
+        // every field the RSS/listing pass normally supplies has to come
+        // off the detail page itself.
+        let detail = parse_detail(SINGLE_FILE, "https://nyaa.si").unwrap();
+        assert_eq!(
+            detail.title.as_deref(),
+            Some(
+                "ReZero - Starting Life in Another World - Volume 01 [MTBBooks] | Re:Zero Kara Hajimeru Isekai Seikatsu | Re Zero"
+            )
+        );
+        assert_eq!(detail.posted_at.map(|d| d.timestamp()), Some(1_779_147_296));
+        assert_eq!(detail.size_bytes, Some((11.6_f64 * 1024.0 * 1024.0) as u64));
+        assert_eq!(
+            detail.info_hash.as_deref(),
+            Some("3cce2a1b1dd491be89a5a2461250b1f7ee6700c7")
+        );
+        assert_eq!(
+            detail.torrent_url.as_deref(),
+            Some("https://nyaa.si/download/2111533.torrent")
         );
     }
 

@@ -189,7 +189,15 @@ pub(crate) async fn enrich_from_detail(
     release: &mut DiscoveredRelease,
 ) {
     let html = match fetcher.fetch_detail(&release.link).await {
-        Ok(html) => html,
+        Ok(Some(html)) => html,
+        Ok(None) => {
+            tracing::warn!(
+                source = %source_name,
+                link = %release.link,
+                "nyaa detail page is gone (404); keeping feed-only data"
+            );
+            return;
+        }
         Err(e) => {
             tracing::warn!(
                 source = %source_name,

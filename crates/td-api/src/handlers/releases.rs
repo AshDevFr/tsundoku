@@ -1135,6 +1135,137 @@ pub async fn retry(
     Ok(Json(model_to_release(row, formats)))
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportReleaseRequest {
+    /// A post URL from a configured upstream (e.g. a Nyaa `/view/N` page).
+    pub url: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportReleaseResponse {
+    /// `true` when the catalog already held this release. Nothing was
+    /// re-fetched or re-resolved; use `POST /releases/{id}/retry` for that.
+    pub already_known: bool,
+    pub release: ReleaseDto,
+}
+
+/// Add a single release by pasting its post URL, for a release the polled
+/// feeds never surfaced (an old post, or one outside the configured
+/// filters).
+///
+/// The URL is handed to the first `[[search]]` entry that recognizes it.
+/// The fetched release then goes through the same persist + resolve path
+/// as a polled or searched one, and is deliberately *not* linked to any
+/// particular series: the resolver and the review queue decide, exactly as
+/// they would for a feed discovery.
+#[utoipa::path(
+    post,
+    path = "/api/v1/releases/import",
+    tag = "releases",
+    request_body = ImportReleaseRequest,
+    responses(
+        (status = 200, body = ImportReleaseResponse),
+        (status = 400, description = "No configured entry recognizes this URL"),
+        (status = 404, description = "The upstream has no such post"),
+        (status = 502, description = "Upstream unreachable or unreadable"),
+        (status = 503, description = "No [[search]] entries configured")
+    ),
+    security(("admin" = []))
+)]
+pub async fn import(
+    State(state): State<AppState>,
+    Json(body): Json<ImportReleaseRequest>,
+) -> ApiResult<Json<ImportReleaseResponse>> {
+    let url = body.url.trim();
+    if url.is_empty() {
+        return Err(ApiError::BadRequest("`url` must not be empty".into()));
+    }
+    if state.search.is_empty() {
+        return Err(ApiError::Misconfigured(
+            "no [[search]] entries are configured; add one to import releases by url".into(),
+        ));
+    }
+
+    let (entry_name, ingest) = state
+        .search
+        .iter()
+        .find_map(|entry| {
+            entry
+                .source
+                .as_url_ingestable()
+                .filter(|i| i.handles_url(url))
+                .map(|i| (entry.source.name().to_string(), i))
+        })
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "no configured search entry recognizes {url:?} as one of its post urls"
+            ))
+        })?;
+
+    let release = ingest
+        .fetch_by_url(url)
+        .await
+        .map_err(|e| ApiError::BadGateway(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("no post at {url}")))?;
+
+    let id = releases_repo::id_for(&release.source_kind, &release.external_id);
+    // Dedup before persisting: an operator pasting a link the feed already
+    // caught should see the existing row, not silently re-resolve it.
+    if let Some(existing) = releases_repo::find_by_id(&state.db, &id)
+        .await
+        .map_err(anyhow_err)?
+    {
+        let formats = releases_repo::list_formats(&state.db, &existing.id)
+            .await
+            .map_err(anyhow_err)?;
+        return Ok(Json(ImportReleaseResponse {
+            already_known: true,
+            release: model_to_release(existing, formats),
+        }));
+    }
+
+    let persisted_id =
+        releases_repo::persist_discovered(&state.db, &release, Utc::now().timestamp())
+            .await
+            .map_err(anyhow_err)?;
+
+    let mut resolver = Resolver::new(
+        state.db.clone(),
+        state.metadata.clone(),
+        state.ingestion.clone(),
+    )
+    .with_query_builder(state.query_builder.clone());
+    if let Some(r) = state.mangaupdates_redirector.clone() {
+        resolver = resolver.with_mangaupdates_redirector(r);
+    }
+    // A resolver failure is not an import failure: the row is in the
+    // catalog and the review queue can pick it up.
+    if let Err(e) = resolver.resolve_one(&persisted_id).await {
+        tracing::warn!(error = ?e, release_id = %persisted_id, "resolver failed on imported release");
+    }
+
+    tracing::info!(
+        search = %entry_name,
+        url,
+        release_id = %persisted_id,
+        "imported release from pasted url"
+    );
+
+    let row = releases_repo::find_by_id(&state.db, &persisted_id)
+        .await
+        .map_err(anyhow_err)?
+        .ok_or_else(|| ApiError::NotFound(format!("release {persisted_id:?}")))?;
+    let formats = releases_repo::list_formats(&state.db, &row.id)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(ImportReleaseResponse {
+        already_known: false,
+        release: model_to_release(row, formats),
+    }))
+}
+
 /// Query parameters for `POST /releases/retry-all`.
 #[derive(Debug, Default, Deserialize, IntoParams)]
 #[serde(default, rename_all = "camelCase")]

@@ -30,9 +30,10 @@ use crate::handlers::providers::{
 };
 use crate::handlers::releases::{
     BulkLinkRequest, BulkLinkResponse, BulkRejectResponse, BulkRetryResponse, BulkReviewRequest,
-    ExtractedLinksDto, LinkRequest, ReenrichReleasesResponse, ReenrichRequest, ReleaseDto,
-    ReleaseGroupCandidateDto, ReleaseGroupDto, ReleaseGroupsResponse, ReleasePage,
-    RetryAllResponse, ReviewCandidateDto, UnresolvedPage, UnresolvedRelease,
+    ExtractedLinksDto, ImportReleaseRequest, ImportReleaseResponse, LinkRequest,
+    ReenrichReleasesResponse, ReenrichRequest, ReleaseDto, ReleaseGroupCandidateDto,
+    ReleaseGroupDto, ReleaseGroupsResponse, ReleasePage, RetryAllResponse, ReviewCandidateDto,
+    UnresolvedPage, UnresolvedRelease,
 };
 use crate::handlers::search::{
     BulkSearchReleasesRequest, BulkSearchReleasesResponse, GlobalSearchRunDto,
@@ -94,6 +95,7 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         releases::reject,
         releases::keep,
         releases::retry,
+        releases::import,
         releases::retry_all,
         releases::reenrich,
         releases::bulk_reject,
@@ -185,6 +187,8 @@ use crate::state::{InFlight, JobEvent, JobKind, JobPhase, JobProgress, JobResult
         ReviewCandidateDto,
         ExtractedLinksDto,
         RetryAllResponse,
+        ImportReleaseRequest,
+        ImportReleaseResponse,
         BulkReviewRequest,
         BulkRejectResponse,
         BulkRetryResponse,

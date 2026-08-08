@@ -27,6 +27,7 @@ pub use registry::{SourceRegistry, SourceRegistryBuilder};
 pub use release::{DiscoveredRelease, ExternalLinks, PollContext, PollOutcome};
 pub use search::{
     SearchEntry, SearchRegistry, SearchRegistryBuilder, SearchRegistryError, SearchSource,
+    UrlIngestSource,
 };
 pub use source::{Backfillable, DiscoverySource};
 pub use span::{

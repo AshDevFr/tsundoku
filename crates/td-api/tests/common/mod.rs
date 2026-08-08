@@ -382,6 +382,13 @@ pub struct StubSearchSource {
     pub name: String,
     pub hits: Vec<DiscoveredRelease>,
     pub delay: Option<std::time::Duration>,
+    /// URL prefix this stub claims via `handles_url`. `None` means the
+    /// stub does not support URL ingest at all (`as_url_ingestable` is
+    /// `None`), which is what the "no entry handles this" test needs.
+    pub url_prefix: Option<String>,
+    /// Release returned by `fetch_by_url` for a handled URL. `None` makes
+    /// the stub report the post as missing upstream.
+    pub url_release: Option<DiscoveredRelease>,
 }
 
 #[async_trait]
@@ -401,6 +408,21 @@ impl td_source::SearchSource for StubSearchSource {
         } else {
             Vec::new()
         })
+    }
+    fn as_url_ingestable(&self) -> Option<&dyn td_source::UrlIngestSource> {
+        self.url_prefix.as_ref().map(|_| self as _)
+    }
+}
+
+#[async_trait]
+impl td_source::UrlIngestSource for StubSearchSource {
+    fn handles_url(&self, url: &str) -> bool {
+        self.url_prefix
+            .as_deref()
+            .is_some_and(|p| url.starts_with(p))
+    }
+    async fn fetch_by_url(&self, _url: &str) -> SourceResult<Option<DiscoveredRelease>> {
+        Ok(self.url_release.clone())
     }
 }
 

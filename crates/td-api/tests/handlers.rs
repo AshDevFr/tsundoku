@@ -17,7 +17,7 @@ use td_db::entities::{releases, series};
 use td_db::repos::{
     mangaupdates_id_repo, releases_repo, run_metrics_repo, series_external_ids_repo, tagging_repo,
 };
-use td_source::PollOutcome;
+use td_source::{DiscoveredRelease, PollOutcome};
 use tower::ServiceExt;
 
 fn open_auth() -> AuthConfig {
@@ -6878,6 +6878,8 @@ fn search_stub(name: &str, hits: Vec<td_source::DiscoveredRelease>) -> StubSearc
         name: name.into(),
         hits,
         delay: None,
+        url_prefix: None,
+        url_release: None,
     }
 }
 
@@ -7425,6 +7427,176 @@ async fn global_search_runs_carry_series_titles() {
             Request::builder()
                 .uri("/api/v1/search/runs")
                 .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ---- POST /releases/import (paste a post URL) ----------------------------
+
+fn ingest_stub(name: &str, prefix: &str, release: Option<DiscoveredRelease>) -> StubSearchSource {
+    StubSearchSource {
+        name: name.into(),
+        hits: vec![],
+        delay: None,
+        url_prefix: Some(prefix.into()),
+        url_release: release,
+    }
+}
+
+async fn post_import(app: axum::Router, body: &str) -> axum::response::Response {
+    app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/releases/import")
+            .header(header::AUTHORIZATION, "Bearer write-token")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn import_persists_and_resolves_a_pasted_url() {
+    let db = fresh_db().await;
+    let app = build_app_with_search(
+        db.clone(),
+        open_auth(),
+        vec![(
+            ingest_stub(
+                "nyaa-search",
+                "https://nyaa.si/",
+                Some(sample_release("991", "nyaa-search", "Chainsaw Man v01")),
+            ),
+            true,
+        )],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+
+    let resp = post_import(app, r#"{"url":"https://nyaa.si/view/991"}"#).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["alreadyKnown"], false);
+    assert_eq!(body["release"]["externalId"], "991");
+    assert_eq!(body["release"]["title"], "Chainsaw Man v01");
+    assert_eq!(body["release"]["sourceName"], "nyaa-search");
+    // The resolver ran: the row carries a decided status rather than the
+    // `unresolved` default a bare insert would leave.
+    assert!(
+        body["release"]["resolutionStatus"].is_string(),
+        "expected a resolution status, got {body}"
+    );
+
+    // Row is really in the catalog, keyed the same way a poll would key it.
+    let stored = td_db::repos::releases_repo::find_by_id(
+        &db,
+        &td_db::repos::releases_repo::id_for("test", "991"),
+    )
+    .await
+    .unwrap();
+    assert!(stored.is_some(), "release was not persisted");
+}
+
+#[tokio::test]
+async fn import_reports_already_known_without_creating_a_duplicate() {
+    let db = fresh_db().await;
+    let release = sample_release("991", "nyaa-search", "Chainsaw Man v01");
+    let entries = || {
+        vec![(
+            ingest_stub("nyaa-search", "https://nyaa.si/", Some(release.clone())),
+            true,
+        )]
+    };
+    let locks = std::sync::Arc::new(td_scheduler::JobLocks::default());
+
+    let first = post_import(
+        build_app_with_search(db.clone(), open_auth(), entries(), locks.clone()),
+        r#"{"url":"https://nyaa.si/view/991"}"#,
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(body_json(first).await["alreadyKnown"], false);
+
+    let second = post_import(
+        build_app_with_search(db.clone(), open_auth(), entries(), locks),
+        r#"{"url":"https://nyaa.si/view/991"}"#,
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let body = body_json(second).await;
+    assert_eq!(body["alreadyKnown"], true);
+    assert_eq!(body["release"]["externalId"], "991");
+
+    let count = releases::Entity::find().all(&db).await.unwrap().len();
+    assert_eq!(count, 1, "second import duplicated the release");
+}
+
+#[tokio::test]
+async fn import_rejects_a_url_no_entry_recognizes() {
+    let db = fresh_db().await;
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![(
+            ingest_stub(
+                "nyaa-search",
+                "https://nyaa.si/",
+                Some(sample_release("1", "nyaa-search", "x")),
+            ),
+            true,
+        )],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = post_import(app, r#"{"url":"https://example.org/view/1"}"#).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn import_is_not_found_when_the_upstream_has_no_such_post() {
+    let db = fresh_db().await;
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![(ingest_stub("nyaa-search", "https://nyaa.si/", None), true)],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = post_import(app, r#"{"url":"https://nyaa.si/view/404404"}"#).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn import_is_misconfigured_without_any_search_entries() {
+    let db = fresh_db().await;
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = post_import(app, r#"{"url":"https://nyaa.si/view/991"}"#).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn import_requires_admin_token() {
+    let db = fresh_db().await;
+    let app = build_app_with_search(
+        db,
+        open_auth(),
+        vec![(ingest_stub("nyaa-search", "https://nyaa.si/", None), true)],
+        std::sync::Arc::new(td_scheduler::JobLocks::default()),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/releases/import")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"url":"https://nyaa.si/view/991"}"#))
                 .unwrap(),
         )
         .await

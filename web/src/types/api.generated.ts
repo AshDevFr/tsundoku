@@ -526,6 +526,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/releases/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a single release by pasting its post URL, for a release the polled
+         *     feeds never surfaced (an old post, or one outside the configured
+         *     filters).
+         * @description The URL is handed to the first `[[search]]` entry that recognizes it.
+         *     The fetched release then goes through the same persist + resolve path
+         *     as a polled or searched one, and is deliberately *not* linked to any
+         *     particular series: the resolver and the review queue decide, exactly as
+         *     they would for a feed discovery.
+         */
+        post: operations["import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/releases/re-enrich": {
         parameters: {
             query?: never;
@@ -1789,6 +1815,18 @@ export interface components {
             externalIds: components["schemas"]["ExternalIdMapCount"][];
             /** @description State of the persisted MangaUpdates legacy → modern slug cache. */
             mangaupdatesRedirectCache: components["schemas"]["MangaupdatesRedirectStats"];
+        };
+        ImportReleaseRequest: {
+            /** @description A post URL from a configured upstream (e.g. a Nyaa `/view/N` page). */
+            url: string;
+        };
+        ImportReleaseResponse: {
+            /**
+             * @description `true` when the catalog already held this release. Nothing was
+             *     re-fetched or re-resolved; use `POST /releases/{id}/retry` for that.
+             */
+            alreadyKnown: boolean;
+            release: components["schemas"]["ReleaseDto"];
         };
         /**
          * @description Currently-running marker hung off each source / provider listing entry
@@ -3758,6 +3796,57 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BulkRetryResponse"];
                 };
+            };
+        };
+    };
+    import: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportReleaseRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportReleaseResponse"];
+                };
+            };
+            /** @description No configured entry recognizes this URL */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The upstream has no such post */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Upstream unreachable or unreadable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No [[search]] entries configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

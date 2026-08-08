@@ -162,7 +162,7 @@ fn collect_text(el: &ElementRef<'_>) -> String {
     el.text().collect::<String>()
 }
 
-fn absolutize(base: &str, href: &str) -> String {
+pub(crate) fn absolutize(base: &str, href: &str) -> String {
     if href.starts_with("http://") || href.starts_with("https://") {
         return href.to_string();
     }

@@ -950,6 +950,55 @@
         ]
       }
     },
+    "/api/v1/releases/import": {
+      "post": {
+        "tags": [
+          "releases"
+        ],
+        "summary": "Add a single release by pasting its post URL, for a release the polled\nfeeds never surfaced (an old post, or one outside the configured\nfilters).",
+        "description": "The URL is handed to the first `[[search]]` entry that recognizes it.\nThe fetched release then goes through the same persist + resolve path\nas a polled or searched one, and is deliberately *not* linked to any\nparticular series: the resolver and the review queue decide, exactly as\nthey would for a feed discovery.",
+        "operationId": "import",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportReleaseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No configured entry recognizes this URL"
+          },
+          "404": {
+            "description": "The upstream has no such post"
+          },
+          "502": {
+            "description": "Upstream unreachable or unreadable"
+          },
+          "503": {
+            "description": "No [[search]] entries configured"
+          }
+        },
+        "security": [
+          {
+            "admin": []
+          }
+        ]
+      }
+    },
     "/api/v1/releases/re-enrich": {
       "post": {
         "tags": [
@@ -3914,6 +3963,34 @@
           "mangaupdatesRedirectCache": {
             "$ref": "#/components/schemas/MangaupdatesRedirectStats",
             "description": "State of the persisted MangaUpdates legacy → modern slug cache."
+          }
+        }
+      },
+      "ImportReleaseRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "A post URL from a configured upstream (e.g. a Nyaa `/view/N` page)."
+          }
+        }
+      },
+      "ImportReleaseResponse": {
+        "type": "object",
+        "required": [
+          "alreadyKnown",
+          "release"
+        ],
+        "properties": {
+          "alreadyKnown": {
+            "type": "boolean",
+            "description": "`true` when the catalog already held this release. Nothing was\nre-fetched or re-resolved; use `POST /releases/{id}/retry` for that."
+          },
+          "release": {
+            "$ref": "#/components/schemas/ReleaseDto"
           }
         }
       },

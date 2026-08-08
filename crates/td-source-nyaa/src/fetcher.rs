@@ -60,7 +60,10 @@ impl Fetcher {
         }
     }
 
-    pub async fn fetch_detail(&self, url: &str) -> Result<String> {
+    /// Fetch a post's detail page. `Ok(None)` means the upstream says the
+    /// post does not exist (404) — a normal outcome for a deleted post or
+    /// a mistyped id, distinct from the transport failures that error.
+    pub async fn fetch_detail(&self, url: &str) -> Result<Option<String>> {
         let resp = self
             .http
             .get(url)
@@ -68,11 +71,15 @@ impl Fetcher {
             .send()
             .await
             .with_context(|| format!("GET {url}"))?;
+        if resp.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if !resp.status().is_success() {
             return Err(anyhow!("HTTP {} from {url}", resp.status().as_u16()));
         }
         resp.text()
             .await
+            .map(Some)
             .with_context(|| format!("reading detail body from {url}"))
     }
 

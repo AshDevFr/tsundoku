@@ -9,7 +9,7 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -153,5 +153,69 @@ describe("AdminSourcesListPage search endpoints", () => {
     expect(
       screen.queryByTestId("search-endpoints-section"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("AdminSourcesListPage import by url", () => {
+  beforeEach(() => {
+    resetSearch();
+    useAdminAuth.getState().setToken(ADMIN_TEST_TOKEN);
+  });
+  afterEach(() => {
+    useAdminAuth.getState().clear();
+  });
+
+  it("imports a pasted post url and reports the resolution outcome", async () => {
+    renderPage();
+
+    const input = await screen.findByTestId("import-release-url");
+    fireEvent.change(input, {
+      target: { value: "https://nyaa.si/view/2111533" },
+    });
+    fireEvent.click(screen.getByTestId("import-release-submit"));
+
+    const result = await screen.findByTestId("import-release-result");
+    expect(result).toHaveTextContent("ReZero - Starting Life in Another World");
+    expect(result).toHaveTextContent("resolved");
+  });
+
+  it("flags a url the catalog already holds", async () => {
+    renderPage();
+
+    const input = await screen.findByTestId("import-release-url");
+    fireEvent.change(input, {
+      target: { value: "https://nyaa.si/view/known" },
+    });
+    fireEvent.click(screen.getByTestId("import-release-submit"));
+
+    expect(
+      await screen.findByTestId("import-release-result"),
+    ).toHaveTextContent(/already/i);
+  });
+
+  it("surfaces the server's message when the url is not recognized", async () => {
+    renderPage();
+
+    const input = await screen.findByTestId("import-release-url");
+    fireEvent.change(input, {
+      target: { value: "https://example.org/view/1" },
+    });
+    fireEvent.click(screen.getByTestId("import-release-submit"));
+
+    expect(await screen.findByTestId("import-release-error")).toHaveTextContent(
+      /recognize/i,
+    );
+  });
+
+  it("keeps the submit button disabled until a url is entered", async () => {
+    renderPage();
+    expect(await screen.findByTestId("import-release-submit")).toBeDisabled();
+  });
+
+  it("hides the card when no search entries are configured", async () => {
+    seedSearchEntries([]);
+    renderPage();
+    await screen.findByText(/No sources registered/);
+    expect(screen.queryByTestId("import-release-card")).not.toBeInTheDocument();
   });
 });

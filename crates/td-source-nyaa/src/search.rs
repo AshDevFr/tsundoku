@@ -14,7 +14,7 @@ use std::time::Duration;
 use anyhow::Context;
 use async_trait::async_trait;
 use td_http::HttpLimiter;
-use td_source::{DiscoveredRelease, SearchSource, SourceError, SourceResult};
+use td_source::{DiscoveredRelease, SearchSource, SourceError, SourceResult, UrlIngestSource};
 
 use crate::SOURCE_KIND;
 use crate::fetcher::Fetcher;
@@ -117,6 +117,106 @@ impl SearchSource for NyaaSearch {
         .await;
         Ok(())
     }
+
+    fn as_url_ingestable(&self) -> Option<&dyn UrlIngestSource> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl UrlIngestSource for NyaaSearch {
+    fn handles_url(&self, url: &str) -> bool {
+        post_id_from_url(url, &self.cfg.site_base_url).is_some()
+    }
+
+    async fn fetch_by_url(&self, url: &str) -> SourceResult<Option<DiscoveredRelease>> {
+        let external_id = post_id_from_url(url, &self.cfg.site_base_url)
+            .ok_or_else(|| self.malformed(format!("{url:?} is not a nyaa post url")))?;
+        // Always the canonical `/view/N` form, never the pasted string:
+        // `releases.link` is unique and the feed/listing path stores
+        // exactly this, so a link pasted with a query string or a
+        // `/download/N.torrent` shape must still dedupe against it.
+        let link = format!(
+            "{}/view/{external_id}",
+            self.cfg.site_base_url.trim_end_matches('/')
+        );
+
+        let html = match self
+            .fetcher
+            .fetch_detail(&link)
+            .await
+            .map_err(|e| self.unavailable(e))?
+        {
+            Some(html) => html,
+            None => return Ok(None),
+        };
+        let detail = crate::detail::parse_detail(&html, &self.cfg.site_base_url)
+            .map_err(|e| self.malformed(format!("parsing detail page {link}: {e}")))?;
+
+        // The detail page is the only input here, so a missing title means
+        // we didn't get a post page (upstream reshuffle, an interstitial,
+        // a login wall). Persisting a titleless release would poison the
+        // resolver, so fail loudly instead.
+        let title = detail
+            .title
+            .ok_or_else(|| self.malformed(format!("no post title on {link}")))?;
+
+        tracing::info!(
+            search = %self.cfg.name,
+            external_id = %external_id,
+            link = %link,
+            "fetched nyaa release by url"
+        );
+
+        Ok(Some(DiscoveredRelease {
+            source_kind: SOURCE_KIND.into(),
+            source_name: self.cfg.name.clone(),
+            external_id,
+            title,
+            link,
+            magnet: detail.magnet,
+            torrent_url: detail.torrent_url,
+            ddl_url: None,
+            info_hash: detail.info_hash,
+            size_bytes: detail.size_bytes,
+            files: detail.files,
+            description_html: detail.description_html,
+            external_links: detail.external_links,
+            comment_suggested_links: detail.comment_suggested_links,
+            information_url: detail.information_url,
+            // A post page without a usable date is malformed enough that
+            // we'd rather have the row than reject it; stamp "now" so the
+            // release still sorts sensibly.
+            posted_at: detail.posted_at.unwrap_or_else(chrono::Utc::now),
+        }))
+    }
+}
+
+/// Post id from a pasted Nyaa URL, or `None` if `url` is not a post URL on
+/// the configured site. Accepts both the page (`/view/N`) and the torrent
+/// (`/download/N.torrent`) shapes, with or without a query string.
+///
+/// The host must match `site_base_url` exactly: sukebei is a different
+/// site on a subdomain, and an operator pasting the wrong one should get a
+/// clear "no source handles this" rather than a 404 from the wrong host.
+fn post_id_from_url(url: &str, site_base_url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url.trim()).ok()?;
+    let base = url::Url::parse(site_base_url).ok()?;
+    if parsed.host_str()? != base.host_str()? {
+        return None;
+    }
+    let mut segments = parsed.path_segments()?;
+    match segments.next()? {
+        "view" | "download" => {}
+        _ => return None,
+    }
+    // The id is the leading digit run of the segment: `/view/2111533` is
+    // bare, `/download/2111533.torrent` carries an extension.
+    let segment = segments.next()?;
+    let end = segment
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(segment.len());
+    (end > 0).then(|| segment[..end].to_string())
 }
 
 /// Build the results URL for one (query, page) pair: keep the configured

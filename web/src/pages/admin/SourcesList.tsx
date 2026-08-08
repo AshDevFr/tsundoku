@@ -10,11 +10,13 @@ import {
   Stack,
   Table,
   Text,
+  TextInput,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { Link } from "@tanstack/react-router";
-import { usePollAllSources } from "@/api/mutations";
+import { useState } from "react";
+import { useImportRelease, usePollAllSources } from "@/api/mutations";
 import {
   useGlobalSearchRuns,
   useSearchEntries,
@@ -98,8 +100,120 @@ export function AdminSourcesListPage() {
         </SimpleGrid>
       )}
 
+      <ImportReleaseCard />
       <SearchEndpointsSection />
       <GlobalRecentSearches />
+    </Stack>
+  );
+}
+
+const RESOLUTION_COLOR: Record<string, string> = {
+  resolved: "green",
+  ambiguous: "yellow",
+  review_pending: "yellow",
+  unresolved: "orange",
+  rejected: "red",
+  standalone: "gray",
+};
+
+/// Add one release by pasting its post URL, for something the polled feeds
+/// never surfaced (an older post, or one outside the configured filters).
+/// The URL goes to whichever `[[search]]` entry recognizes it and then
+/// through the normal resolve path, so the outcome can be any of the usual
+/// statuses — including a trip to the review queue.
+///
+/// Shares the search endpoints' self-gating: with no `[[search]]` entries
+/// there is nothing that could handle a URL, so the card stays hidden.
+function ImportReleaseCard() {
+  const entries = useSearchEntries();
+  const importRelease = useImportRelease();
+  const [url, setUrl] = useState("");
+
+  if ((entries.data?.items.length ?? 0) === 0) return null;
+
+  const trimmed = url.trim();
+  const result = importRelease.data;
+
+  const submit = () => {
+    if (!trimmed) return;
+    importRelease.mutate(trimmed, { onSuccess: () => setUrl("") });
+  };
+
+  return (
+    <Stack gap="xs" data-testid="import-release-card">
+      <Stack gap={2}>
+        <Title order={4}>Add a release by link</Title>
+        <Text size="sm" c="dimmed">
+          Paste a post URL from a configured search endpoint. It is fetched,
+          stored, and resolved exactly like a polled release — unmatched ones
+          land in the review queue.
+        </Text>
+      </Stack>
+      <Paper withBorder radius="md" p="sm">
+        <Stack gap="sm">
+          <Group gap="xs" align="flex-end" wrap="nowrap">
+            <TextInput
+              flex={1}
+              label="Post URL"
+              placeholder="https://nyaa.si/view/1234567"
+              value={url}
+              onChange={(e) => setUrl(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+              data-testid="import-release-url"
+            />
+            <Button
+              onClick={submit}
+              loading={importRelease.isPending}
+              disabled={!trimmed}
+              data-testid="import-release-submit"
+            >
+              Add
+            </Button>
+          </Group>
+
+          {importRelease.isError && (
+            <Alert
+              color="red"
+              title="Import failed"
+              data-testid="import-release-error"
+            >
+              {(importRelease.error as Error).message}
+            </Alert>
+          )}
+
+          {result && (
+            <Alert
+              color={result.alreadyKnown ? "gray" : "green"}
+              title={result.alreadyKnown ? "Already in the catalog" : "Added"}
+              data-testid="import-release-result"
+            >
+              <Group gap="xs" wrap="wrap">
+                <Text size="sm">{result.release.title}</Text>
+                <Badge
+                  size="xs"
+                  variant="light"
+                  color={
+                    RESOLUTION_COLOR[result.release.resolutionStatus] ?? "gray"
+                  }
+                >
+                  {result.release.resolutionStatus}
+                </Badge>
+                {result.release.seriesId != null && (
+                  <Link
+                    to="/series/$id"
+                    params={{ id: String(result.release.seriesId) }}
+                    style={{ textDecoration: "none" }}
+                  >
+                    <Text size="sm" c="blue.4">
+                      view series
+                    </Text>
+                  </Link>
+                )}
+              </Group>
+            </Alert>
+          )}
+        </Stack>
+      </Paper>
     </Stack>
   );
 }

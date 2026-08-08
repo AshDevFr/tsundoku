@@ -59,6 +59,7 @@ pub fn router(state: AppState, cfg: &AppConfig) -> Router {
         .route("/releases/{id}/reject", post(releases::reject))
         .route("/releases/{id}/keep", post(releases::keep))
         .route("/releases/{id}/retry", post(releases::retry))
+        .route("/releases/import", post(releases::import))
         .route("/releases/retry-all", post(releases::retry_all))
         .route("/releases/bulk/reject", post(releases::bulk_reject))
         .route("/releases/bulk/retry", post(releases::bulk_retry))

@@ -724,3 +724,21 @@ export function useRecomputeSpans() {
     },
   });
 }
+
+/// Add a single release by pasting its post URL, for something the polled
+/// feeds never surfaced. Resolves synchronously, so the caller gets the
+/// outcome (and whether the catalog already held it) in the response.
+export function useImportRelease() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (url: string) => {
+      const { data, error } = await api.POST("/api/v1/releases/import", {
+        body: { url },
+      });
+      if (error)
+        throw new Error(describeError(error, "failed to import release"));
+      return data;
+    },
+    onSuccess: () => invalidateReleaseQueries(qc),
+  });
+}

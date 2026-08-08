@@ -44,6 +44,42 @@ pub trait SearchSource: Send + Sync {
     async fn enrich(&self, _release: &mut DiscoveredRelease) -> SourceResult<()> {
         Ok(())
     }
+
+    /// Downcast to [`UrlIngestSource`] if this upstream can turn one of its
+    /// post URLs into a release. Returns `None` for upstreams that only
+    /// answer free-text queries.
+    ///
+    /// Mirrors [`crate::DiscoverySource::as_backfillable`]: the capability
+    /// is optional, so callers dispatch on the accessor instead of string-
+    /// matching on `kind()`. Default is `None`; opt in by overriding.
+    fn as_url_ingestable(&self) -> Option<&dyn UrlIngestSource> {
+        None
+    }
+}
+
+/// Opt-in companion to [`SearchSource`]: an upstream that can produce a
+/// single [`DiscoveredRelease`] from one of its post URLs, with no feed or
+/// listing row to start from.
+///
+/// Backs the operator's "paste a link" action. Output goes through the
+/// same persist + resolve pipeline as poll and search output, and is
+/// deliberately not linked to any particular series — the resolver and the
+/// review queue decide, exactly as they do for a polled release.
+#[async_trait]
+pub trait UrlIngestSource: Send + Sync {
+    /// Whether `url` is one of this upstream's post URLs. Pure and cheap:
+    /// callers use it to pick which registered entry to hand the URL to,
+    /// so it must not perform I/O.
+    fn handles_url(&self, url: &str) -> bool;
+
+    /// Fetch and parse the release at `url`. Only called with URLs that
+    /// [`Self::handles_url`] accepted.
+    ///
+    /// `Ok(None)` means the upstream has no such post (deleted, or a bad
+    /// id). Transport failures are `Unavailable`; a page that was fetched
+    /// but couldn't be read as a post is `Malformed` — that means the
+    /// upstream changed shape and should surface loudly.
+    async fn fetch_by_url(&self, url: &str) -> SourceResult<Option<DiscoveredRelease>>;
 }
 
 #[derive(thiserror::Error, Debug)]
