@@ -721,6 +721,59 @@ export function useReleaseGroups(
 /// Releases the operator marked `standalone` — worthwhile one-shots (a
 /// guidebook, an artbook) that are deliberately not tracked as a series.
 /// Backed by the generic release list filtered to `status=standalone`.
+export interface ReleaseSearchFilters {
+  /// Free text: a pasted post URL or bare source id resolves to that exact
+  /// release, anything else is a token-AND title match.
+  q?: string;
+  /// Any resolution status, `rejected` included — this is the only surface
+  /// that reaches those.
+  status?: string;
+  sourceName?: string;
+  format?: string;
+  sort?: string;
+  /// Provider + id pair narrowing to the series carrying that mapping. Both
+  /// are required for the filter to apply.
+  provider?: string;
+  externalId?: string;
+  page?: number;
+}
+
+/// Catalog-wide release search backing the admin Releases page. Distinct from
+/// `useUnresolvedReleases`, which is hard-scoped to the three review-queue
+/// statuses.
+export function useReleaseSearch(
+  filters: ReleaseSearchFilters,
+  pageSize = DEFAULT_REVIEW_PAGE_SIZE,
+) {
+  const trimmedQ = filters.q?.trim();
+  const externalId = filters.externalId?.trim();
+  return useQuery({
+    queryKey: ["releases-search", filters, pageSize],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/api/v1/releases", {
+        params: {
+          query: {
+            page: filters.page ?? 1,
+            pageSize,
+            q: trimmedQ || undefined,
+            status: filters.status || undefined,
+            sourceName: filters.sourceName || undefined,
+            format: filters.format || undefined,
+            sort: filters.sort || undefined,
+            // Only meaningful as a pair; sending one alone would be ignored
+            // server-side anyway, but keep the URL/cache key clean.
+            provider: externalId ? filters.provider || undefined : undefined,
+            externalId: filters.provider ? externalId || undefined : undefined,
+          },
+        },
+      });
+      if (error) throw new Error("failed to load releases");
+      return data;
+    },
+    placeholderData: (prev) => prev,
+  });
+}
+
 export function useKeptReleases(page = 1, pageSize = DEFAULT_REVIEW_PAGE_SIZE) {
   return useQuery({
     queryKey: ["releases-kept", page, pageSize],

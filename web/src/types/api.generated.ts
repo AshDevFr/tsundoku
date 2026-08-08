@@ -3726,12 +3726,35 @@ export interface operations {
                 pageSize?: number;
                 /**
                  * @description Filter by resolution status (`resolved`, `unresolved`, `ambiguous`,
-                 *     `review_pending`, `rejected`, `standalone`).
+                 *     `review_pending`, `rejected`, `standalone`). Unlike the review queue,
+                 *     no status is off-limits here — reaching a `rejected` release is the
+                 *     point of this endpoint.
                  */
                 status?: string;
                 sourceKind?: string;
                 sourceName?: string;
                 seriesId?: number;
+                /**
+                 * @description Free text. A pasted post URL or a bare source id resolves to that exact
+                 *     release; anything else is a token-AND title match. See
+                 *     [`release_search_filter`].
+                 */
+                q?: string;
+                /** @description Restrict to releases carrying this file format (e.g. `cbz`, `epub`). */
+                format?: string;
+                /**
+                 * @description Result ordering, sharing the review queue's vocabulary: `observed_desc`
+                 *     (default), `observed_asc`, `posted_desc`, `posted_asc`, `title_asc`,
+                 *     `title_desc`.
+                 */
+                sort?: string;
+                /**
+                 * @description Together with [`Self::external_id`], narrow to the releases linked to
+                 *     the series carrying that provider mapping — "everything we hold for
+                 *     MangaBaka 6734". Ignored unless both are present.
+                 */
+                provider?: string;
+                externalId?: string;
             };
             header?: never;
             path?: never;

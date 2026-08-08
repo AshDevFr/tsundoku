@@ -790,7 +790,7 @@
           {
             "name": "status",
             "in": "query",
-            "description": "Filter by resolution status (`resolved`, `unresolved`, `ambiguous`,\n`review_pending`, `rejected`, `standalone`).",
+            "description": "Filter by resolution status (`resolved`, `unresolved`, `ambiguous`,\n`review_pending`, `rejected`, `standalone`). Unlike the review queue,\nno status is off-limits here — reaching a `rejected` release is the\npoint of this endpoint.",
             "required": false,
             "schema": {
               "type": "string"
@@ -819,6 +819,50 @@
             "schema": {
               "type": "integer",
               "format": "int32"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Free text. A pasted post URL or a bare source id resolves to that exact\nrelease; anything else is a token-AND title match. See\n[`release_search_filter`].",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Restrict to releases carrying this file format (e.g. `cbz`, `epub`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Result ordering, sharing the review queue's vocabulary: `observed_desc`\n(default), `observed_asc`, `posted_desc`, `posted_asc`, `title_asc`,\n`title_desc`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "description": "Together with [`Self::external_id`], narrow to the releases linked to\nthe series carrying that provider mapping — \"everything we hold for\nMangaBaka 6734\". Ignored unless both are present.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "externalId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],

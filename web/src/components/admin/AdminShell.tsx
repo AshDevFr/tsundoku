@@ -31,6 +31,7 @@ const NAV: NavEntry[] = [
   { label: "Review", to: "/admin/review" },
   { label: "Wishlist", to: "/admin/wishlist" },
   { label: "Kept", to: "/admin/kept" },
+  { label: "Releases", to: "/admin/releases" },
   { label: "Sources", to: "/admin/sources", matchPrefix: "/admin/sources" },
   {
     label: "Providers",

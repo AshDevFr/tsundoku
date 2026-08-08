@@ -832,6 +832,315 @@ async fn series_lookup_400s_when_params_missing() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// A raw `title LIKE '%q%'` needs a contiguous substring, which real release
+/// titles defeat: they interleave the series name with volume spans, years,
+/// and group tags. Typing two words that both appear must match.
+#[tokio::test]
+async fn review_queue_q_matches_tokens_out_of_order() {
+    let db = fresh_db().await;
+    let r = sample_release(
+        "1",
+        "feed",
+        "My Quiet Blacksmith Life in Another World v01-05 (2024-2025) (Digital) (TooManyIsekai)",
+    );
+    releases_repo::persist_discovered(&db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let total_for = |q: &str| {
+        let app = app.clone();
+        let uri = format!("/api/v1/releases/unresolved?q={q}");
+        async move {
+            let resp = app
+                .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_json(resp).await["total"].as_u64().unwrap()
+        }
+    };
+
+    // Contiguous substring: worked before, must keep working.
+    assert_eq!(total_for("Quiet%20Blacksmith").await, 1);
+    // Tokens separated by other words — 0 under a raw substring match.
+    assert_eq!(total_for("Blacksmith%20v01").await, 1);
+    assert_eq!(total_for("Quiet%20TooManyIsekai").await, 1);
+    // Order does not matter.
+    assert_eq!(total_for("TooManyIsekai%20Quiet").await, 1);
+    // Every token must still be present.
+    assert_eq!(total_for("Blacksmith%20Chainsaw").await, 0);
+}
+
+/// Seed a release with an explicit link and status for the releases-list
+/// search tests.
+async fn seed_release_for_search(
+    db: &sea_orm::DatabaseConnection,
+    external_id: &str,
+    title: &str,
+    link: &str,
+    status: &str,
+) -> String {
+    let mut r = sample_release(external_id, "feed", title);
+    r.link = link.to_string();
+    let id = releases_repo::persist_discovered(db, &r, Utc::now().timestamp())
+        .await
+        .unwrap();
+    if status != "unresolved" {
+        releases_repo::set_resolution(db, &id, None, None, None, status, Utc::now().timestamp())
+            .await
+            .unwrap();
+    }
+    id
+}
+
+/// The releases list is the debugging surface, so unlike the review queue it
+/// must reach *every* status — `rejected` in particular has no other home in
+/// the UI at all.
+#[tokio::test]
+async fn release_list_q_searches_across_all_statuses_including_rejected() {
+    let db = fresh_db().await;
+    let rejected = seed_release_for_search(
+        &db,
+        "1",
+        "Chainsaw Man v01 (Digital) (LuCaZ)",
+        "https://nyaa.si/view/1",
+        "rejected",
+    )
+    .await;
+    let resolved = seed_release_for_search(
+        &db,
+        "2",
+        "Chainsaw Man v02 (Digital) (LuCaZ)",
+        "https://nyaa.si/view/2",
+        "resolved",
+    )
+    .await;
+    seed_release_for_search(
+        &db,
+        "3",
+        "Berserk v01",
+        "https://nyaa.si/view/3",
+        "unresolved",
+    )
+    .await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/releases?q=Chainsaw")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let ids: Vec<String> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(body["total"], 2);
+    assert!(
+        ids.contains(&rejected),
+        "rejected releases must be findable"
+    );
+    assert!(ids.contains(&resolved));
+}
+
+/// Pasting the post URL is the fastest way to answer "did we ingest this?".
+/// The stored `link` is matched exactly, which keeps this source-agnostic —
+/// no per-source URL parser to keep in sync.
+#[tokio::test]
+async fn release_list_q_resolves_a_pasted_post_url() {
+    let db = fresh_db().await;
+    let target = seed_release_for_search(
+        &db,
+        "1997229",
+        "My Quiet Blacksmith Life in Another World v01-05",
+        "https://nyaa.si/view/1997229",
+        "resolved",
+    )
+    .await;
+    seed_release_for_search(
+        &db,
+        "1997230",
+        "Something Else",
+        "https://nyaa.si/view/1997230",
+        "resolved",
+    )
+    .await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let fetch = |q: &str| {
+        let app = app.clone();
+        let uri = format!("/api/v1/releases?q={q}");
+        async move {
+            let resp = app
+                .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_json(resp).await
+        }
+    };
+
+    let by_url = fetch("https%3A%2F%2Fnyaa.si%2Fview%2F1997229").await;
+    assert_eq!(by_url["total"], 1);
+    assert_eq!(by_url["items"][0]["id"], target);
+
+    // A trailing slash is what you get from some copy paths; it must not miss.
+    let with_slash = fetch("https%3A%2F%2Fnyaa.si%2Fview%2F1997229%2F").await;
+    assert_eq!(with_slash["total"], 1);
+
+    // The bare post id works too — it is the `external_id` on the row.
+    let by_id = fetch("1997229").await;
+    assert_eq!(by_id["total"], 1);
+    assert_eq!(by_id["items"][0]["id"], target);
+}
+
+/// "Show me every release we hold for MangaBaka 6734" — resolves the pair to
+/// a series, then lists its releases.
+#[tokio::test]
+async fn release_list_filters_by_provider_external_id() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "My Quiet Blacksmith Life", "manga").await;
+    series_external_ids_repo::upsert(&db, sid, "mangabaka", "6734", 100)
+        .await
+        .unwrap();
+    let linked = seed_release_for_search(
+        &db,
+        "1",
+        "Blacksmith v01",
+        "https://nyaa.si/view/1",
+        "resolved",
+    )
+    .await;
+    releases_repo::set_resolution(
+        &db,
+        &linked,
+        Some(sid),
+        Some("manual".into()),
+        None,
+        "resolved",
+        Utc::now().timestamp(),
+    )
+    .await
+    .unwrap();
+    seed_release_for_search(
+        &db,
+        "2",
+        "Unrelated v01",
+        "https://nyaa.si/view/2",
+        "resolved",
+    )
+    .await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let fetch = |uri: String| {
+        let app = app.clone();
+        async move {
+            let resp = app
+                .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_json(resp).await
+        }
+    };
+
+    let hit = fetch("/api/v1/releases?provider=mangabaka&externalId=6734".into()).await;
+    assert_eq!(hit["total"], 1);
+    assert_eq!(hit["items"][0]["id"], linked);
+
+    // An id that maps to no series yields nothing rather than everything —
+    // a filter that silently no-ops is worse than one that returns empty.
+    let miss = fetch("/api/v1/releases?provider=mangabaka&externalId=999999".into()).await;
+    assert_eq!(miss["total"], 0);
+}
+
+#[tokio::test]
+async fn release_list_supports_status_format_and_sort() {
+    let db = fresh_db().await;
+    let mut older = sample_release("1", "feed", "Alpha v01");
+    older.files = vec!["Alpha v01.cbz".into()];
+    older.posted_at = chrono::DateTime::from_timestamp(1_000, 0).unwrap();
+    let a = releases_repo::persist_discovered(&db, &older, 1_000)
+        .await
+        .unwrap();
+    let mut newer = sample_release("2", "feed", "Beta v01");
+    newer.files = vec!["Beta v01.epub".into()];
+    newer.posted_at = chrono::DateTime::from_timestamp(9_000, 0).unwrap();
+    let b = releases_repo::persist_discovered(&db, &newer, 9_000)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let fetch = |uri: String| {
+        let app = app.clone();
+        async move {
+            let resp = app
+                .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_json(resp).await
+        }
+    };
+
+    let cbz = fetch("/api/v1/releases?format=cbz".into()).await;
+    assert_eq!(cbz["total"], 1);
+    assert_eq!(cbz["items"][0]["id"], a);
+
+    let asc = fetch("/api/v1/releases?sort=title_asc".into()).await;
+    assert_eq!(asc["items"][0]["id"], a);
+    let desc = fetch("/api/v1/releases?sort=title_desc".into()).await;
+    assert_eq!(desc["items"][0]["id"], b);
+}
+
 #[tokio::test]
 async fn release_list_returns_persisted_rows() {
     let db = fresh_db().await;

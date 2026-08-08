@@ -17,6 +17,7 @@ import { AdminMetricsPage } from "@/pages/admin/Metrics";
 import { AdminOverviewPage } from "@/pages/admin/Overview";
 import { AdminProviderDetailPage } from "@/pages/admin/ProviderDetail";
 import { AdminProvidersListPage } from "@/pages/admin/ProvidersList";
+import { AdminReleasesPage } from "@/pages/admin/Releases";
 import { AdminSourceDetailPage } from "@/pages/admin/SourceDetail";
 import { AdminSourcesListPage } from "@/pages/admin/SourcesList";
 import { FeedPage } from "@/pages/FeedPage";
@@ -221,6 +222,12 @@ export const adminMaintenanceRoute = createRoute({
   component: AdminMaintenancePage,
 });
 
+export const adminReleasesRoute = createRoute({
+  getParentRoute: () => adminLayoutRoute,
+  path: "releases",
+  component: AdminReleasesPage,
+});
+
 export const adminExportRoute = createRoute({
   getParentRoute: () => adminLayoutRoute,
   path: "export",
@@ -235,6 +242,7 @@ const routeTree = rootRoute.addChildren([
     adminOverviewRoute,
     adminReviewRoute,
     adminKeptRoute,
+    adminReleasesRoute,
     adminWishlistRoute,
     adminSourcesListRoute,
     adminSourceDetailRoute,

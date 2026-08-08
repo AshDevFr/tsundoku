@@ -1980,7 +1980,12 @@ export const handlers = [
       const body: ReleasePage = { items, page, pageSize, total: kept.length };
       return HttpResponse.json(body);
     }
-    const seriesId = Number(url.searchParams.get("seriesId"));
+    // `Number(null)` is 0, and `Number.isFinite(0)` is true — reading the param
+    // without checking presence filtered every unfiltered request down to
+    // `seriesId === 0`, i.e. nothing. Latent until a caller asked for the
+    // unfiltered list.
+    const rawSeriesId = url.searchParams.get("seriesId");
+    const seriesId = rawSeriesId === null ? Number.NaN : Number(rawSeriesId);
     const all: ReleaseDto[] = [
       {
         id: "nyaa:111",
@@ -2080,9 +2085,40 @@ export const handlers = [
         lastResolveAttemptAt: NOW - 5_700,
       },
     ];
-    const items = Number.isFinite(seriesId)
+    // Mirror the server's search filters so the Releases page exercises the
+    // real contract rather than a permissive stub.
+    const q = url.searchParams.get("q")?.trim();
+    const sourceName = url.searchParams.get("sourceName");
+    const format = url.searchParams.get("format");
+    const provider = url.searchParams.get("provider");
+    const externalId = url.searchParams.get("externalId");
+    let items = Number.isFinite(seriesId)
       ? all.filter((r) => r.seriesId === seriesId)
       : all;
+    if (status) items = items.filter((r) => r.resolutionStatus === status);
+    if (sourceName) items = items.filter((r) => r.sourceName === sourceName);
+    if (format) items = items.filter((r) => r.formats.includes(format));
+    if (q) {
+      if (q.includes("://")) {
+        const bare = q.replace(/\/+$/, "");
+        items = items.filter((r) => r.link === q || r.link === bare);
+      } else {
+        const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+        items = items.filter(
+          (r) =>
+            r.externalId === q ||
+            tokens.every((t) => r.title.toLowerCase().includes(t)),
+        );
+      }
+    }
+    // Fixture mapping mirrors the detail handler's synthetic ids (`id * 1111`).
+    if (provider && externalId) {
+      const mapped =
+        provider === "mangabaka" ? Number(externalId) / 1111 : Number.NaN;
+      items = Number.isInteger(mapped)
+        ? items.filter((r) => r.seriesId === mapped)
+        : [];
+    }
     const body: ReleasePage = {
       items,
       page: 1,
