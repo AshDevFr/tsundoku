@@ -72,6 +72,8 @@ pub async fn run(
     println!("  ambiguous       {}", summary.ambiguous);
     println!("  review_pending  {}", summary.review_pending);
     println!("  unresolved      {}", summary.unresolved);
+    // Left alone because the operator had already decided them.
+    println!("  kept decision   {}", summary.skipped);
     println!("  errors          {}", summary.errors);
     println!("  total           {}", summary.total());
 

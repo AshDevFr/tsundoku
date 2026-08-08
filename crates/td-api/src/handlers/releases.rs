@@ -1244,8 +1244,11 @@ pub async fn retry(
     if let Some(r) = state.mangaupdates_redirector.clone() {
         resolver = resolver.with_mangaupdates_redirector(r);
     }
+    // Forced: "Re-resolve" is how the operator pulls a kept or rejected
+    // release back into the pipeline, so it must override the guard that stops
+    // polls from doing the same thing behind their back.
     resolver
-        .resolve_one(&id)
+        .resolve_one_forced(&id)
         .await
         .map_err(ApiError::Internal)?;
 
@@ -1457,6 +1460,7 @@ pub async fn retry_all(
                 ambiguous = summary.ambiguous,
                 review_pending = summary.review_pending,
                 unresolved = summary.unresolved,
+                skipped = summary.skipped,
                 errors = summary.errors,
                 total = summary.total(),
                 "retry-all batch completed"
@@ -1549,6 +1553,7 @@ pub async fn bulk_retry(
                 ambiguous = summary.ambiguous,
                 review_pending = summary.review_pending,
                 unresolved = summary.unresolved,
+                skipped = summary.skipped,
                 errors = summary.errors,
                 total = summary.total(),
                 "bulk-retry batch completed"

@@ -1328,6 +1328,144 @@ async fn resolve_ids_targets_only_the_given_releases() {
 // Legacy MangaUpdates URL → modern slug normalization
 // ---------------------------------------------------------------------------
 
+/// Set an operator decision directly on a persisted release, the way the
+/// reject / keep / manual-link handlers do.
+async fn set_decision(
+    db: &DatabaseConnection,
+    id: &str,
+    status: &str,
+    path: Option<&str>,
+    series_id: Option<i32>,
+) {
+    let row = releases::ActiveModel {
+        id: Set(id.into()),
+        resolution_status: Set(status.into()),
+        resolution_path: Set(path.map(str::to_string)),
+        series_id: Set(series_id),
+        ..Default::default()
+    };
+    releases::Entity::update(row).exec(db).await.unwrap();
+}
+
+async fn stored_status(db: &DatabaseConnection, id: &str) -> (String, Option<String>, Option<i32>) {
+    let row = releases::Entity::find_by_id(id.to_string())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    (row.resolution_status, row.resolution_path, row.series_id)
+}
+
+/// An automatic resolve (poll, backfill, series search) must never overwrite a
+/// decision the operator made by hand. Without the guard, a release carried by
+/// two overlapping feeds is re-persisted and re-resolved by the *other* feed on
+/// its next tick, silently reverting the rejection.
+#[tokio::test]
+async fn automatic_resolve_leaves_rejected_releases_alone() {
+    let db = fresh_db().await;
+    insert_release(&db, "r-rej", "Chainsaw Man v1", None, &["cbz"]).await;
+    set_decision(&db, "r-rej", "rejected", Some("rejected"), None).await;
+
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let registry = build_registry(provider.clone());
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-rej").await.unwrap();
+
+    assert!(out.skipped, "an operator-decided release must be skipped");
+    assert_eq!(out.status, td_resolution::ResolutionStatus::Rejected);
+    assert!(
+        provider.calls().is_empty(),
+        "a skipped resolve must not touch the provider: {:?}",
+        provider.calls()
+    );
+    assert_eq!(
+        stored_status(&db, "r-rej").await,
+        ("rejected".into(), Some("rejected".into()), None),
+    );
+}
+
+#[tokio::test]
+async fn automatic_resolve_leaves_standalone_releases_alone() {
+    let db = fresh_db().await;
+    insert_release(&db, "r-kept", "Some Artbook", None, &["cbz"]).await;
+    set_decision(&db, "r-kept", "standalone", Some("standalone"), None).await;
+
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let registry = build_registry(provider.clone());
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-kept").await.unwrap();
+
+    assert!(out.skipped);
+    assert_eq!(out.status, td_resolution::ResolutionStatus::Standalone);
+    assert_eq!(
+        stored_status(&db, "r-kept").await,
+        ("standalone".into(), Some("standalone".into()), None),
+    );
+}
+
+/// A manual link is an operator decision even though its status is `resolved`:
+/// re-resolving would silently relink it to whatever the fuzzy step now
+/// prefers.
+#[tokio::test]
+async fn automatic_resolve_preserves_a_manual_link() {
+    let db = fresh_db().await;
+    db.execute_unprepared(
+        "INSERT INTO series (id, canonical_title, metadata_source, metadata_fetched_at,\
+         first_seen_at, last_release_at, owned) VALUES (7, 'Hand Picked', 'api', 0, 0, 0, 0)",
+    )
+    .await
+    .unwrap();
+    insert_release(&db, "r-man", "Chainsaw Man v1", None, &["cbz"]).await;
+    set_decision(&db, "r-man", "resolved", Some("manual"), Some(7)).await;
+
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let registry = build_registry(provider.clone());
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-man").await.unwrap();
+
+    assert!(out.skipped);
+    assert_eq!(
+        stored_status(&db, "r-man").await,
+        ("resolved".into(), Some("manual".into()), Some(7)),
+        "the operator's link must survive",
+    );
+}
+
+/// The guard protects against *automatic* runs only. "Re-resolve" on a kept or
+/// rejected release is exactly how the operator pulls it back into the
+/// pipeline, so an explicit retry has to override.
+#[tokio::test]
+async fn operator_triggered_resolve_overrides_the_guard() {
+    let db = fresh_db().await;
+    insert_release(&db, "r-force", "Chainsaw Man v1", None, &["cbz"]).await;
+    set_decision(&db, "r-force", "rejected", Some("rejected"), None).await;
+
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let registry = build_registry(provider.clone());
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one_forced("r-force").await.unwrap();
+
+    assert!(!out.skipped, "an explicit retry must actually run");
+    assert_ne!(
+        stored_status(&db, "r-force").await.0,
+        "rejected",
+        "the retry re-ran the pipeline and rewrote the status",
+    );
+}
+
+/// An ordinary undecided release is untouched by the guard.
+#[tokio::test]
+async fn automatic_resolve_still_runs_for_undecided_releases() {
+    let db = fresh_db().await;
+    insert_release(&db, "r-plain", "Chainsaw Man v1", None, &["cbz"]).await;
+
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let registry = build_registry(provider.clone());
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-plain").await.unwrap();
+    assert!(!out.skipped);
+}
+
 mod legacy_mu {
     //! Drives a local TCP listener that returns canned HTTP responses, so
     //! the resolver can exercise the full legacy-id translation path:

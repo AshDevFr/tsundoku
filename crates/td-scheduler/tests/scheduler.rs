@@ -291,6 +291,102 @@ async fn poll_tick_persists_releases_and_updates_source_state() {
     assert_eq!(run.progress_current, Some(2));
 }
 
+/// End-to-end version of the guard: a release the operator rejected is
+/// re-surfaced by a feed (which is what overlapping Nyaa feeds do on every
+/// tick, since the dedup hint is keyed on a single `source_name`), gets
+/// re-persisted, and must come out the other side still rejected.
+#[tokio::test]
+async fn poll_tick_preserves_operator_decisions_on_re_persisted_releases() {
+    use sea_orm::{ActiveModelTrait, Set};
+    let db = fresh_db().await;
+
+    let release = discovered_release("trusted", "ext-1", "Chainsaw Man");
+    let make_source = || {
+        Arc::new(FakeSource::new(
+            "trusted",
+            "fake",
+            PollOutcome {
+                releases: vec![discovered_release("trusted", "ext-1", "Chainsaw Man")],
+                new_etag: None,
+                new_cursor: None,
+                not_modified: false,
+            },
+        ))
+    };
+    let provider = Arc::new(FakeProvider::new("mangabaka", RefreshStatus::NotSupported));
+
+    // First tick: the release lands and resolves normally.
+    jobs::poll_source::run_tick(
+        make_source() as Arc<dyn DiscoverySource>,
+        db.clone(),
+        build_registry(provider.clone()),
+        IngestionConfig::default(),
+        Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
+        None,
+        detached_events(),
+        "cron",
+    )
+    .await;
+
+    let id = td_db::repos::releases_repo::id_for(&release.source_kind, &release.external_id);
+    // The operator rejects it.
+    td_db::entities::releases::ActiveModel {
+        id: Set(id.clone()),
+        resolution_status: Set("rejected".into()),
+        resolution_path: Set(Some("rejected".into())),
+        series_id: Set(None),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+    let attempts_before = td_db::entities::releases::Entity::find_by_id(id.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .resolution_attempts;
+
+    // Second tick re-persists the same post — a sibling feed carrying it, or
+    // this feed after the row aged out of the dedup window.
+    jobs::poll_source::run_tick(
+        make_source() as Arc<dyn DiscoverySource>,
+        db.clone(),
+        build_registry(provider),
+        IngestionConfig::default(),
+        Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
+        None,
+        detached_events(),
+        "cron",
+    )
+    .await;
+
+    let row = td_db::entities::releases::Entity::find_by_id(id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.resolution_status, "rejected",
+        "the poll must not revert an operator decision",
+    );
+    assert_eq!(
+        row.resolution_attempts, attempts_before,
+        "a skipped resolve must not bump the attempt counter either",
+    );
+
+    // The skip is surfaced rather than silently counted as a failure.
+    let state = sources_repo::get(&db, "fake", "trusted")
+        .await
+        .unwrap()
+        .expect("source_state row");
+    let summary = state.last_summary.unwrap_or_default();
+    assert!(
+        summary.contains("1 kept_operator_decision"),
+        "got {summary:?}",
+    );
+}
+
 #[tokio::test]
 async fn poll_tick_batches_persists_across_chunks_with_uneven_tail() {
     // 5 releases with batch_size=2 → chunks of (2, 2, 1). All 5 must

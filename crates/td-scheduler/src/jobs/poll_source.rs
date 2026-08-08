@@ -247,6 +247,7 @@ pub async fn run_tick(
     let mut persist_errors = 0usize;
     let mut enrich_errors = 0usize;
     let mut resolve_errors = 0usize;
+    let mut resolve_skipped = 0usize;
     let mut breakdown = OutcomeBreakdown::default();
     let mut processed = 0usize;
     let mut enrich_total_ms: u128 = 0;
@@ -286,6 +287,12 @@ pub async fn run_tick(
                     let res = resolver.resolve_one(id).await;
                     resolve_total_ms += started.elapsed().as_millis();
                     match res {
+                        // A skip is neither a success nor a failure: the
+                        // release carries an operator decision and the
+                        // resolver declined to touch it. Counting it in the
+                        // breakdown would inflate `failed` on the metrics
+                        // card, so tally it separately for the summary line.
+                        Ok(o) if o.skipped => resolve_skipped += 1,
                         Ok(o) => breakdown.record(&o),
                         Err(e) => {
                             tracing::warn!(error = ?e, release_id = %id, "resolver failed; leaving release unresolved");
@@ -332,6 +339,7 @@ pub async fn run_tick(
         persist_errors,
         enrich_errors,
         resolve_errors,
+        resolve_skipped,
         outcome.not_modified,
     );
     tracing::info!(source = %name, %summary, "poll tick complete");
@@ -552,6 +560,7 @@ fn build_summary(
     persist_errors: usize,
     enrich_errors: usize,
     resolve_errors: usize,
+    resolve_skipped: usize,
     not_modified: bool,
 ) -> String {
     if not_modified {
@@ -566,6 +575,12 @@ fn build_summary(
     }
     if resolve_errors > 0 {
         s.push_str(&format!(", {resolve_errors} resolve_errors"));
+    }
+    // Operator-decided releases the resolver declined to touch. Surfaced
+    // because a non-zero count here means overlapping feeds are still
+    // re-persisting decided rows — the churn `release_sources` addresses.
+    if resolve_skipped > 0 {
+        s.push_str(&format!(", {resolve_skipped} kept_operator_decision"));
     }
     s
 }

@@ -64,8 +64,17 @@ pub struct ResolutionOutcome {
     pub status: ResolutionStatus,
     /// Surfaced for tests and logging; not persisted directly.
     pub reason: Option<String>,
+    /// The resolver declined to run because the release carries an operator
+    /// decision and the trigger was automatic. **Nothing was written** — the
+    /// other fields describe the release's existing state, not a new outcome,
+    /// and `resolution_attempts` was not bumped.
+    pub skipped: bool,
 }
 
+/// A release's persisted resolution status. Covers the full stored vocabulary,
+/// including the two the *operator* writes (`rejected` / `standalone`) rather
+/// than the resolver — the pipeline has to be able to name those to refuse to
+/// overwrite them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolutionStatus {
     Resolved,
@@ -76,6 +85,12 @@ pub enum ResolutionStatus {
     /// recorded in `review_candidates`.
     ReviewPending,
     Unresolved,
+    /// Operator decision: not a series worth tracking. Never written by the
+    /// pipeline.
+    Rejected,
+    /// Operator decision: a worthwhile one-shot, deliberately not a series.
+    /// Never written by the pipeline.
+    Standalone,
 }
 
 impl ResolutionStatus {
@@ -85,9 +100,48 @@ impl ResolutionStatus {
             ResolutionStatus::Ambiguous => "ambiguous",
             ResolutionStatus::ReviewPending => "review_pending",
             ResolutionStatus::Unresolved => "unresolved",
+            ResolutionStatus::Rejected => "rejected",
+            ResolutionStatus::Standalone => "standalone",
+        }
+    }
+
+    /// Parse a stored `releases.resolution_status`. Unknown values read as
+    /// [`Self::Unresolved`], which is the safe default: it is the one status
+    /// the pipeline is always willing to act on.
+    pub fn from_db(s: &str) -> Self {
+        match s {
+            "resolved" => ResolutionStatus::Resolved,
+            "ambiguous" => ResolutionStatus::Ambiguous,
+            "review_pending" => ResolutionStatus::ReviewPending,
+            "rejected" => ResolutionStatus::Rejected,
+            "standalone" => ResolutionStatus::Standalone,
+            _ => ResolutionStatus::Unresolved,
         }
     }
 }
+
+/// What set this resolve in motion, which decides whether operator decisions
+/// are protected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResolveTrigger {
+    /// A poll, a backfill, a per-series search, a scheduled sweep. Anything
+    /// the operator did not aim at this specific release.
+    ///
+    /// The default, deliberately: a new call site that forgets to choose gets
+    /// the safe behaviour, since the failure mode of guessing wrong here is
+    /// silently reverting a decision the operator made by hand.
+    #[default]
+    Automatic,
+    /// The operator asked for *this* release to be re-resolved ("Re-resolve",
+    /// bulk retry). Overrides the guard — pulling a kept or rejected release
+    /// back into the pipeline is exactly what those buttons are for.
+    Operator,
+}
+
+/// `resolution_path` marking a link the operator made by hand. Its status is
+/// an ordinary `resolved`, so the path is the only thing distinguishing it
+/// from an auto-match the resolver is free to redo.
+const MANUAL_PATH: &str = "manual";
 
 /// Pipeline orchestrator. Hold one of these for the lifetime of the
 /// process (or per-task in tests) and call [`Self::resolve_one`] or
@@ -142,11 +196,31 @@ impl Resolver {
     /// Resolve the release with id `release_id`. Walks every step in the
     /// priority chain and writes the outcome back to the row. Returns the
     /// outcome for the caller's logging / CLI rendering.
+    /// Automatic by default — see [`ResolveTrigger`]. A release carrying an
+    /// operator decision is left untouched and reported with
+    /// `skipped = true`.
     pub async fn resolve_one(&self, release_id: &str) -> Result<ResolutionOutcome> {
+        self.resolve_one_with(release_id, ResolveTrigger::Automatic)
+            .await
+    }
+
+    /// [`Self::resolve_one`] driven by an explicit operator action, so it
+    /// overrides the operator-decision guard. Use for "Re-resolve" and bulk
+    /// retry; never for a poll or a backfill.
+    pub async fn resolve_one_forced(&self, release_id: &str) -> Result<ResolutionOutcome> {
+        self.resolve_one_with(release_id, ResolveTrigger::Operator)
+            .await
+    }
+
+    pub async fn resolve_one_with(
+        &self,
+        release_id: &str,
+        trigger: ResolveTrigger,
+    ) -> Result<ResolutionOutcome> {
         let release = releases_repo::find_by_id(&self.db, release_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("release {release_id:?} not found"))?;
-        self.resolve_release(&release).await
+        self.resolve_release_with(&release, trigger).await
     }
 
     /// Re-run the resolver on every row whose status is `unresolved` or
@@ -193,7 +267,7 @@ impl Resolver {
         );
         for row in rows {
             match self.resolve_release(&row).await {
-                Ok(outcome) => summary.observe(outcome.status),
+                Ok(outcome) => summary.observe(&outcome),
                 Err(e) => {
                     tracing::warn!(error = ?e, release_id = %row.id, "resolver failed");
                     summary.errors += 1;
@@ -208,11 +282,13 @@ impl Resolver {
     /// request resolved from its filters, rather than a status sweep. An id
     /// that no longer exists (e.g. deleted between selection and execution)
     /// is counted as an error and does not abort the batch.
+    /// Operator-triggered: the caller resolved these ids from an explicit bulk
+    /// action, so the decision guard is overridden.
     pub async fn resolve_ids(&self, ids: &[String]) -> Result<RetrySummary> {
         let mut summary = RetrySummary::default();
         for id in ids {
-            match self.resolve_one(id).await {
-                Ok(outcome) => summary.observe(outcome.status),
+            match self.resolve_one_forced(id).await {
+                Ok(outcome) => summary.observe(&outcome),
                 Err(e) => {
                     tracing::warn!(error = ?e, release_id = %id, "resolver failed");
                     summary.errors += 1;
@@ -234,7 +310,7 @@ impl Resolver {
         }
         for row in rows {
             match self.resolve_release(&row).await {
-                Ok(outcome) => summary.observe(outcome.status),
+                Ok(outcome) => summary.observe(&outcome),
                 Err(e) => {
                     tracing::warn!(error = ?e, release_id = %row.id, "resolver failed");
                     summary.errors += 1;
@@ -244,7 +320,53 @@ impl Resolver {
         Ok(summary)
     }
 
+    /// Status sweeps ([`Self::resolve_unresolved`] and friends) select rows by
+    /// status and so can never surface an operator-decided one; they keep the
+    /// automatic trigger.
     async fn resolve_release(&self, release: &releases_entity::Model) -> Result<ResolutionOutcome> {
+        self.resolve_release_with(release, ResolveTrigger::Automatic)
+            .await
+    }
+
+    /// True when the release carries a decision the operator made by hand.
+    ///
+    /// `rejected` / `standalone` are set only by the reject and keep handlers.
+    /// A `manual` path is subtler: its status is an ordinary `resolved`, so
+    /// without checking the path an automatic re-resolve would happily relink
+    /// it to whatever the fuzzy step currently prefers.
+    fn is_operator_decided(release: &releases_entity::Model) -> bool {
+        matches!(
+            ResolutionStatus::from_db(&release.resolution_status),
+            ResolutionStatus::Rejected | ResolutionStatus::Standalone
+        ) || release.resolution_path.as_deref() == Some(MANUAL_PATH)
+    }
+
+    async fn resolve_release_with(
+        &self,
+        release: &releases_entity::Model,
+        trigger: ResolveTrigger,
+    ) -> Result<ResolutionOutcome> {
+        // Refuse before any write. `link_release` sets `resolution_status`
+        // unconditionally, so the guard cannot live further down — and refuse
+        // before any provider call too, since re-resolving a decided release
+        // is wasted network as well as a lost decision.
+        if trigger == ResolveTrigger::Automatic && Self::is_operator_decided(release) {
+            tracing::debug!(
+                release_id = %release.id,
+                status = %release.resolution_status,
+                path = ?release.resolution_path,
+                "skipping automatic resolve: release carries an operator decision"
+            );
+            return Ok(ResolutionOutcome {
+                release_id: release.id.clone(),
+                series_id: release.series_id,
+                path: None,
+                confidence: release.resolution_confidence,
+                status: ResolutionStatus::from_db(&release.resolution_status),
+                reason: Some("operator decision preserved".into()),
+                skipped: true,
+            });
+        }
         let now = Utc::now();
         let attempted_at = now.timestamp();
         let links = parse_external_links(release.extracted_links_json.as_deref());
@@ -607,6 +729,7 @@ impl Resolver {
             confidence: Some(1.0),
             status,
             reason,
+            skipped: false,
         })
     }
 
@@ -663,6 +786,7 @@ impl Resolver {
             confidence: Some(confidence),
             status,
             reason,
+            skipped: false,
         })
     }
 
@@ -690,6 +814,7 @@ impl Resolver {
                 confidence: scored.first().map(|(_, s)| *s as f64),
                 status: ResolutionStatus::Unresolved,
                 reason: Some("no_confident_match".into()),
+                skipped: false,
             });
         }
 
@@ -739,6 +864,7 @@ impl Resolver {
                 confidence: scored.first().map(|(_, s)| *s as f64),
                 status: ResolutionStatus::Unresolved,
                 reason: Some("candidate_fetch_failed".into()),
+                skipped: false,
             });
         }
 
@@ -750,6 +876,7 @@ impl Resolver {
             confidence: plausible.first().map(|(_, s)| *s as f64),
             status: ResolutionStatus::ReviewPending,
             reason: Some("below_resolution_threshold".into()),
+            skipped: false,
         })
     }
 
@@ -811,6 +938,7 @@ impl Resolver {
                 confidence: scored.first().map(|(_, s)| *s as f64),
                 status: ResolutionStatus::Unresolved,
                 reason: Some("candidate_fetch_failed".into()),
+                skipped: false,
             });
         }
 
@@ -822,6 +950,7 @@ impl Resolver {
             confidence: scored.first().map(|(_, s)| *s as f64),
             status: ResolutionStatus::ReviewPending,
             reason: Some("mixed_format_multi_kind".into()),
+            skipped: false,
         })
     }
 
@@ -845,21 +974,36 @@ pub struct RetrySummary {
     pub ambiguous: usize,
     pub review_pending: usize,
     pub unresolved: usize,
+    /// Left untouched because the release carries an operator decision and the
+    /// run was automatic. Distinct from `errors`: nothing went wrong.
+    pub skipped: usize,
     pub errors: usize,
 }
 
 impl RetrySummary {
-    fn observe(&mut self, status: ResolutionStatus) {
-        match status {
+    fn observe(&mut self, outcome: &ResolutionOutcome) {
+        if outcome.skipped {
+            self.skipped += 1;
+            return;
+        }
+        match outcome.status {
             ResolutionStatus::Resolved => self.resolved += 1,
             ResolutionStatus::Ambiguous => self.ambiguous += 1,
             ResolutionStatus::ReviewPending => self.review_pending += 1,
             ResolutionStatus::Unresolved => self.unresolved += 1,
+            // Only reachable via a skip, which returned above: the pipeline
+            // never writes these itself.
+            ResolutionStatus::Rejected | ResolutionStatus::Standalone => self.skipped += 1,
         }
     }
 
     pub fn total(&self) -> usize {
-        self.resolved + self.ambiguous + self.review_pending + self.unresolved + self.errors
+        self.resolved
+            + self.ambiguous
+            + self.review_pending
+            + self.unresolved
+            + self.skipped
+            + self.errors
     }
 }
 
