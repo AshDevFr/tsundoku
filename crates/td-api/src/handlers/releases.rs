@@ -29,7 +29,14 @@ use crate::state::{AppState, JobKind, JobResult};
 pub struct ReleaseDto {
     pub id: String,
     pub source_kind: String,
+    /// The feed that *first* discovered this release. One upstream post is one
+    /// row however many feeds carry it, so this is provenance, not the full
+    /// answer — see [`Self::sources`].
     pub source_name: String,
+    /// Every configured feed that carries this release, sorted. Usually one;
+    /// several when overlapping feeds (an uploader feed and a query feed, say)
+    /// both match the same post.
+    pub sources: Vec<String>,
     pub external_id: String,
     pub title: String,
     pub link: String,
@@ -474,6 +481,16 @@ fn format_filter(format: Option<&str>) -> Option<sea_orm::sea_query::SimpleExpr>
     Some(releases::Column::Id.in_subquery(sub))
 }
 
+/// "Carried by this feed" as a subquery over `release_sources`.
+///
+/// Filtering on `releases.source_name` instead would silently miss every
+/// release a sibling feed happened to write first — the same scalar-vs-set
+/// confusion that made the poll dedup hint wrong.
+fn carried_by_source_filter(source_name: Option<&str>) -> Option<sea_orm::sea_query::SimpleExpr> {
+    let name = trimmed_filter(source_name)?;
+    Some(releases::Column::Id.in_subquery(releases_repo::carried_by_source_subquery(name)))
+}
+
 /// The releases list's free-text filter, which accepts three shapes of input
 /// so the operator never has to think about which one they hold.
 ///
@@ -539,8 +556,8 @@ fn review_queue_select(
     if let Some(expr) = title_tokens_filter(q) {
         select = select.filter(expr);
     }
-    if let Some(name) = trimmed_filter(source_name) {
-        select = select.filter(releases::Column::SourceName.eq(name));
+    if let Some(expr) = carried_by_source_filter(source_name) {
+        select = select.filter(expr);
     }
     if let Some(expr) = format_filter(format) {
         select = select.filter(expr);
@@ -661,8 +678,8 @@ pub async fn list(
     if let Some(s) = trimmed_filter(q.source_kind.as_deref()) {
         select = select.filter(releases::Column::SourceKind.eq(s));
     }
-    if let Some(s) = trimmed_filter(q.source_name.as_deref()) {
-        select = select.filter(releases::Column::SourceName.eq(s));
+    if let Some(expr) = carried_by_source_filter(q.source_name.as_deref()) {
+        select = select.filter(expr);
     }
     if let Some(id) = q.series_id {
         select = select.filter(releases::Column::SeriesId.eq(id));
@@ -710,12 +727,19 @@ pub async fn list(
         .await
         .map_err(anyhow_err)?;
 
+    // One query for the page's carrier sets rather than one per row.
+    let page_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let mut sources_by_id = releases_repo::sources_for_releases(&state.db, &page_ids)
+        .await
+        .map_err(anyhow_err)?;
+
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
         let formats = releases_repo::list_formats(&state.db, &row.id)
             .await
             .map_err(anyhow_err)?;
-        items.push(model_to_release(row, formats));
+        let sources = sources_by_id.remove(&row.id).unwrap_or_default();
+        items.push(model_to_release(row, formats, sources));
     }
 
     Ok(Json(ReleasePage {
@@ -760,8 +784,13 @@ pub async fn list_unresolved(
         .map_err(anyhow_err)?;
 
     let active_provider = state.metadata.active_id().to_string();
+    let page_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let mut sources_by_id = releases_repo::sources_for_releases(&state.db, &page_ids)
+        .await
+        .map_err(anyhow_err)?;
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
+        let sources = sources_by_id.remove(&row.id).unwrap_or_default();
         let formats = releases_repo::list_formats(&state.db, &row.id)
             .await
             .map_err(anyhow_err)?;
@@ -821,7 +850,7 @@ pub async fn list_unresolved(
             .unwrap_or_default();
         let top_candidate = candidates.first().cloned();
         items.push(UnresolvedRelease {
-            release: model_to_release(row, formats),
+            release: model_to_release(row, formats, sources),
             candidates,
             search_queries,
             cleanup_rules_applied,
@@ -888,13 +917,21 @@ async fn release_groups(
         }
     }
     if let Some(q) = trimmed(q) {
-        // `LIKE '%q%'` with raw `%`/`_` acting as wildcards — matches
-        // `Column::contains` in review_queue_select exactly.
-        clauses.push("r.title LIKE ?".to_string());
-        values.push(format!("%{q}%").into());
+        // Token-AND, mirroring `title_tokens_filter`: one `LIKE '%token%'` per
+        // whitespace-separated word, all required. A single `LIKE '%q%'` here
+        // would diverge from the list the moment a query has two words, and
+        // the grouped counts would stop matching what clicking a group shows.
+        for token in q.split_whitespace() {
+            clauses.push("r.title LIKE ?".to_string());
+            values.push(format!("%{token}%").into());
+        }
     }
     if let Some(name) = trimmed(source_name) {
-        clauses.push("r.source_name = ?".to_string());
+        // Mirrors `carried_by_source_filter`: a release is "from" a feed when
+        // that feed carries it, not when it happened to write the row first.
+        clauses.push(
+            "r.id IN (SELECT release_id FROM release_sources WHERE source_name = ?)".to_string(),
+        );
         values.push(name.into());
     }
     if let Some(fmt) = trimmed(format) {
@@ -1113,7 +1150,10 @@ pub async fn link(
     let formats = releases_repo::list_formats(&state.db, &row.id)
         .await
         .map_err(anyhow_err)?;
-    Ok(Json(model_to_release(row, formats)))
+    let sources = releases_repo::sources_for_release(&state.db, &row.id)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(model_to_release(row, formats, sources)))
 }
 
 /// Mark a release as "not a series we care about". Drops candidates and
@@ -1161,7 +1201,10 @@ pub async fn reject(
     let formats = releases_repo::list_formats(&state.db, &row.id)
         .await
         .map_err(anyhow_err)?;
-    Ok(Json(model_to_release(row, formats)))
+    let sources = releases_repo::sources_for_release(&state.db, &row.id)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(model_to_release(row, formats, sources)))
 }
 
 /// Mark a release as a worthwhile standalone item that is not (and will
@@ -1211,7 +1254,10 @@ pub async fn keep(
     let formats = releases_repo::list_formats(&state.db, &row.id)
         .await
         .map_err(anyhow_err)?;
-    Ok(Json(model_to_release(row, formats)))
+    let sources = releases_repo::sources_for_release(&state.db, &row.id)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(model_to_release(row, formats, sources)))
 }
 
 /// Re-run the resolver against a single release. Useful after a provider
@@ -1259,7 +1305,10 @@ pub async fn retry(
     let formats = releases_repo::list_formats(&state.db, &row.id)
         .await
         .map_err(anyhow_err)?;
-    Ok(Json(model_to_release(row, formats)))
+    let sources = releases_repo::sources_for_release(&state.db, &row.id)
+        .await
+        .map_err(anyhow_err)?;
+    Ok(Json(model_to_release(row, formats, sources)))
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -1347,9 +1396,12 @@ pub async fn import(
         let formats = releases_repo::list_formats(&state.db, &existing.id)
             .await
             .map_err(anyhow_err)?;
+        let sources = releases_repo::sources_for_release(&state.db, &existing.id)
+            .await
+            .map_err(anyhow_err)?;
         return Ok(Json(ImportReleaseResponse {
             already_known: true,
-            release: model_to_release(existing, formats),
+            release: model_to_release(existing, formats, sources),
         }));
     }
 
@@ -1387,9 +1439,12 @@ pub async fn import(
     let formats = releases_repo::list_formats(&state.db, &row.id)
         .await
         .map_err(anyhow_err)?;
+    let sources = releases_repo::sources_for_release(&state.db, &row.id)
+        .await
+        .map_err(anyhow_err)?;
     Ok(Json(ImportReleaseResponse {
         already_known: false,
-        release: model_to_release(row, formats),
+        release: model_to_release(row, formats, sources),
     }))
 }
 
@@ -1704,7 +1759,11 @@ async fn resolve_link_target(
     }
 }
 
-pub(crate) fn model_to_release(m: releases::Model, formats: Vec<String>) -> ReleaseDto {
+pub(crate) fn model_to_release(
+    m: releases::Model,
+    formats: Vec<String>,
+    sources: Vec<String>,
+) -> ReleaseDto {
     let files = m
         .files_json
         .as_deref()
@@ -1716,6 +1775,7 @@ pub(crate) fn model_to_release(m: releases::Model, formats: Vec<String>) -> Rele
         id: m.id,
         source_kind: m.source_kind,
         source_name: m.source_name,
+        sources,
         external_id: m.external_id,
         title: m.title,
         link: m.link,

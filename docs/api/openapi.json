@@ -5008,6 +5008,7 @@
           "id",
           "sourceKind",
           "sourceName",
+          "sources",
           "externalId",
           "title",
           "link",
@@ -5162,7 +5163,15 @@
             "type": "string"
           },
           "sourceName": {
-            "type": "string"
+            "type": "string",
+            "description": "The feed that *first* discovered this release. One upstream post is one\nrow however many feeds carry it, so this is provenance, not the full\nanswer — see [`Self::sources`]."
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every configured feed that carries this release, sorted. Usually one;\nseveral when overlapping feeds (an uploader feed and a query feed, say)\nboth match the same post."
           },
           "title": {
             "type": "string"

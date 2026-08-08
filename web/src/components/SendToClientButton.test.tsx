@@ -15,6 +15,7 @@ function makeRelease(overrides: Partial<ReleaseDto> = {}): ReleaseDto {
     id: "nyaa:1",
     sourceKind: "nyaa",
     sourceName: "feed",
+    sources: ["feed"],
     externalId: "1",
     title: "Chainsaw Man v01",
     link: "https://nyaa.si/view/1",

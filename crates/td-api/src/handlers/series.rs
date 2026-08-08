@@ -782,12 +782,19 @@ pub(crate) fn apply_series_filters(
     // outer pagination count correct — with the source-name predicate added.
     let source_names = parse_csv(q.source.as_deref());
     if is_admin && !source_names.is_empty() {
+        // Membership comes from `release_sources`, not `releases.source_name`:
+        // one post carried by several feeds is one row stamped with whichever
+        // feed wrote it first, so the scalar would hide the series from every
+        // other feed's filter.
         let linked_ids = sea_orm::sea_query::Query::select()
             .column(releases::Column::SeriesId)
             .from(releases::Entity)
             .distinct()
             .and_where(releases::Column::SeriesId.is_not_null())
-            .and_where(releases::Column::SourceName.is_in(source_names))
+            .and_where(
+                releases::Column::Id
+                    .in_subquery(releases_repo::carried_by_sources_subquery(source_names)),
+            )
             .take();
         select = select.filter(series::Column::Id.in_subquery(linked_ids));
     }

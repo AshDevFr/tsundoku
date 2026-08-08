@@ -14,7 +14,7 @@ use td_source::{
     spans_max_end, spans_to_json,
 };
 
-use crate::entities::{release_formats, releases, review_candidates, series};
+use crate::entities::{release_formats, release_sources, releases, review_candidates, series};
 
 pub use releases::Model;
 
@@ -54,10 +54,106 @@ pub async fn persist_discovered<C: ConnectionTrait>(
     // calls into one transaction (the batched-write path in
     // `poll_source::run_tick`).
     upsert(db, active).await?;
+    add_source(db, &id, release, observed_at).await?;
     for fmt in detect_formats(&release.files) {
         add_format(db, &id, fmt.as_str()).await?;
     }
     Ok(id)
+}
+
+/// Record that `source_name` carries this release. Idempotent on
+/// `(release_id, source_name)`, and `DO NOTHING` on conflict so a re-poll
+/// keeps the timestamp of when *this* feed first saw it.
+async fn add_source<C: ConnectionTrait>(
+    db: &C,
+    release_id: &str,
+    release: &DiscoveredRelease,
+    observed_at: i64,
+) -> Result<()> {
+    let model = release_sources::ActiveModel {
+        release_id: Set(release_id.to_string()),
+        source_kind: Set(release.source_kind.clone()),
+        source_name: Set(release.source_name.clone()),
+        first_seen_at: Set(observed_at),
+    };
+    release_sources::Entity::insert(model)
+        .on_conflict(
+            OnConflict::columns([
+                release_sources::Column::ReleaseId,
+                release_sources::Column::SourceName,
+            ])
+            .do_nothing()
+            .to_owned(),
+        )
+        // `do_nothing` still surfaces a "none inserted" error on SQLite
+        // without this; the conflict is the expected steady state here.
+        .do_nothing()
+        .exec(db)
+        .await?;
+    Ok(())
+}
+
+/// Every source name that carries `release_id`, ordered for stable display.
+pub async fn sources_for_release<C: ConnectionTrait>(
+    db: &C,
+    release_id: &str,
+) -> Result<Vec<String>> {
+    Ok(release_sources::Entity::find()
+        .filter(release_sources::Column::ReleaseId.eq(release_id.to_string()))
+        .order_by_asc(release_sources::Column::SourceName)
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|m| m.source_name)
+        .collect())
+}
+
+/// Carrier sets for a batch of releases, keyed by release id. One query
+/// instead of an N+1 over a page of results.
+pub async fn sources_for_releases<C: ConnectionTrait>(
+    db: &C,
+    release_ids: &[String],
+) -> Result<std::collections::HashMap<String, Vec<String>>> {
+    use std::collections::HashMap;
+    if release_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = release_sources::Entity::find()
+        .filter(release_sources::Column::ReleaseId.is_in(release_ids.iter().cloned()))
+        .order_by_asc(release_sources::Column::SourceName)
+        .all(db)
+        .await?;
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for row in rows {
+        map.entry(row.release_id).or_default().push(row.source_name);
+    }
+    Ok(map)
+}
+
+/// Subquery selecting the ids of releases carried by `source_name`. The shared
+/// building block for every "filter by feed" predicate — using
+/// `releases.source_name` instead would silently miss any release a sibling
+/// feed happened to write first.
+pub fn carried_by_source_subquery(source_name: &str) -> sea_orm::sea_query::SelectStatement {
+    sea_orm::sea_query::Query::select()
+        .column(release_sources::Column::ReleaseId)
+        .from(release_sources::Entity)
+        .and_where(release_sources::Column::SourceName.eq(source_name))
+        .to_owned()
+}
+
+/// As [`carried_by_source_subquery`] but for a set of feed names.
+pub fn carried_by_sources_subquery<I, S>(source_names: I) -> sea_orm::sea_query::SelectStatement
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let names: Vec<String> = source_names.into_iter().map(Into::into).collect();
+    sea_orm::sea_query::Query::select()
+        .column(release_sources::Column::ReleaseId)
+        .from(release_sources::Entity)
+        .and_where(release_sources::Column::SourceName.is_in(names))
+        .to_owned()
 }
 
 /// Reconstruct a [`DiscoveredRelease`] from a persisted row. The inverse of
@@ -124,7 +220,9 @@ pub async fn select_for_reenrich(
     let mut query = releases::Entity::find()
         .filter(releases::Column::ResolutionStatus.is_in(statuses.iter().cloned()));
     if let Some(names) = source_names {
-        query = query.filter(releases::Column::SourceName.is_in(names.iter().cloned()));
+        query = query.filter(
+            releases::Column::Id.in_subquery(carried_by_sources_subquery(names.iter().cloned())),
+        );
     }
     if only_missing_details {
         query = query.filter(
@@ -239,20 +337,33 @@ pub async fn find_by_id(db: &DatabaseConnection, id: &str) -> Result<Option<Mode
     Ok(releases::Entity::find_by_id(id.to_string()).one(db).await?)
 }
 
-/// Most recent `external_id`s for a `(source_kind, source_name)`. Used by
-/// the scheduler / one-shot poll to populate `PollContext.recently_seen`
-/// so sources can drop overlapping items before per-item enrichment runs.
+/// Most recent `external_id`s this feed has already seen. Used by the
+/// scheduler / one-shot poll to populate `PollContext.recently_seen` so
+/// sources can drop items they already hold before per-item enrichment runs.
+///
+/// Reads `release_sources`, **not** `releases.source_name`. One post is one
+/// `releases` row no matter how many feeds carry it, and the upsert leaves
+/// `source_name` at whichever feed wrote first — so filtering on that column
+/// answered "is this post mine?" with "no" for every other carrying feed, on
+/// every tick, forever. Each of them then re-fetched the detail page and
+/// re-ran the whole resolver. Production showed up to 471 resolution attempts
+/// on a single release from this alone.
 pub async fn recent_external_ids(
     db: &DatabaseConnection,
     source_kind: &str,
     source_name: &str,
     limit: u64,
 ) -> Result<Vec<String>> {
+    let carried = sea_orm::sea_query::Query::select()
+        .column(release_sources::Column::ReleaseId)
+        .from(release_sources::Entity)
+        .and_where(release_sources::Column::SourceKind.eq(source_kind))
+        .and_where(release_sources::Column::SourceName.eq(source_name))
+        .to_owned();
     let rows = releases::Entity::find()
         .select_only()
         .column(releases::Column::ExternalId)
-        .filter(releases::Column::SourceKind.eq(source_kind))
-        .filter(releases::Column::SourceName.eq(source_name))
+        .filter(releases::Column::Id.in_subquery(carried))
         .order_by_desc(releases::Column::PostedAt)
         .limit(limit)
         .into_tuple::<String>()
@@ -326,10 +437,13 @@ pub async fn set_resolution(
 /// since it can't narrow the series list anyway.
 pub async fn list_sources_with_series_counts(db: &DatabaseConnection) -> Result<Vec<NameUsage>> {
     let backend = db.get_database_backend();
-    let sql = "SELECT source_name AS name, COUNT(DISTINCT series_id) AS series_count
-               FROM releases
-               WHERE series_id IS NOT NULL
-               GROUP BY source_name
+    // Joins `release_sources` so a feed is credited for every series it
+    // carries a release for, not only the ones it happened to write first.
+    let sql = "SELECT rs.source_name AS name, COUNT(DISTINCT r.series_id) AS series_count
+               FROM release_sources rs
+               JOIN releases r ON r.id = rs.release_id
+               WHERE r.series_id IS NOT NULL
+               GROUP BY rs.source_name
                ORDER BY series_count DESC, name ASC";
     let stmt = Statement::from_sql_and_values(backend, sql, []);
     let rows = NameUsage::find_by_statement(stmt).all(db).await?;
@@ -1258,6 +1372,90 @@ mod tests {
     /// the same volumes is still a fresh discovery. The `updated_at` bump
     /// stays coverage-owned, or the incremental release feed would re-emit the
     /// series every time any linked release was merely re-observed.
+    /// One upstream post surfaced by two feeds is one `releases` row (the
+    /// unique key excludes `source_name`) but two `release_sources` rows.
+    #[tokio::test]
+    async fn persist_records_every_carrying_source() {
+        let db = fresh_db().await;
+        let first = sample("feed-a");
+        let id = persist_discovered(&db, &first, 100).await.unwrap();
+
+        // Same post, different feed: same id, second carrier row.
+        let mut second = sample("feed-b");
+        second.title = "Some Manga v01 (Digital) [retitled]".into();
+        let id2 = persist_discovered(&db, &second, 500).await.unwrap();
+        assert_eq!(id, id2, "one post is one release row");
+
+        let carriers = super::sources_for_release(&db, &id).await.unwrap();
+        assert_eq!(carriers, vec!["feed-a".to_string(), "feed-b".to_string()]);
+
+        // `source_name` stays the first discoverer; the join table is the
+        // truth for "who carries this".
+        let row = find_by_id(&db, &id).await.unwrap().unwrap();
+        assert_eq!(row.source_name, "feed-a");
+    }
+
+    /// Re-polling the same feed must not duplicate its carrier row, and must
+    /// not move its `first_seen_at` forward.
+    #[tokio::test]
+    async fn persist_is_idempotent_per_carrying_source() {
+        let db = fresh_db().await;
+        let r = sample("feed-a");
+        let id = persist_discovered(&db, &r, 100).await.unwrap();
+        persist_discovered(&db, &r, 900).await.unwrap();
+
+        let rows = release_sources::Entity::find()
+            .filter(release_sources::Column::ReleaseId.eq(id.clone()))
+            .all(&db)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].first_seen_at, 100,
+            "first_seen_at records when this feed first saw it, not the latest poll",
+        );
+    }
+
+    /// The churn fix. A release first written by feed A must appear in feed
+    /// B's dedup hint once B has also seen it — otherwise B treats the post as
+    /// new on every single tick and re-enriches + re-resolves it forever.
+    #[tokio::test]
+    async fn recent_external_ids_covers_every_carrying_source() {
+        let db = fresh_db().await;
+        let mut a = sample("feed-a");
+        a.external_id = "111".into();
+        a.link = "https://nyaa.si/view/111".into();
+        persist_discovered(&db, &a, 100).await.unwrap();
+
+        // Feed B has not seen it: it is legitimately new to B.
+        assert!(
+            recent_external_ids(&db, "nyaa", "feed-b", 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // B now carries the same post.
+        let mut b = sample("feed-b");
+        b.external_id = "111".into();
+        b.link = "https://nyaa.si/view/111".into();
+        persist_discovered(&db, &b, 200).await.unwrap();
+
+        assert_eq!(
+            recent_external_ids(&db, "nyaa", "feed-a", 100)
+                .await
+                .unwrap(),
+            vec!["111".to_string()],
+        );
+        assert_eq!(
+            recent_external_ids(&db, "nyaa", "feed-b", 100)
+                .await
+                .unwrap(),
+            vec!["111".to_string()],
+            "the first writer no longer owns the dedup hint",
+        );
+    }
+
     #[tokio::test]
     async fn recompute_series_coverage_tracks_last_discovered_at() {
         use sea_orm::ActiveModelTrait;

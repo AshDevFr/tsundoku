@@ -2323,7 +2323,18 @@ export interface components {
             /** Format: int64 */
             sizeBytes?: number | null;
             sourceKind: string;
+            /**
+             * @description The feed that *first* discovered this release. One upstream post is one
+             *     row however many feeds carry it, so this is provenance, not the full
+             *     answer — see [`Self::sources`].
+             */
             sourceName: string;
+            /**
+             * @description Every configured feed that carries this release, sorted. Usually one;
+             *     several when overlapping feeds (an uploader feed and a query feed, say)
+             *     both match the same post.
+             */
+            sources: string[];
             title: string;
             torrentUrl?: string | null;
         };

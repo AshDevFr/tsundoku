@@ -24,6 +24,7 @@ import {
 import { formatAbsolute, formatRelative } from "@/api/utils";
 import { formatBytes } from "@/components/admin/format";
 import { SentBadge } from "@/components/SendToClientButton";
+import { SourceBadges } from "@/components/SourceBadges";
 
 /// Every resolution status the resolver or the operator can write. Unlike the
 /// review queue this page is deliberately unscoped — a `rejected` release has
@@ -285,9 +286,7 @@ function ReleaseRow({ release }: { release: ReleaseDto }) {
               no series
             </Text>
           )}
-          <Badge size="xs" color="indigo" variant="light">
-            {release.sourceKind}:{release.sourceName}
-          </Badge>
+          <SourceBadges release={release} />
           {release.formats.map((f) => (
             <Badge key={f} size="xs" variant="outline">
               {f}

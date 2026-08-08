@@ -291,7 +291,10 @@ pub async fn send(
     let formats = releases_repo::list_formats(&state.db, &row.id)
         .await
         .map_err(ApiError::Internal)?;
-    Ok(Json(model_to_release(row, formats)))
+    let sources = releases_repo::sources_for_release(&state.db, &row.id)
+        .await
+        .map_err(ApiError::Internal)?;
+    Ok(Json(model_to_release(row, formats, sources)))
 }
 
 /// Connection info + health snapshot for the admin UI; gates rendering of the

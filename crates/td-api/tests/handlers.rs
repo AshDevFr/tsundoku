@@ -1141,6 +1141,109 @@ async fn release_list_supports_status_format_and_sort() {
     assert_eq!(desc["items"][0]["id"], b);
 }
 
+/// Filtering by feed must find a release that a *sibling* feed happened to
+/// write first. `releases.source_name` records only the first discoverer, so
+/// before `release_sources` this returned nothing for every other carrier.
+#[tokio::test]
+async fn release_filters_by_any_carrying_source_not_just_the_first_writer() {
+    let db = fresh_db().await;
+    let first = sample_release("1", "nyaa-1r0n", "Chainsaw Man v01");
+    let id = releases_repo::persist_discovered(&db, &first, 100)
+        .await
+        .unwrap();
+    // The same post surfaced by a query feed a moment later.
+    let second = sample_release("1", "nyaa-q-Digital", "Chainsaw Man v01");
+    let id2 = releases_repo::persist_discovered(&db, &second, 200)
+        .await
+        .unwrap();
+    assert_eq!(id, id2, "one post is one release row");
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let total_for = |uri: String| {
+        let app = app.clone();
+        async move {
+            let resp = app
+                .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_json(resp).await["total"].as_u64().unwrap()
+        }
+    };
+
+    // Both the releases list and the review queue must see it from either feed.
+    for feed in ["nyaa-1r0n", "nyaa-q-Digital"] {
+        assert_eq!(
+            total_for(format!("/api/v1/releases?sourceName={feed}")).await,
+            1,
+            "releases list missed the release for {feed}",
+        );
+        assert_eq!(
+            total_for(format!("/api/v1/releases/unresolved?sourceName={feed}")).await,
+            1,
+            "review queue missed the release for {feed}",
+        );
+    }
+    // A feed that does not carry it still gets nothing.
+    assert_eq!(
+        total_for("/api/v1/releases?sourceName=nyaa-other".into()).await,
+        0,
+    );
+}
+
+/// The release payload carries the full carrier set, so the UI can show that a
+/// post came from several feeds. `sourceName` stays the first discoverer.
+#[tokio::test]
+async fn release_dto_exposes_every_carrying_source() {
+    let db = fresh_db().await;
+    let first = sample_release("1", "nyaa-1r0n", "Chainsaw Man v01");
+    releases_repo::persist_discovered(&db, &first, 100)
+        .await
+        .unwrap();
+    let second = sample_release("1", "nyaa-q-Digital", "Chainsaw Man v01");
+    releases_repo::persist_discovered(&db, &second, 200)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/releases")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let item = &body["items"][0];
+    assert_eq!(item["sourceName"], "nyaa-1r0n", "first discoverer");
+    let sources: Vec<String> = item["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(sources, vec!["nyaa-1r0n", "nyaa-q-Digital"]);
+}
+
 #[tokio::test]
 async fn release_list_returns_persisted_rows() {
     let db = fresh_db().await;
@@ -3050,6 +3153,62 @@ async fn groups_endpoint_compose_with_filters() {
     // the HAVING threshold and disappears.
     let scoped = fetch_groups(&app, "sourceName=trusted").await;
     assert_eq!(scoped["groups"].as_array().unwrap().len(), 0);
+}
+
+/// The grouped endpoint reimplements the list's `q` in raw SQL. That arm was
+/// untested — the existing parity test only exercises `searchQuery` — so when
+/// the list's `q` became token-AND the grouped SQL silently kept matching a
+/// single contiguous substring. Realistic titles, and a two-word query that a
+/// substring match cannot satisfy.
+#[tokio::test]
+async fn groups_endpoint_q_is_token_and_like_the_list() {
+    let db = fresh_db().await;
+    for (ext, title) in [
+        ("1", "Chainsaw Man v01 (2024) (Digital) (LuCaZ)"),
+        ("2", "Chainsaw Man v02 (2024) (Digital) (LuCaZ)"),
+        ("3", "Berserk v01 (2024) (Digital) (LuCaZ)"),
+    ] {
+        seed_queue_release_with_queries(&db, ext, title, &["shared query"]).await;
+    }
+    let app = queue_app(db);
+
+    // Sanity: a substring match would return 0 for this, so the arm is live.
+    assert_eq!(queue_total(&app, "q=Chainsaw%20v01").await, 1);
+
+    // The direct assertion, and the one that actually fails under a single
+    // contiguous `LIKE`: both Chainsaw releases carry every token, so the
+    // grouped endpoint must still cluster them. A substring match finds
+    // nothing here and would report no groups at all — which a parity loop
+    // over "the groups that exist" can never notice.
+    let clustered = fetch_groups(&app, "q=Chainsaw%20Digital").await;
+    let groups = clustered["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1, "expected one cluster: {clustered:?}");
+    assert_eq!(groups[0]["query"], "shared query");
+    assert_eq!(groups[0]["count"], 2);
+
+    // Parity: whatever the grouped endpoint counts under a `q`, clicking that
+    // group in the list must return exactly the same number.
+    for q in ["Chainsaw", "Chainsaw%20Digital", "Digital%20LuCaZ"] {
+        let groups = fetch_groups(&app, &format!("q={q}")).await;
+        for g in groups["groups"].as_array().unwrap() {
+            let query = g["query"].as_str().unwrap();
+            let count = g["count"].as_u64().unwrap();
+            let list_total =
+                queue_total(&app, &format!("q={q}&searchQuery={}", encode_query(query))).await;
+            assert_eq!(
+                list_total, count,
+                "q parity failed for q={q:?} group={query:?}",
+            );
+        }
+    }
+
+    // And the grouped count itself must respect every token: "Chainsaw
+    // Berserk" matches no single title, so there is no cluster at all.
+    let none = fetch_groups(&app, "q=Chainsaw%20Berserk").await;
+    assert!(
+        none["groups"].as_array().unwrap().is_empty(),
+        "token-AND must apply to the grouped query too: {none:?}",
+    );
 }
 
 #[tokio::test]

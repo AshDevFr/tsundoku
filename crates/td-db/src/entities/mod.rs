@@ -13,6 +13,7 @@ pub mod poll_runs;
 pub mod provider_cache_state;
 pub mod provider_refreshes;
 pub mod release_formats;
+pub mod release_sources;
 pub mod releases;
 pub mod review_candidates;
 pub mod review_queue_snapshots;

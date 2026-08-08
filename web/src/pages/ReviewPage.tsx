@@ -65,6 +65,7 @@ import {
   ProviderSearchPanel,
 } from "@/components/ReleaseLinking";
 import { SendToClientButton, SentBadge } from "@/components/SendToClientButton";
+import { SourceBadges } from "@/components/SourceBadges";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { REVIEW_PAGE_SIZE_OPTIONS, useUiPrefs } from "@/stores/uiPrefs";
 import type { components } from "@/types/api.generated";
@@ -1558,9 +1559,7 @@ function ReleaseHeader({ release }: { release: ReleaseDto }) {
             {release.title}
           </Anchor>
           <Group gap={6} wrap="wrap">
-            <Badge size="xs" color="indigo" variant="light">
-              {release.sourceKind}:{release.sourceName}
-            </Badge>
+            <SourceBadges release={release} />
             {release.formats.map((f) => (
               <Badge key={f} size="xs" variant="outline">
                 {f}

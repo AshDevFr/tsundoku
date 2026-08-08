@@ -26,6 +26,7 @@ import {
   ReleaseFiles,
 } from "@/components/ReleaseDetails";
 import { SendToClientButton, SentBadge } from "@/components/SendToClientButton";
+import { SourceBadges } from "@/components/SourceBadges";
 
 /// Browse view for releases the operator marked `standalone`: worthwhile
 /// one-shots (guidebooks, artbooks) that are deliberately not tracked as a
@@ -132,9 +133,7 @@ function KeptCard({ release }: { release: ReleaseDto }) {
             {release.title}
           </Anchor>
           <Group gap={6} wrap="wrap">
-            <Badge size="xs" color="indigo" variant="light">
-              {release.sourceKind}:{release.sourceName}
-            </Badge>
+            <SourceBadges release={release} />
             {release.formats.map((f) => (
               <Badge key={f} size="xs" variant="outline">
                 {f}
