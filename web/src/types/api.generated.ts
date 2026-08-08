@@ -2585,6 +2585,11 @@ export interface components {
             /** Format: int32 */
             id: number;
             kind?: string | null;
+            /**
+             * Format: int64
+             * @description See [`SeriesListItem::last_discovered_at`].
+             */
+            lastDiscoveredAt?: number | null;
             /** Format: int64 */
             lastReleaseAt: number;
             /** Format: int64 */
@@ -2749,6 +2754,15 @@ export interface components {
             /** Format: int32 */
             id: number;
             kind?: string | null;
+            /**
+             * Format: int64
+             * @description When tsundoku last discovered a release for this series, as opposed to
+             *     [`Self::last_release_at`] (the newest linked release's *upstream* post
+             *     date). `None` until something links. Backs the "Recently discovered"
+             *     sort, which exists because a series found today from a year-old post
+             *     sorts a year deep under `last_release_at`.
+             */
+            lastDiscoveredAt?: number | null;
             /** Format: int64 */
             lastReleaseAt: number;
             /**
@@ -4301,12 +4315,14 @@ export interface operations {
                 tagsMode?: string;
                 /**
                  * @description Sort field. Supports `last_release_at` (default), `first_seen_at`,
-                 *     `total_volumes`, `total_chapters`, `highest_volume`,
-                 *     `highest_chapter`, `rating`, `published_start_date` (official
-                 *     publication date, distinct from `last_release_at`), and `wishlisted_at`
-                 *     (admin "recently clipped" order for the wishlist view). The count /
-                 *     highest / rating / publication / wishlisted sorts are nullable-aware:
-                 *     rows without a value sink to the end regardless of direction.
+                 *     `last_discovered_at` (when tsundoku last *found* a release, as opposed
+                 *     to when it was posted upstream), `total_volumes`, `total_chapters`,
+                 *     `highest_volume`, `highest_chapter`, `rating`, `published_start_date`
+                 *     (official publication date, distinct from `last_release_at`), and
+                 *     `wishlisted_at` (admin "recently clipped" order for the wishlist view).
+                 *     The count / highest / rating / publication / wishlisted / discovered
+                 *     sorts are nullable-aware: rows without a value sink to the end
+                 *     regardless of direction.
                  *     Ignored when `q` is present (results are ranked by relevance instead).
                  */
                 sort?: string;

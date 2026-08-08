@@ -39,6 +39,16 @@ pub struct Model {
     pub metadata_fetched_at: i64,
     pub first_seen_at: i64,
     pub last_release_at: i64,
+    /// Epoch seconds tsundoku last *discovered* a release for this series —
+    /// `MAX(observed_at)` across linked releases. Distinct from
+    /// `last_release_at`, which is the newest linked release's upstream post
+    /// date; the two diverge by months whenever a source surfaces an old post
+    /// (query feeds, backfills, the per-series release search). NULL until
+    /// something links. Maintained by
+    /// `releases_repo::recompute_series_coverage` with the other
+    /// release-derived aggregates, so it shrinks correctly when a release
+    /// moves away.
+    pub last_discovered_at: Option<i64>,
     pub highest_volume: Option<f64>,
     pub highest_chapter: Option<f64>,
     /// Published total volume/chapter counts from provider metadata

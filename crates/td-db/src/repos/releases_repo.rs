@@ -4,8 +4,8 @@ use anyhow::Result;
 use chrono::DateTime;
 use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
-    QueryOrder, QuerySelect, Set, Statement, TransactionTrait,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, NotSet,
+    QueryFilter, QueryOrder, QuerySelect, Set, Statement, TransactionTrait,
 };
 
 use crate::repos::tagging_repo::NameUsage;
@@ -459,10 +459,11 @@ fn coverage_unchanged(row: &series::Model, cov: &Coverage) -> bool {
         && row.highest_chapter == cov.highest_chapter
 }
 
-/// Recompute one series' merged volume/chapter coverage and `highest_*` from
-/// its currently-linked releases' stored spans, bumping `updated_at` to `now`
-/// **only when something actually changed**. Returns `true` if the row was
-/// rewritten.
+/// Recompute one series' merged volume/chapter coverage, `highest_*`, and
+/// `last_discovered_at` from its currently-linked releases, bumping
+/// `updated_at` to `now` **only when coverage actually changed**. Returns
+/// whether *coverage* moved — a discovery-only change still rewrites the row
+/// but reports `false`, because the release feed keys off coverage.
 ///
 /// This is the authoritative per-series maintenance invoked on every assign /
 /// reject / re-link. Unlike a monotonic bump it can *lower* coverage when a
@@ -504,7 +505,15 @@ pub async fn recompute_series_coverage<C: ConnectionTrait>(
         }
     }
     let cov = coverage_of(volumes, chapters);
-    if coverage_unchanged(&row, &cov) {
+    // When tsundoku last *found* something for this series, as opposed to when
+    // the newest linked release was posted upstream. Recomputed from the
+    // currently-linked set rather than bumped, so it falls back correctly when
+    // the newest release is unlinked. `None` when nothing is linked.
+    let last_discovered_at = linked.iter().map(|r| r.observed_at).max();
+
+    let coverage_changed = !coverage_unchanged(&row, &cov);
+    let discovery_changed = row.last_discovered_at != last_discovered_at;
+    if !coverage_changed && !discovery_changed {
         return Ok(false);
     }
     let model = series::ActiveModel {
@@ -513,11 +522,16 @@ pub async fn recompute_series_coverage<C: ConnectionTrait>(
         chapter_coverage_json: Set(cov.chapter_json),
         highest_volume: Set(cov.highest_volume),
         highest_chapter: Set(cov.highest_chapter),
-        updated_at: Set(now),
+        last_discovered_at: Set(last_discovered_at),
+        // `updated_at` stays coverage-owned. A newly discovered release that
+        // adds no coverage (a duplicate span, a re-upload) must not bump it, or
+        // the incremental release feed re-emits the series for a change its
+        // consumers cannot see.
+        updated_at: if coverage_changed { Set(now) } else { NotSet },
         ..Default::default()
     };
     series::Entity::update(model).exec(db).await?;
-    Ok(true)
+    Ok(coverage_changed)
 }
 
 /// Authoritatively recompute every release's volume/chapter span and every
@@ -1237,6 +1251,176 @@ mod tests {
         );
         assert_eq!(row.highest_volume, Some(4.0), "highest dropped on unlink");
         assert_eq!(row.updated_at, 1_700_000_500);
+    }
+
+    /// `last_discovered_at` tracks `MAX(observed_at)` across linked releases,
+    /// and must move even when coverage does not — a second release covering
+    /// the same volumes is still a fresh discovery. The `updated_at` bump
+    /// stays coverage-owned, or the incremental release feed would re-emit the
+    /// series every time any linked release was merely re-observed.
+    #[tokio::test]
+    async fn recompute_series_coverage_tracks_last_discovered_at() {
+        use sea_orm::ActiveModelTrait;
+        let db = fresh_db().await;
+        let sid = crate::entities::series::ActiveModel {
+            canonical_title: Set("Disc".into()),
+            metadata_source: Set("test".into()),
+            metadata_fetched_at: Set(1),
+            first_seen_at: Set(1),
+            last_release_at: Set(1),
+            owned: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap()
+        .id;
+
+        let mut first = sample("feed");
+        first.external_id = "d1".into();
+        first.link = "https://nyaa.si/view/d1".into();
+        first.files = vec!["Series v01-04.cbz".into()];
+        let id1 = persist_discovered(&db, &first, 1_000).await.unwrap();
+        set_resolution(
+            &db,
+            &id1,
+            Some(sid),
+            Some("test".into()),
+            None,
+            "resolved",
+            1,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            recompute_series_coverage(&db, sid, 1_700_000_000)
+                .await
+                .unwrap()
+        );
+        let row = series_row(&db, sid).await;
+        assert_eq!(row.last_discovered_at, Some(1_000));
+        assert_eq!(row.updated_at, 1_700_000_000);
+
+        // Same span, later observation: coverage is unchanged, so `updated_at`
+        // must hold, but the discovery timestamp must advance.
+        let mut second = sample("feed");
+        second.external_id = "d2".into();
+        second.link = "https://nyaa.si/view/d2".into();
+        second.files = vec!["Series v01-04.cbz".into()];
+        let id2 = persist_discovered(&db, &second, 5_000).await.unwrap();
+        set_resolution(
+            &db,
+            &id2,
+            Some(sid),
+            Some("test".into()),
+            None,
+            "resolved",
+            1,
+        )
+        .await
+        .unwrap();
+
+        recompute_series_coverage(&db, sid, 1_700_009_999)
+            .await
+            .unwrap();
+        let row = series_row(&db, sid).await;
+        assert_eq!(
+            row.last_discovered_at,
+            Some(5_000),
+            "a fresh discovery advances the timestamp even with identical coverage",
+        );
+        assert_eq!(
+            row.updated_at, 1_700_000_000,
+            "`updated_at` stays coverage-owned so the release feed does not re-emit",
+        );
+    }
+
+    /// The discovery timestamp is a live aggregate, not a high-water mark: it
+    /// falls back when the newest linked release moves away.
+    #[tokio::test]
+    async fn recompute_series_coverage_shrinks_last_discovered_at_on_unlink() {
+        use sea_orm::{ActiveModelTrait, Set};
+        let db = fresh_db().await;
+        let sid = crate::entities::series::ActiveModel {
+            canonical_title: Set("Disc".into()),
+            metadata_source: Set("test".into()),
+            metadata_fetched_at: Set(1),
+            first_seen_at: Set(1),
+            last_release_at: Set(1),
+            owned: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap()
+        .id;
+
+        let mut old = sample("feed");
+        old.external_id = "s1".into();
+        old.link = "https://nyaa.si/view/s1".into();
+        old.files = vec!["Series v01.cbz".into()];
+        let id1 = persist_discovered(&db, &old, 1_000).await.unwrap();
+
+        let mut recent = sample("feed");
+        recent.external_id = "s2".into();
+        recent.link = "https://nyaa.si/view/s2".into();
+        recent.files = vec!["Series v02.cbz".into()];
+        let id2 = persist_discovered(&db, &recent, 9_000).await.unwrap();
+
+        for id in [&id1, &id2] {
+            set_resolution(&db, id, Some(sid), Some("test".into()), None, "resolved", 1)
+                .await
+                .unwrap();
+        }
+        recompute_series_coverage(&db, sid, 1_700_000_000)
+            .await
+            .unwrap();
+        assert_eq!(series_row(&db, sid).await.last_discovered_at, Some(9_000));
+
+        releases::ActiveModel {
+            id: Set(id2),
+            series_id: Set(None),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
+
+        recompute_series_coverage(&db, sid, 1_700_000_500)
+            .await
+            .unwrap();
+        assert_eq!(
+            series_row(&db, sid).await.last_discovered_at,
+            Some(1_000),
+            "unlinking the newest release falls back to the next-newest",
+        );
+    }
+
+    /// A series with nothing linked has no discovery timestamp at all. NULL is
+    /// what the nullable-aware sort sinks to the end.
+    #[tokio::test]
+    async fn recompute_series_coverage_leaves_last_discovered_at_null_when_unlinked() {
+        use sea_orm::ActiveModelTrait;
+        let db = fresh_db().await;
+        let sid = crate::entities::series::ActiveModel {
+            canonical_title: Set("Empty".into()),
+            metadata_source: Set("test".into()),
+            metadata_fetched_at: Set(1),
+            first_seen_at: Set(1),
+            last_release_at: Set(1),
+            owned: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap()
+        .id;
+
+        recompute_series_coverage(&db, sid, 1_700_000_000)
+            .await
+            .unwrap();
+        assert_eq!(series_row(&db, sid).await.last_discovered_at, None);
     }
 
     #[tokio::test]

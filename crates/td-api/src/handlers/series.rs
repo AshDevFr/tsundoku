@@ -59,6 +59,12 @@ pub struct SeriesListItem {
     pub metadata_source: String,
     pub last_release_at: i64,
     pub first_seen_at: i64,
+    /// When tsundoku last discovered a release for this series, as opposed to
+    /// [`Self::last_release_at`] (the newest linked release's *upstream* post
+    /// date). `None` until something links. Backs the "Recently discovered"
+    /// sort, which exists because a series found today from a year-old post
+    /// sorts a year deep under `last_release_at`.
+    pub last_discovered_at: Option<i64>,
     /// Number of releases currently linked to this series. Surfaced as a
     /// badge in the feed so manual re-links that orphan a series (zero
     /// releases) are visible at a glance. Matches what
@@ -257,6 +263,8 @@ pub struct SeriesDetail {
     pub metadata_fetched_at: i64,
     pub first_seen_at: i64,
     pub last_release_at: i64,
+    /// See [`SeriesListItem::last_discovered_at`].
+    pub last_discovered_at: Option<i64>,
     pub highest_volume: Option<f64>,
     pub highest_chapter: Option<f64>,
     /// Published total volume count from provider metadata. Distinct from
@@ -329,12 +337,14 @@ pub struct SeriesListQuery {
     /// `any` (default) or `all`. See [`Self::tags`].
     pub tags_mode: Option<String>,
     /// Sort field. Supports `last_release_at` (default), `first_seen_at`,
-    /// `total_volumes`, `total_chapters`, `highest_volume`,
-    /// `highest_chapter`, `rating`, `published_start_date` (official
-    /// publication date, distinct from `last_release_at`), and `wishlisted_at`
-    /// (admin "recently clipped" order for the wishlist view). The count /
-    /// highest / rating / publication / wishlisted sorts are nullable-aware:
-    /// rows without a value sink to the end regardless of direction.
+    /// `last_discovered_at` (when tsundoku last *found* a release, as opposed
+    /// to when it was posted upstream), `total_volumes`, `total_chapters`,
+    /// `highest_volume`, `highest_chapter`, `rating`, `published_start_date`
+    /// (official publication date, distinct from `last_release_at`), and
+    /// `wishlisted_at` (admin "recently clipped" order for the wishlist view).
+    /// The count / highest / rating / publication / wishlisted / discovered
+    /// sorts are nullable-aware: rows without a value sink to the end
+    /// regardless of direction.
     /// Ignored when `q` is present (results are ranked by relevance instead).
     pub sort: Option<String>,
     /// `asc` or `desc` (default).
@@ -440,6 +450,12 @@ pub async fn list(
     }
     let sort_col = match q.sort.as_deref() {
         Some("first_seen_at") => series::Column::FirstSeenAt,
+        // When tsundoku last *found* a release, not when it was posted
+        // upstream. The two diverge by months whenever a source surfaces an
+        // old post (query feeds, backfills, the per-series release search),
+        // which is what buries a fresh discovery under `last_release_at`.
+        // Nullable (NULL = nothing linked), so it joins the NULL-last set.
+        Some("last_discovered_at") => series::Column::LastDiscoveredAt,
         Some("total_volumes") => series::Column::TotalVolumes,
         Some("total_chapters") => series::Column::TotalChapters,
         Some("highest_volume") => series::Column::HighestVolume,
@@ -470,6 +486,7 @@ pub async fn list(
             | series::Column::Rating
             | series::Column::WishlistedAt
             | series::Column::PublishedStartDate
+            | series::Column::LastDiscoveredAt
     ) {
         select = select.order_by_asc(Expr::col(sort_col).is_null());
     }
@@ -2250,6 +2267,7 @@ fn model_to_list_item(
         metadata_source: m.metadata_source,
         last_release_at: m.last_release_at,
         first_seen_at: m.first_seen_at,
+        last_discovered_at: m.last_discovered_at,
         release_count,
         total_volumes: m.total_volumes,
         total_chapters: m.total_chapters,
@@ -2297,6 +2315,7 @@ fn model_to_detail(
         metadata_fetched_at: m.metadata_fetched_at,
         first_seen_at: m.first_seen_at,
         last_release_at: m.last_release_at,
+        last_discovered_at: m.last_discovered_at,
         highest_volume: m.highest_volume,
         highest_chapter: m.highest_chapter,
         total_volumes: m.total_volumes,

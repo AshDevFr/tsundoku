@@ -5314,6 +5314,131 @@ async fn series_list_sorts_by_publication_date_with_nulls_last() {
     assert_eq!(titles("asc").await, ["Oldest", "Mid", "Newest", "Undated"]);
 }
 
+/// The discovery sort exists precisely because `last_release_at` (the upstream
+/// post date) buries a series found today from a year-old post. Seeded so the
+/// two orderings disagree completely: the newest *discovery* is the oldest
+/// *post*.
+#[tokio::test]
+async fn series_list_sorts_by_last_discovered_at_with_nulls_last() {
+    let db = fresh_db().await;
+    let seed = |title: &str, posted: i64, discovered: Option<i64>| {
+        let title = title.to_string();
+        let db = db.clone();
+        async move {
+            series::ActiveModel {
+                canonical_title: Set(title),
+                kind: Set(Some("manga".into())),
+                metadata_source: Set("api".into()),
+                metadata_fetched_at: Set(posted),
+                first_seen_at: Set(posted),
+                last_release_at: Set(posted),
+                last_discovered_at: Set(discovered),
+                owned: Set(0),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+    };
+    // "Backfilled" is the oldest post but the newest discovery — the exact
+    // shape that ranks ~5000 rows deep under the default sort.
+    seed("Backfilled", 1_600_000_000, Some(1_900_000_000)).await;
+    seed("Recent", 1_800_000_000, Some(1_800_000_100)).await;
+    seed("Older", 1_700_000_000, Some(1_700_000_100)).await;
+    seed("Undiscovered", 1_850_000_000, None).await;
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+
+    let titles = |sort: &str, order: &str| {
+        let app = app.clone();
+        let uri = format!("/api/v1/series?sort={sort}&order={order}");
+        async move {
+            let resp = app
+                .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            body_json(resp)
+                .await
+                .get("items")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| i["canonicalTitle"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        }
+    };
+
+    // Descending: newest discovery first; the never-discovered row sinks.
+    assert_eq!(
+        titles("last_discovered_at", "desc").await,
+        ["Backfilled", "Recent", "Older", "Undiscovered"],
+    );
+    // Ascending: oldest discovery first, undiscovered row STILL last.
+    assert_eq!(
+        titles("last_discovered_at", "asc").await,
+        ["Older", "Recent", "Backfilled", "Undiscovered"],
+    );
+    // The point of the whole phase: the default sort buries "Backfilled" that
+    // the discovery sort leads with.
+    assert_eq!(
+        titles("last_release_at", "desc").await,
+        ["Undiscovered", "Recent", "Older", "Backfilled"],
+    );
+}
+
+/// The discovery timestamp has to reach the client, not just the database —
+/// the UI renders it next to "last release" on the series row.
+#[tokio::test]
+async fn series_list_exposes_last_discovered_at() {
+    let db = fresh_db().await;
+    series::ActiveModel {
+        canonical_title: Set("Discovered".into()),
+        metadata_source: Set("api".into()),
+        metadata_fetched_at: Set(1),
+        first_seen_at: Set(1),
+        last_release_at: Set(1),
+        last_discovered_at: Set(Some(1_900_000_000)),
+        owned: Set(0),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["items"][0]["lastDiscoveredAt"], 1_900_000_000);
+}
+
 #[tokio::test]
 async fn series_detail_codex_is_admin_only() {
     let db = fresh_db().await;

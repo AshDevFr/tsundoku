@@ -166,6 +166,10 @@ pub async fn upsert_series_from_metadata(
                     volume_coverage_json: NotSet,
                     chapter_coverage_json: NotSet,
                     updated_at: NotSet,
+                    // Also release-derived, and owned by the same recompute:
+                    // when tsundoku last *found* a release here, as opposed to
+                    // when the newest one was posted upstream.
+                    last_discovered_at: NotSet,
                     owned: NotSet,
                     // Operator-owned flags: leave them alone so a provider
                     // re-fetch never resets a manually-set ignore or wishlist.
@@ -204,6 +208,9 @@ pub async fn upsert_series_from_metadata(
                 volume_coverage_json: Set(None),
                 chapter_coverage_json: Set(None),
                 updated_at: Set(0),
+                // NULL until a release links and the coverage recompute fills
+                // it in; the nullable-aware sort keeps such rows at the end.
+                last_discovered_at: Set(None),
                 owned: Set(0),
                 ignore_completion: Set(false),
                 // Not wishlisted on creation; the from-provider add path stamps

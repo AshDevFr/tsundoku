@@ -49,6 +49,11 @@ interface FilterPanelProps {
 // `@/constants/series` so the manual-series editor shares the exact vocab.
 const SORT_OPTIONS = [
   { value: "last_release_at", label: "Last release" },
+  // When tsundoku found the release, not when it was posted upstream. A query
+  // feed, a backfill, or the per-series release search routinely surfaces
+  // posts that are months or years old, and those sort to the bottom under
+  // "Last release" however recently they were discovered.
+  { value: "last_discovered_at", label: "Recently discovered" },
   { value: "published_start_date", label: "Publication date" },
   { value: "first_seen_at", label: "First seen" },
   { value: "total_volumes", label: "Volume count" },
@@ -65,6 +70,7 @@ const SORT_OPTIONS = [
 type OrderLabels = { desc: string; asc: string };
 const ORDER_LABELS_BY_SORT: Record<string, OrderLabels> = {
   last_release_at: { desc: "Newest first", asc: "Oldest first" },
+  last_discovered_at: { desc: "Newest first", asc: "Oldest first" },
   published_start_date: { desc: "Newest first", asc: "Oldest first" },
   first_seen_at: { desc: "Newest first", asc: "Oldest first" },
   total_volumes: { desc: "Highest first", asc: "Lowest first" },

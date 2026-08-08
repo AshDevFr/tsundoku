@@ -121,6 +121,27 @@ describe("FilterPanel — sort", () => {
       expect.objectContaining({ sort: "published_start_date", page: 1 }),
     );
   });
+
+  it("selecting Recently discovered emits sort=last_discovered_at", async () => {
+    const onChange = vi.fn();
+    renderPanel({}, onChange);
+    fireEvent.click(await screen.findByTestId("filter-sort"));
+    fireEvent.click(await screen.findByText("Recently discovered"));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: "last_discovered_at", page: 1 }),
+    );
+  });
+
+  // The Order dropdown swaps its wording per sort field ("Newest first" for
+  // dates, "Highest first" for counts). A new date sort that fell through to
+  // the numeric default would read as nonsense.
+  it("keeps recency wording on the order select for the discovery sort", async () => {
+    renderPanel({ sort: "last_discovered_at" }, vi.fn());
+    // A sort field missing from ORDER_LABELS_BY_SORT falls back to the numeric
+    // wording, so asserting the date wording is present is the regression.
+    expect(await screen.findByDisplayValue("Newest first")).toBeTruthy();
+    expect(screen.queryByDisplayValue("Highest first")).toBeNull();
+  });
 });
 
 describe("FilterPanel — kind / status multi-select", () => {

@@ -1729,7 +1729,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "Sort field. Supports `last_release_at` (default), `first_seen_at`,\n`total_volumes`, `total_chapters`, `highest_volume`,\n`highest_chapter`, `rating`, `published_start_date` (official\npublication date, distinct from `last_release_at`), and `wishlisted_at`\n(admin \"recently clipped\" order for the wishlist view). The count /\nhighest / rating / publication / wishlisted sorts are nullable-aware:\nrows without a value sink to the end regardless of direction.\nIgnored when `q` is present (results are ranked by relevance instead).",
+            "description": "Sort field. Supports `last_release_at` (default), `first_seen_at`,\n`last_discovered_at` (when tsundoku last *found* a release, as opposed\nto when it was posted upstream), `total_volumes`, `total_chapters`,\n`highest_volume`, `highest_chapter`, `rating`, `published_start_date`\n(official publication date, distinct from `last_release_at`), and\n`wishlisted_at` (admin \"recently clipped\" order for the wishlist view).\nThe count / highest / rating / publication / wishlisted / discovered\nsorts are nullable-aware: rows without a value sink to the end\nregardless of direction.\nIgnored when `q` is present (results are ranked by relevance instead).",
             "required": false,
             "schema": {
               "type": "string"
@@ -5799,6 +5799,14 @@
               "null"
             ]
           },
+          "lastDiscoveredAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "See [`SeriesListItem::last_discovered_at`]."
+          },
           "lastReleaseAt": {
             "type": "integer",
             "format": "int64"
@@ -6083,6 +6091,14 @@
               "string",
               "null"
             ]
+          },
+          "lastDiscoveredAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When tsundoku last discovered a release for this series, as opposed to\n[`Self::last_release_at`] (the newest linked release's *upstream* post\ndate). `None` until something links. Backs the \"Recently discovered\"\nsort, which exists because a series found today from a year-old post\nsorts a year deep under `last_release_at`."
           },
           "lastReleaseAt": {
             "type": "integer",
