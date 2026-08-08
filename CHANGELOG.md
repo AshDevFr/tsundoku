@@ -2,6 +2,23 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.19.0] - 2026-08-10
+
+### Features
+
+- Add a release by pasting its post url
+- Sort series by when releases were discovered
+- Find a series by its provider ID or URL
+- Search every release from a new admin Releases page
+- *(admin)* Purge orphan series from the maintenance page
+- *(web)* Restructure the sources page and fold card details away
+
+### Bug Fixes
+
+- *(api)* Stop series search from silently dropping candidates
+- *(resolution)* Stop automatic resolves from reverting operator decisions
+- *(db)* Track every feed carrying a release, not just the first
+
 ## [1.18.4] - 2026-08-07
 
 ### Features
