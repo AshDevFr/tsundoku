@@ -190,23 +190,29 @@ export function useSeriesDetail(id: number | undefined) {
 /// the `/series/lookup` deep-link page. A 404 resolves to `null` rather than
 /// throwing: "not discovered yet" is that page's expected common case, not a
 /// failure (only transport/server errors reject).
+export type SeriesLookupMatch = components["schemas"]["SeriesLookupMatch"];
+
+/// Resolve an external id to the series carrying it. `provider` is optional:
+/// with it the result is 0-or-1 (the mapping table is unique per provider),
+/// without it the same bare id can match several providers, so the caller
+/// disambiguates. `externalId` also accepts a full series URL, in which case
+/// the server infers the provider from it.
 export function useSeriesLookup(provider?: string, externalId?: string) {
   return useQuery({
     queryKey: ["series-lookup", provider, externalId],
-    enabled: Boolean(provider && externalId),
+    enabled: Boolean(externalId),
     retry: false,
-    queryFn: async (): Promise<number | null> => {
-      const { data, error, response } = await api.GET("/api/v1/series/lookup", {
+    queryFn: async (): Promise<SeriesLookupMatch[]> => {
+      const { data, error } = await api.GET("/api/v1/series/lookup", {
         params: {
           query: {
-            provider: provider as string,
+            provider: provider || undefined,
             externalId: externalId as string,
           },
         },
       });
-      if (response.status === 404) return null;
       if (error || !data) throw new Error("series lookup failed");
-      return data.seriesId;
+      return data.matches;
     },
   });
 }

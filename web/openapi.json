@@ -2247,14 +2247,15 @@
         "tags": [
           "series"
         ],
-        "summary": "Resolve a `(provider, externalId)` pair to the internal series id. Backs\nthe `/series/lookup` deep-link page: external tools (e.g. Codex's\nplugin web-links button) link to that page with only a provider id, and\nthe page resolves it here before redirecting to the series detail route.",
+        "summary": "Resolve an external id — bare, provider-qualified, or a pasted series URL —\nto the series that carries it.",
+        "description": "Backs two callers: the `/series/lookup` deep-link page that external tools\n(Codex's plugin web-links button) point at, and the in-app lookup modal.\n\nThis is a key lookup, not a search: with a provider it is 0-or-1 by\nschema constraint. A bare id has no such guarantee, so the response is a\nlist and disambiguation is the caller's job.",
         "operationId": "lookup",
         "parameters": [
           {
             "name": "provider",
             "in": "query",
-            "description": "Provider token as stored in `series_external_ids.provider`\n(e.g. `mangabaka`, `mal`, `anime_planet`). Case-insensitive.",
-            "required": true,
+            "description": "Provider token as stored in `series_external_ids.provider`\n(e.g. `mangabaka`, `mal`, `anime_planet`). Case-insensitive.\n\nOptional. With it the lookup is provider-qualified and returns at most\none match, guaranteed by the `UNIQUE(provider, external_id)`\nconstraint. Without it every provider is searched, which can return\nseveral: id spaces overlap, so the same number is a different series on\nMAL than on MangaBaka. Ignored when [`Self::external_id`] is a\nrecognized series URL, since the URL already names its provider.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -2262,7 +2263,7 @@
           {
             "name": "externalId",
             "in": "query",
-            "description": "The provider's own id for the series, matched exactly (after trim).",
+            "description": "The provider's own id for the series, matched exactly (after trim), or\na full series URL (MangaBaka, AniList, MyAnimeList, MangaDex,\nMangaUpdates) to infer the provider from.",
             "required": true,
             "schema": {
               "type": "string"
@@ -2279,9 +2280,6 @@
                 }
               }
             }
-          },
-          "404": {
-            "description": "No series maps to that (provider, externalId)"
           }
         }
       }
@@ -6227,15 +6225,43 @@
           }
         }
       },
-      "SeriesLookupResponse": {
+      "SeriesLookupMatch": {
         "type": "object",
+        "description": "One `(provider, externalId) → series` hit. Carries the title so a caller\ndisambiguating several matches has something to show the user.",
         "required": [
-          "seriesId"
+          "seriesId",
+          "provider",
+          "externalId",
+          "canonicalTitle"
         ],
         "properties": {
+          "canonicalTitle": {
+            "type": "string"
+          },
+          "externalId": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
           "seriesId": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "SeriesLookupResponse": {
+        "type": "object",
+        "required": [
+          "matches"
+        ],
+        "properties": {
+          "matches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesLookupMatch"
+            },
+            "description": "Matching series, ordered by provider. Empty when nothing maps — a\nnormal outcome (tsundoku only knows series it has discovered), not an\nerror, so this is a `200` rather than a `404`."
           }
         }
       },

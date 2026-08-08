@@ -1133,42 +1133,151 @@ pub async fn get(
 pub struct SeriesLookupParams {
     /// Provider token as stored in `series_external_ids.provider`
     /// (e.g. `mangabaka`, `mal`, `anime_planet`). Case-insensitive.
-    pub provider: String,
-    /// The provider's own id for the series, matched exactly (after trim).
+    ///
+    /// Optional. With it the lookup is provider-qualified and returns at most
+    /// one match, guaranteed by the `UNIQUE(provider, external_id)`
+    /// constraint. Without it every provider is searched, which can return
+    /// several: id spaces overlap, so the same number is a different series on
+    /// MAL than on MangaBaka. Ignored when [`Self::external_id`] is a
+    /// recognized series URL, since the URL already names its provider.
+    pub provider: Option<String>,
+    /// The provider's own id for the series, matched exactly (after trim), or
+    /// a full series URL (MangaBaka, AniList, MyAnimeList, MangaDex,
+    /// MangaUpdates) to infer the provider from.
     pub external_id: String,
+}
+
+/// One `(provider, externalId) → series` hit. Carries the title so a caller
+/// disambiguating several matches has something to show the user.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesLookupMatch {
+    pub series_id: i32,
+    pub provider: String,
+    pub external_id: String,
+    pub canonical_title: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesLookupResponse {
-    pub series_id: i32,
+    /// Matching series, ordered by provider. Empty when nothing maps — a
+    /// normal outcome (tsundoku only knows series it has discovered), not an
+    /// error, so this is a `200` rather than a `404`.
+    pub matches: Vec<SeriesLookupMatch>,
 }
 
-/// Resolve a `(provider, externalId)` pair to the internal series id. Backs
-/// the `/series/lookup` deep-link page: external tools (e.g. Codex's
-/// plugin web-links button) link to that page with only a provider id, and
-/// the page resolves it here before redirecting to the series detail route.
+/// Resolve an external id — bare, provider-qualified, or a pasted series URL —
+/// to the series that carries it.
+///
+/// Backs two callers: the `/series/lookup` deep-link page that external tools
+/// (Codex's plugin web-links button) point at, and the in-app lookup modal.
+///
+/// This is a key lookup, not a search: with a provider it is 0-or-1 by
+/// schema constraint. A bare id has no such guarantee, so the response is a
+/// list and disambiguation is the caller's job.
 #[utoipa::path(
     get,
     path = "/api/v1/series/lookup",
     tag = "series",
     params(SeriesLookupParams),
-    responses(
-        (status = 200, body = SeriesLookupResponse),
-        (status = 404, description = "No series maps to that (provider, externalId)")
-    )
+    responses((status = 200, body = SeriesLookupResponse))
 )]
 pub async fn lookup(
     State(state): State<AppState>,
     Query(params): Query<SeriesLookupParams>,
 ) -> ApiResult<Json<SeriesLookupResponse>> {
-    let provider = params.provider.trim().to_ascii_lowercase();
-    let external_id = params.external_id.trim();
-    let series_id = series_external_ids_repo::find_series_id(&state.db, &provider, external_id)
+    let raw = params.external_id.trim();
+    if raw.is_empty() {
+        return Ok(Json(SeriesLookupResponse { matches: vec![] }));
+    }
+
+    // A recognized URL names its own provider, so it outranks the `provider`
+    // param rather than being second-guessed by it.
+    let resolved = match td_resolution::foreign_id::detect(raw) {
+        Some((provider, id)) => resolve_detected_pair(&state, provider, id).await?,
+        None => match params.provider.as_deref().map(str::trim) {
+            Some(p) if !p.is_empty() => Some((p.to_ascii_lowercase(), raw.to_string())),
+            // Bare id, no provider: fall through to the all-provider search.
+            _ => None,
+        },
+    };
+
+    let rows = match resolved {
+        Some((provider, external_id)) => {
+            series_external_ids_repo::find_series_id(&state.db, &provider, &external_id)
+                .await
+                .map_err(anyhow_err)?
+                .map(|series_id| series_external_ids_repo::Model {
+                    provider,
+                    external_id,
+                    series_id,
+                    fetched_at: 0,
+                })
+                .into_iter()
+                .collect()
+        }
+        None => series_external_ids_repo::find_by_external_id(&state.db, raw)
+            .await
+            .map_err(anyhow_err)?,
+    };
+
+    // Titles for the disambiguation list. One query for the whole (tiny) set.
+    let series_ids: Vec<i32> = rows.iter().map(|r| r.series_id).collect();
+    let titles: HashMap<i32, String> = if series_ids.is_empty() {
+        HashMap::new()
+    } else {
+        series::Entity::find()
+            .filter(series::Column::Id.is_in(series_ids))
+            .select_only()
+            .column(series::Column::Id)
+            .column(series::Column::CanonicalTitle)
+            .into_tuple::<(i32, String)>()
+            .all(&state.db)
+            .await
+            .map_err(anyhow_err)?
+            .into_iter()
+            .collect()
+    };
+
+    let matches = rows
+        .into_iter()
+        .map(|r| SeriesLookupMatch {
+            canonical_title: titles.get(&r.series_id).cloned().unwrap_or_default(),
+            series_id: r.series_id,
+            provider: r.provider,
+            external_id: r.external_id,
+        })
+        .collect();
+    Ok(Json(SeriesLookupResponse { matches }))
+}
+
+/// Map a `(provider, id)` pair detected from a URL onto one that actually
+/// exists in `series_external_ids`.
+///
+/// Only legacy MangaUpdates needs translating: `series.html?id=NNN` URLs
+/// detect as the synthetic `mangaupdates-legacy` provider, which is never
+/// stored — the resolver rewrites those to modern slugs via a cache. Querying
+/// for it directly would always miss while looking like a supported URL, so
+/// consult the same cache here. A cache miss yields no match rather than a
+/// wrong one; resolving it for real needs a network redirect, which does not
+/// belong in a lookup endpoint.
+async fn resolve_detected_pair(
+    state: &AppState,
+    provider: &'static str,
+    id: String,
+) -> ApiResult<Option<(String, String)>> {
+    if provider != td_resolution::foreign_id::MANGAUPDATES_LEGACY {
+        return Ok(Some((provider.to_string(), id)));
+    }
+    let Ok(legacy) = id.parse::<i64>() else {
+        return Ok(None);
+    };
+    let modern = td_db::repos::mangaupdates_id_repo::lookup(&state.db, legacy)
         .await
         .map_err(anyhow_err)?
-        .ok_or_else(|| ApiError::NotFound(format!("series for {provider}:{external_id}")))?;
-    Ok(Json(SeriesLookupResponse { series_id }))
+        .flatten();
+    Ok(modern.map(|m| ("mangaupdates".to_string(), m)))
 }
 
 /// Incremental release feed: series with coverage activity, ordered by

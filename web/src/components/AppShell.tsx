@@ -18,6 +18,7 @@ import { useDisclosure } from "@mantine/hooks";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useAppInfo, useStats } from "@/api/queries";
+import { SeriesLookupModal } from "@/components/SeriesLookupModal";
 
 function ColorSchemeToggle() {
   const { setColorScheme } = useMantineColorScheme();
@@ -82,6 +83,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   // The navbar is a mobile-only drawer: always collapsed on desktop (where the
   // header keeps the inline badges), toggled by the burger below `sm`.
   const [opened, { toggle, close }] = useDisclosure(false);
+  const [lookupOpened, { open: openLookup, close: closeLookup }] =
+    useDisclosure(false);
   const reviewCount =
     (stats.data?.releases.unresolved ?? 0) +
     (stats.data?.releases.ambiguous ?? 0) +
@@ -126,6 +129,17 @@ export function AppShell({ children }: { children: ReactNode }) {
                   {stats.data.series} series
                 </Text>
               )}
+              <Badge
+                onClick={openLookup}
+                color="blue"
+                variant="default"
+                radius="sm"
+                style={{ cursor: "pointer" }}
+                aria-label="Find a series by ID"
+                data-testid="appbar-series-lookup"
+              >
+                # by ID
+              </Badge>
               <Badge
                 component={Link}
                 to="/admin/review"
@@ -211,6 +225,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             data-testid="mobile-nav-wishlist"
           />
           <NavLink
+            label="# Find by ID"
+            onClick={() => {
+              close();
+              openLookup();
+            }}
+            data-testid="mobile-nav-series-lookup"
+          />
+          <NavLink
             component={Link}
             to="/admin"
             label="Admin"
@@ -235,6 +257,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </Stack>
       </MantineAppShell.Navbar>
       <MantineAppShell.Main>{children}</MantineAppShell.Main>
+      {/* Shared by the desktop badge and the mobile drawer entry, so the two
+          triggers can never drift out of sync. */}
+      <SeriesLookupModal opened={lookupOpened} onClose={closeLookup} />
     </MantineAppShell>
   );
 }

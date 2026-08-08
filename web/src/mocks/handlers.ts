@@ -1898,27 +1898,38 @@ export const handlers = [
   // mangabaka ids (`id * 1111`).
   http.get("/api/v1/series/lookup", ({ request }) => {
     const url = new URL(request.url);
-    const provider = (url.searchParams.get("provider") ?? "")
+    let provider = (url.searchParams.get("provider") ?? "")
       .trim()
       .toLowerCase();
-    const externalId = (url.searchParams.get("externalId") ?? "").trim();
-    if (!provider || !externalId)
-      return new HttpResponse(null, { status: 400 });
-    const numeric = Number(externalId);
-    const seriesId = numeric / 1111;
-    const found =
-      provider === "mangabaka" && Number.isInteger(seriesId)
-        ? SERIES.find((s) => s.id === seriesId)
-        : undefined;
-    if (!found)
-      return HttpResponse.json(
+    const raw = (url.searchParams.get("externalId") ?? "").trim();
+    if (!raw) return new HttpResponse(null, { status: 400 });
+
+    // Mirror the server's URL inference: a recognized series URL names its own
+    // provider and outranks the `provider` param.
+    let externalId = raw;
+    const fromUrl = /mangabaka\.(?:org|dev)\/(\d+)/i.exec(raw);
+    if (fromUrl) {
+      provider = "mangabaka";
+      externalId = fromUrl[1];
+    }
+
+    const seriesId = Number(externalId) / 1111;
+    if (!Number.isInteger(seriesId)) return HttpResponse.json({ matches: [] });
+    const found = SERIES.find((s) => s.id === seriesId);
+    // Fixture ids are mangabaka-shaped; a provider-qualified lookup for any
+    // other provider misses, an unqualified one still finds the mangabaka row.
+    if (!found || (provider && provider !== "mangabaka"))
+      return HttpResponse.json({ matches: [] });
+    return HttpResponse.json({
+      matches: [
         {
-          error: "not_found",
-          message: `series for ${provider}:${externalId}`,
+          seriesId: found.id,
+          provider: "mangabaka",
+          externalId,
+          canonicalTitle: found.canonicalTitle,
         },
-        { status: 404 },
-      );
-    return HttpResponse.json({ seriesId: found.id });
+      ],
+    });
   }),
 
   http.get("/api/v1/series/:id", ({ params }) => {

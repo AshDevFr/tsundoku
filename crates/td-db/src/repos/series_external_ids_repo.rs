@@ -68,6 +68,23 @@ pub async fn find_series_id(
     Ok(row.map(|r| r.series_id))
 }
 
+/// Every mapping carrying this `external_id`, across all providers, ordered
+/// by provider for a stable presentation.
+///
+/// Distinct from [`find_series_id`], which is provider-qualified and therefore
+/// 0-or-1 by the `UNIQUE(provider, external_id)` constraint. A *bare* id has
+/// no such guarantee: provider id spaces overlap freely, so the same number is
+/// a different series on MAL than on MangaBaka. Measured on a real catalog,
+/// ~3% of distinct external ids map to more than one series, up to four. The
+/// caller is expected to disambiguate rather than silently pick one.
+pub async fn find_by_external_id(db: &DatabaseConnection, external_id: &str) -> Result<Vec<Model>> {
+    Ok(series_external_ids::Entity::find()
+        .filter(series_external_ids::Column::ExternalId.eq(external_id))
+        .order_by_asc(series_external_ids::Column::Provider)
+        .all(db)
+        .await?)
+}
+
 /// All external IDs known for a given internal series.
 pub async fn list_for_series(db: &DatabaseConnection, series_id: i32) -> Result<Vec<Model>> {
     Ok(series_external_ids::Entity::find()
@@ -183,6 +200,32 @@ mod tests {
         assert_eq!(map[&s1].len(), 2);
         assert_eq!(map[&s2].len(), 1);
         assert!(!map.contains_key(&s3));
+    }
+
+    /// A bare id is ambiguous across providers by construction — the same
+    /// number is a different series on each — so the lookup returns the whole
+    /// set for the caller to disambiguate.
+    #[tokio::test]
+    async fn find_by_external_id_spans_providers_and_orders_by_provider() {
+        let db = fresh_db().await;
+        let s1 = insert_series(&db, "A").await;
+        let s2 = insert_series(&db, "B").await;
+        let s3 = insert_series(&db, "C").await;
+        upsert(&db, s1, "mangabaka", "1329", 0).await.unwrap();
+        upsert(&db, s2, "mal", "1329", 0).await.unwrap();
+        upsert(&db, s3, "kitsu", "9999", 0).await.unwrap();
+
+        let hits = find_by_external_id(&db, "1329").await.unwrap();
+        assert_eq!(
+            hits.iter()
+                .map(|m| (m.provider.as_str(), m.series_id))
+                .collect::<Vec<_>>(),
+            vec![("mal", s2), ("mangabaka", s1)],
+            "both providers' rows come back, ordered by provider",
+        );
+
+        assert_eq!(find_by_external_id(&db, "9999").await.unwrap().len(), 1);
+        assert!(find_by_external_id(&db, "nope").await.unwrap().is_empty());
     }
 
     #[tokio::test]

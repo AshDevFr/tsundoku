@@ -1008,10 +1008,14 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Resolve a `(provider, externalId)` pair to the internal series id. Backs
-         *     the `/series/lookup` deep-link page: external tools (e.g. Codex's
-         *     plugin web-links button) link to that page with only a provider id, and
-         *     the page resolves it here before redirecting to the series detail route.
+         * Resolve an external id — bare, provider-qualified, or a pasted series URL —
+         *     to the series that carries it.
+         * @description Backs two callers: the `/series/lookup` deep-link page that external tools
+         *     (Codex's plugin web-links button) point at, and the in-app lookup modal.
+         *
+         *     This is a key lookup, not a search: with a provider it is 0-or-1 by
+         *     schema constraint. A bare id has no such guarantee, so the response is a
+         *     list and disambiguation is the caller's job.
          */
         get: operations["lookup"];
         put?: never;
@@ -2845,9 +2849,24 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
-        SeriesLookupResponse: {
+        /**
+         * @description One `(provider, externalId) → series` hit. Carries the title so a caller
+         *     disambiguating several matches has something to show the user.
+         */
+        SeriesLookupMatch: {
+            canonicalTitle: string;
+            externalId: string;
+            provider: string;
             /** Format: int32 */
             seriesId: number;
+        };
+        SeriesLookupResponse: {
+            /**
+             * @description Matching series, ordered by provider. Empty when nothing maps — a
+             *     normal outcome (tsundoku only knows series it has discovered), not an
+             *     error, so this is a `200` rather than a `404`.
+             */
+            matches: components["schemas"]["SeriesLookupMatch"][];
         };
         /** @description Body for `PUT /api/v1/series/{id}/ignore-completion`. */
         SetIgnoreCompletionRequest: {
@@ -4670,9 +4689,20 @@ export interface operations {
                 /**
                  * @description Provider token as stored in `series_external_ids.provider`
                  *     (e.g. `mangabaka`, `mal`, `anime_planet`). Case-insensitive.
+                 *
+                 *     Optional. With it the lookup is provider-qualified and returns at most
+                 *     one match, guaranteed by the `UNIQUE(provider, external_id)`
+                 *     constraint. Without it every provider is searched, which can return
+                 *     several: id spaces overlap, so the same number is a different series on
+                 *     MAL than on MangaBaka. Ignored when [`Self::external_id`] is a
+                 *     recognized series URL, since the URL already names its provider.
                  */
-                provider: string;
-                /** @description The provider's own id for the series, matched exactly (after trim). */
+                provider?: string;
+                /**
+                 * @description The provider's own id for the series, matched exactly (after trim), or
+                 *     a full series URL (MangaBaka, AniList, MyAnimeList, MangaDex,
+                 *     MangaUpdates) to infer the provider from.
+                 */
                 externalId: string;
             };
             header?: never;
@@ -4688,13 +4718,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SeriesLookupResponse"];
                 };
-            };
-            /** @description No series maps to that (provider, externalId) */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

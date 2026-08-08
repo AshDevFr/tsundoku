@@ -57,7 +57,11 @@ export function SeriesLookupPage() {
   // id of 0 still counts as present.
   const idString = id !== undefined ? String(id) : undefined;
   const lookup = useSeriesLookup(source, idString);
-  const seriesId = lookup.data;
+  // Deep links are always provider-qualified, so the mapping table's
+  // uniqueness constraint makes this 0-or-1 in practice. Redirect on exactly
+  // one; anything else falls through to the miss state below.
+  const seriesId =
+    lookup.data?.length === 1 ? lookup.data[0].seriesId : undefined;
 
   useEffect(() => {
     if (typeof seriesId === "number") {

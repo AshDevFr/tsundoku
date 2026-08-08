@@ -558,7 +558,9 @@ async fn series_lookup_resolves_external_id() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["seriesId"], sid);
+    assert_eq!(body["matches"][0]["seriesId"], sid);
+    assert_eq!(body["matches"][0]["provider"], "mangabaka");
+    assert_eq!(body["matches"][0]["canonicalTitle"], "Test Series");
 }
 
 #[tokio::test]
@@ -591,11 +593,11 @@ async fn series_lookup_provider_is_case_insensitive() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["seriesId"], sid);
+    assert_eq!(body["matches"][0]["seriesId"], sid);
 }
 
 #[tokio::test]
-async fn series_lookup_404s_for_unknown_mapping() {
+async fn series_lookup_returns_no_matches_for_unknown_mapping() {
     let db = fresh_db().await;
     let sid = seed_series(&db, "Test Series", "manga").await;
     series_external_ids_repo::upsert(&db, sid, "mangabaka", "42", 100)
@@ -622,9 +624,186 @@ async fn series_lookup_404s_for_unknown_mapping() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    // A miss is expected for any series tsundoku has not discovered, so it is
+    // an empty result rather than an error.
+    assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["error"], "not_found");
+    assert_eq!(body["matches"].as_array().unwrap().len(), 0);
+}
+
+/// Without a provider the id is ambiguous by construction: provider id spaces
+/// overlap, so the same number is a different series on each. Return the whole
+/// set and let the caller disambiguate rather than silently picking one.
+#[tokio::test]
+async fn series_lookup_without_provider_returns_every_provider_match() {
+    let db = fresh_db().await;
+    let mb = seed_series(&db, "MangaBaka 1329", "manga").await;
+    let mal = seed_series(&db, "MAL 1329", "manga").await;
+    let other = seed_series(&db, "Unrelated", "manga").await;
+    series_external_ids_repo::upsert(&db, mb, "mangabaka", "1329", 100)
+        .await
+        .unwrap();
+    series_external_ids_repo::upsert(&db, mal, "mal", "1329", 100)
+        .await
+        .unwrap();
+    series_external_ids_repo::upsert(&db, other, "kitsu", "555", 100)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/lookup?externalId=1329")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let pairs: Vec<(String, i64)> = body["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["provider"].as_str().unwrap().to_string(),
+                m["seriesId"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        pairs,
+        vec![
+            ("mal".to_string(), mal as i64),
+            ("mangabaka".to_string(), mb as i64)
+        ],
+        "both providers' rows come back, ordered by provider",
+    );
+}
+
+/// Pasting a series URL is the common case, and the URL already names its
+/// provider — so no dropdown is needed and the result is unambiguous.
+#[tokio::test]
+async fn series_lookup_infers_the_provider_from_a_pasted_url() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "My Quiet Blacksmith Life", "manga").await;
+    series_external_ids_repo::upsert(&db, sid, "mangabaka", "6734", 100)
+        .await
+        .unwrap();
+    // A decoy sharing the bare id under a different provider: inferring the
+    // provider from the URL must exclude it.
+    let decoy = seed_series(&db, "Decoy", "manga").await;
+    series_external_ids_repo::upsert(&db, decoy, "mal", "6734", 100)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/series/lookup?externalId=https%3A%2F%2Fmangabaka.dev%2F6734")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let matches = body["matches"].as_array().unwrap();
+    assert_eq!(
+        matches.len(),
+        1,
+        "the URL names its provider, so no ambiguity"
+    );
+    assert_eq!(matches[0]["seriesId"], sid);
+    assert_eq!(matches[0]["provider"], "mangabaka");
+}
+
+/// Legacy MangaUpdates URLs detect as the synthetic `mangaupdates-legacy`
+/// provider, which is never stored. Querying it directly would always miss
+/// while looking like a supported URL, so the same translation cache the
+/// resolver uses is consulted here.
+#[tokio::test]
+async fn series_lookup_translates_legacy_mangaupdates_urls_via_the_id_cache() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "Legacy Linked", "manga").await;
+    series_external_ids_repo::upsert(&db, sid, "mangaupdates", "jwezzey", 100)
+        .await
+        .unwrap();
+    td_db::repos::mangaupdates_id_repo::record(&db, 151349, Some("jwezzey"), 100)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let uri = "/api/v1/series/lookup?externalId=https%3A%2F%2Fwww.mangaupdates.com%2Fseries.html%3Fid%3D151349";
+    let resp = app
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["matches"][0]["seriesId"], sid);
+    assert_eq!(body["matches"][0]["provider"], "mangaupdates");
+}
+
+/// An uncached legacy id resolves to nothing rather than to the wrong series:
+/// translating it for real needs a network redirect, which a lookup endpoint
+/// has no business doing.
+#[tokio::test]
+async fn series_lookup_returns_nothing_for_an_uncached_legacy_mangaupdates_id() {
+    let db = fresh_db().await;
+    let sid = seed_series(&db, "Some Series", "manga").await;
+    series_external_ids_repo::upsert(&db, sid, "mangaupdates", "jwezzey", 100)
+        .await
+        .unwrap();
+
+    let app = build_app(
+        db,
+        metadata_registry_with(StubProvider {
+            id: "mb",
+            returns: None,
+            ..Default::default()
+        }),
+        source_registry_with(vec![]),
+        open_auth(),
+    );
+    let uri = "/api/v1/series/lookup?externalId=https%3A%2F%2Fwww.mangaupdates.com%2Fseries.html%3Fid%3D999999";
+    let resp = app
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["matches"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]
