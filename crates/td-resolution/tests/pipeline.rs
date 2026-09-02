@@ -1045,6 +1045,82 @@ async fn mixed_format_release_with_candidates_in_two_kinds_goes_to_review() {
     assert_eq!(candidates.len(), 2);
 }
 
+/// Most audiobook uploads say so in the title ("(Audiobook)") but the file
+/// list may be missing (detail fetch off or failed). The title keyword
+/// alone must steer the release to the same-titled novel, not the manga.
+#[tokio::test]
+async fn fuzzy_title_with_audiobook_keyword_prefers_novel_without_file_list() {
+    let db = fresh_db().await;
+    let provider = Arc::new(FakeProvider::new("mb"));
+    let manga = SeriesMetadata {
+        external_id: "manga-ab".into(),
+        canonical_title: "Shadow Eminence".into(),
+        kind: Some(SeriesKind::Manga),
+        published_start_date: None,
+        published_end_date: None,
+        content_hash: "h-m-ab".into(),
+        ..sample_metadata()
+    };
+    let novel = SeriesMetadata {
+        external_id: "novel-ab".into(),
+        canonical_title: "Shadow Eminence".into(),
+        kind: Some(SeriesKind::Novel),
+        published_start_date: None,
+        published_end_date: None,
+        content_hash: "h-n-ab".into(),
+        ..novel_metadata()
+    };
+    provider.register_get(manga.clone());
+    provider.register_get(novel.clone());
+    // Manga first so naive "best wins" would pick it.
+    provider.register_search(
+        "Shadow Eminence",
+        vec![
+            SearchHit {
+                external_id: "manga-ab".into(),
+                title: "Shadow Eminence".into(),
+                year: None,
+                cover_url: None,
+                kind: Some(SeriesKind::Manga),
+                score: Some(1.0),
+            },
+            SearchHit {
+                external_id: "novel-ab".into(),
+                title: "Shadow Eminence".into(),
+                year: None,
+                cover_url: None,
+                kind: Some(SeriesKind::Novel),
+                score: Some(1.0),
+            },
+        ],
+    );
+    let registry = build_registry(provider.clone());
+    insert_release(
+        &db,
+        "r-audiobook",
+        "Shadow Eminence, Vol. 05 (Audiobook) [Troglodyte]",
+        None,
+        &[],
+    )
+    .await;
+
+    let resolver = make_resolver(&db, registry, ingestion_default());
+    let out = resolver.resolve_one("r-audiobook").await.unwrap();
+    assert_eq!(out.path, Some(ResolutionPath::FuzzyTitle));
+    assert_eq!(out.status, td_resolution::ResolutionStatus::Resolved);
+    let stored = releases::Entity::find_by_id("r-audiobook".to_string())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let linked = series::Entity::find_by_id(stored.series_id.expect("linked"))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(linked.kind.as_deref(), Some("novel"));
+}
+
 /// When the only fuzzy candidate is format-incompatible (e.g. a CBZ
 /// release whose sole same-titled match is a novel), the resolver still
 /// links the release to that candidate but demotes it to `ambiguous`,

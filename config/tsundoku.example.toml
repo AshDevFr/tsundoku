@@ -103,8 +103,12 @@ poll_write_batch_size = 10
 # formats        = ["cbz", "cbr", "zip", "rar"]
 # required_kinds = ["manga", "manhwa", "manhua"]
 #
+# # E-book and audiobook formats share one rule on purpose: two rules with
+# # the same `required_kinds` would make an epub+m4b release look "mixed".
+# # "audiobook" is a title hint, not an extension: it fires when the word
+# # appears in the release title, so uploads without a file list still match.
 # [[ingestion.format_type_rules]]
-# formats        = ["epub", "azw3"]
+# formats        = ["epub", "azw3", "mobi", "m4b", "mp3", "m4a", "flac", "audiobook"]
 # required_kinds = ["novel"]
 
 # Title cleanup. The resolver strips structural noise (parens, brackets,

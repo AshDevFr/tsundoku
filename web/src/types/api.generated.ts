@@ -513,13 +513,16 @@ export interface paths {
          *     `posted_at` anchor is only consulted on the provider path, where it seeds
          *     the freshly-upserted series' first-seen timestamp; callers pass the
          *     release's own `posted_at` (single link) or the anchor release's (bulk).
-         *     Bulk-link a set of review-queue releases to one series. The body's `ids`
-         *     (intersected with the queue statuses) select the releases; the series is
-         *     named exactly as in the single-release [`link`] handler. Each release is
-         *     linked individually (clearing its candidates and bumping the series'
-         *     highest volume/chapter marks) so the result matches what N single links
-         *     would produce. The operator is responsible for the selection being one
-         *     series' releases; the endpoint links them blindly to the chosen target.
+         *     Bulk-link a set of releases to one series. The body's `ids` select the
+         *     releases (unknown ids are ignored); the series is named exactly as in the
+         *     single-release [`link`] handler. Any status is eligible, not just the
+         *     review-queue ones: the series page uses this endpoint to *move* already
+         *     `resolved` releases to the correct series, mirroring the single-release
+         *     handler which also accepts a resolved row. Each release is linked
+         *     individually (clearing its candidates and bumping the series' highest
+         *     volume/chapter marks) so the result matches what N single links would
+         *     produce. The operator is responsible for the selection being one series'
+         *     releases; the endpoint links them blindly to the chosen target.
          */
         post: operations["bulk_link"];
         delete?: never;

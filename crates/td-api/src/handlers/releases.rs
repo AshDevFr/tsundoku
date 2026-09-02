@@ -1629,13 +1629,16 @@ pub async fn bulk_retry(
 /// `posted_at` anchor is only consulted on the provider path, where it seeds
 /// the freshly-upserted series' first-seen timestamp; callers pass the
 /// release's own `posted_at` (single link) or the anchor release's (bulk).
-/// Bulk-link a set of review-queue releases to one series. The body's `ids`
-/// (intersected with the queue statuses) select the releases; the series is
-/// named exactly as in the single-release [`link`] handler. Each release is
-/// linked individually (clearing its candidates and bumping the series'
-/// highest volume/chapter marks) so the result matches what N single links
-/// would produce. The operator is responsible for the selection being one
-/// series' releases; the endpoint links them blindly to the chosen target.
+/// Bulk-link a set of releases to one series. The body's `ids` select the
+/// releases (unknown ids are ignored); the series is named exactly as in the
+/// single-release [`link`] handler. Any status is eligible, not just the
+/// review-queue ones: the series page uses this endpoint to *move* already
+/// `resolved` releases to the correct series, mirroring the single-release
+/// handler which also accepts a resolved row. Each release is linked
+/// individually (clearing its candidates and bumping the series' highest
+/// volume/chapter marks) so the result matches what N single links would
+/// produce. The operator is responsible for the selection being one series'
+/// releases; the endpoint links them blindly to the chosen target.
 #[utoipa::path(
     post,
     path = "/api/v1/releases/bulk/link",
@@ -1655,13 +1658,16 @@ pub async fn bulk_link(
     if req.ids.is_empty() {
         return Err(ApiError::BadRequest("`ids` must not be empty".into()));
     }
-    // Intersect with the queue statuses so a since-decided release can't be
-    // relinked out from under another decision.
-    let target_req = BulkReviewRequest {
-        ids: req.ids.clone(),
-        ..Default::default()
-    };
-    let ids = review_queue_target_ids(&state.db, &target_req, None).await?;
+    // Keep only ids that exist; an explicit link is an operator decision that
+    // overrides whatever status the row currently carries.
+    let ids: Vec<String> = releases::Entity::find()
+        .filter(releases::Column::Id.is_in(req.ids.iter().cloned()))
+        .select_only()
+        .column(releases::Column::Id)
+        .into_tuple::<String>()
+        .all(&state.db)
+        .await
+        .map_err(anyhow_err)?;
 
     let now = Utc::now();
     let attempted_at = now.timestamp();

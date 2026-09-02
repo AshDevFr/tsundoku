@@ -88,6 +88,10 @@ const REVIEW_FORMATS = [
   "pdf",
   "mobi",
   "azw3",
+  "m4b",
+  "mp3",
+  "m4a",
+  "flac",
 ];
 
 const REVIEW_STATUSES = [

@@ -234,6 +234,24 @@ mod tests {
     }
 
     #[test]
+    fn default_rules_send_audiobooks_to_novels() {
+        let rules = td_config::IngestionConfig::default().format_type_rules;
+        let r = validate(&rules, &["m4b".into()], Some(&SeriesKind::Manga));
+        assert!(
+            !r.is_ok(),
+            "an m4b audiobook must not validate against manga"
+        );
+        let r = validate(&rules, &["mp3".into()], Some(&SeriesKind::Novel));
+        assert!(r.is_ok());
+        // Text and audio novel formats must share one rule: two rules with
+        // identical required kinds would fill two buckets with the same
+        // novel candidate and misroute an epub+m4b release to review as a
+        // "mixed format" release.
+        let groups = rule_groups(&rules, &["epub".into(), "m4b".into()]);
+        assert_eq!(groups.groups.len(), 1);
+    }
+
+    #[test]
     fn unknown_series_kind_is_treated_as_ok() {
         // No kind to compare against = no signal; don't pollute the review
         // queue with metadata-quality complaints unrelated to format-vs-kind.

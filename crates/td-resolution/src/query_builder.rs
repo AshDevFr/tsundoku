@@ -465,6 +465,14 @@ mod tests {
     }
 
     #[test]
+    fn audiobook_upload_title_cleans_to_series_name() {
+        // Nyaa #2119814. The "(Audiobook)" tag and the ", Vol. 05" marker
+        // both have to go so the fuzzy search sees the bare series title.
+        let out = clean("The Eminence in Shadow, Vol. 05 (Audiobook) [Troglodyte]");
+        assert_eq!(out.queries, vec!["The Eminence in Shadow".to_string()]);
+    }
+
+    #[test]
     fn singular_part_is_preserved_as_canonical_title() {
         // JoJo's Bizarre Adventure Part 7 (= Steel Ball Run) is a real
         // series title with a singular "Part N". Make sure the parts

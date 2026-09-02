@@ -373,7 +373,11 @@ impl Resolver {
         let normalized_pairs = self
             .normalize_external_links(release.information_url.as_deref(), &links)
             .await;
-        let formats = releases_repo::list_formats(&self.db, &release.id).await?;
+        // The rule vocabulary is file formats plus title hints ("audiobook"):
+        // the hints cover uploads whose file list is missing and are never
+        // persisted as formats.
+        let mut formats = releases_repo::list_formats(&self.db, &release.id).await?;
+        formats.extend(td_source::detect_title_hints(&release.title));
         let active = self.registry.active().clone();
         let active_id = self.registry.active_id().to_string();
 

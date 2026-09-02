@@ -857,8 +857,14 @@ impl Default for IngestionConfig {
 /// The defaults reflect the resolver's most common mistake: matching a
 /// `cbz` release to a same-titled `novel` series (e.g. light novel
 /// adaptations of a manga sharing the canonical title). Image-comic
-/// archives are restricted to image-comic kinds; e-book formats to
-/// novels.
+/// archives are restricted to image-comic kinds; e-book and audiobook
+/// formats to novels. `"audiobook"` is not an extension but a title hint
+/// the resolver injects (see `td_source::detect_title_hints`), since most
+/// audiobook uploads say so in the title even when the file list is
+/// missing. The novel-side formats deliberately share one rule:
+/// two rules with identical `required_kinds` would each fill a candidate
+/// bucket with the same novel hit and misroute an epub+m4b release to
+/// review as a "mixed format" release.
 fn default_format_type_rules() -> Vec<FormatTypeRule> {
     vec![
         FormatTypeRule {
@@ -872,7 +878,16 @@ fn default_format_type_rules() -> Vec<FormatTypeRule> {
             ],
         },
         FormatTypeRule {
-            formats: vec!["epub".into(), "azw3".into(), "mobi".into()],
+            formats: vec![
+                "epub".into(),
+                "azw3".into(),
+                "mobi".into(),
+                "m4b".into(),
+                "mp3".into(),
+                "m4a".into(),
+                "flac".into(),
+                "audiobook".into(),
+            ],
             required_kinds: vec!["novel".into()],
         },
     ]
@@ -1445,6 +1460,32 @@ min_gap_ms  = 250
                 .collect::<Vec<_>>(),
             vec!["novel".to_string()]
         );
+        // Audiobooks are audio containers of light novels; without a rule
+        // they resolve to the same-titled manga just like a bare epub did.
+        let audiobook_rule = rules
+            .iter()
+            .find(|r| r.formats.iter().any(|f| f.eq_ignore_ascii_case("m4b")))
+            .expect("default rules include an audiobook (m4b) rule");
+        assert_eq!(
+            audiobook_rule
+                .required_kinds
+                .iter()
+                .map(|s| s.to_ascii_lowercase())
+                .collect::<Vec<_>>(),
+            vec!["novel".to_string()]
+        );
+        // "audiobook" is not a file extension: the resolver injects it from
+        // the release title, since most audiobook uploads carry the word even
+        // when the file list is missing.
+        for fmt in ["mp3", "m4a", "flac", "audiobook"] {
+            assert!(
+                audiobook_rule
+                    .formats
+                    .iter()
+                    .any(|f| f.eq_ignore_ascii_case(fmt)),
+                "audiobook rule must cover {fmt}",
+            );
+        }
     }
 
     #[test]

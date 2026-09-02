@@ -22,7 +22,7 @@ pub mod source;
 pub mod span;
 
 pub use error::{SourceError, SourceResult};
-pub use format::{Format, detect_formats};
+pub use format::{Format, detect_formats, detect_title_hints};
 pub use registry::{SourceRegistry, SourceRegistryBuilder};
 pub use release::{DiscoveredRelease, ExternalLinks, PollContext, PollOutcome};
 pub use search::{

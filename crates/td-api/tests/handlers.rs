@@ -3376,6 +3376,47 @@ async fn bulk_link_assigns_selected_releases_to_one_series() {
     assert_eq!(remaining, vec!["Bleach 001"]);
 }
 
+/// The series page reuses the bulk-link endpoint as "move these releases to
+/// another series". Those rows are already `resolved`, so scoping the target
+/// set to the review-queue statuses silently drops every one of them.
+#[tokio::test]
+async fn bulk_link_moves_already_resolved_releases_between_series() {
+    let db = fresh_db().await;
+    let wrong = seed_series(&db, "Bleach", "manga").await;
+    let right = seed_series(&db, "Bleach (Novel)", "novel").await;
+    let a = seed_queue_release(&db, "1", "feed", "Bleach v01", "a.epub", "unresolved").await;
+    let b = seed_queue_release(&db, "2", "feed", "Bleach v02", "b.epub", "unresolved").await;
+    for id in [&a, &b] {
+        releases_repo::set_resolution(
+            &db,
+            id,
+            Some(wrong),
+            Some("fuzzy_title".into()),
+            Some(0.9),
+            "resolved",
+            Utc::now().timestamp(),
+        )
+        .await
+        .unwrap();
+    }
+    let app = queue_app(db.clone());
+
+    let body = post_json(
+        &app,
+        "/api/v1/releases/bulk/link",
+        serde_json::json!({ "ids": [a, b, "does-not-exist"], "seriesId": right }),
+    )
+    .await;
+    assert_eq!(body["linked"], 2);
+    assert_eq!(body["seriesId"], right);
+    for id in [&a, &b] {
+        let row = releases_repo::find_by_id(&db, id).await.unwrap().unwrap();
+        assert_eq!(row.series_id, Some(right));
+        assert_eq!(row.resolution_status, "resolved");
+        assert_eq!(row.resolution_path.as_deref(), Some("manual"));
+    }
+}
+
 #[tokio::test]
 async fn bulk_link_rejects_empty_ids() {
     let db = fresh_db().await;
