@@ -2,6 +2,12 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.19.1] - 2026-09-02
+
+### Bug Fixes
+
+- Move resolved releases in bulk and route audiobooks to novel series
+
 ## [1.19.0] - 2026-08-10
 
 ### Features
