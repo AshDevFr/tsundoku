@@ -9,7 +9,7 @@ web/.vite/
 web/coverage/
 
 # Local-only docs and scratch (hybrid pattern)
-.tsundoku/
+.specs/
 
 # Runtime data and logs
 *.db
