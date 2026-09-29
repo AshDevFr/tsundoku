@@ -2,6 +2,17 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.19.2] - 2026-09-29
+
+### Bug Fixes
+
+- Stop releases silently losing their detail-page data
+
+### Miscellaneous Tasks
+
+- Move the spec repo to .specs and check in CLAUDE.md
+- Install npm 11 before the lockfile-free frontend install
+
 ## [1.19.1] - 2026-09-02
 
 ### Bug Fixes
