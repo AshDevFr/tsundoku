@@ -6,7 +6,7 @@
 
 use std::sync::OnceLock;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use scraper::{ElementRef, Html, Selector};
@@ -48,14 +48,24 @@ pub struct DetailFields {
     pub posted_at: Option<DateTime<Utc>>,
 }
 
+/// Parse a post detail page. Errors when `html` is not a post page at all,
+/// detected by the absence of the "Info hash:" row that every post carries:
+/// Nyaa can answer 200 with an interstitial or maintenance page, and
+/// treating that as a post with no files/description/links would let the
+/// caller silently keep feed-only data.
 pub fn parse_detail(html: &str, site_base_url: &str) -> Result<DetailFields> {
     let doc = Html::parse_document(html);
+
+    let info_hash = label_text(&doc, "Info hash:").map(|s| s.to_ascii_lowercase());
+    if info_hash.is_none() {
+        bail!("not a nyaa post page (no \"Info hash:\" row)");
+    }
 
     let mut out = DetailFields::default();
     out.title = parse_title(&doc);
     out.torrent_url = parse_torrent_url(&doc, site_base_url);
     out.size_bytes = label_text(&doc, "File size:").and_then(|s| crate::parser::parse_size(&s));
-    out.info_hash = label_text(&doc, "Info hash:").map(|s| s.to_ascii_lowercase());
+    out.info_hash = info_hash;
     out.posted_at = parse_posted_at(&doc);
     out.files = parse_file_list(&doc);
     out.magnet = parse_magnet(html);
@@ -251,6 +261,43 @@ mod tests {
 
     const SINGLE_FILE: &str = include_str!("../tests/fixtures/nyaa_detail_single_file.html");
     const MULTI_FILE: &str = include_str!("../tests/fixtures/nyaa_detail_multi_file.html");
+    const INFORMATION_MANGABAKA: &str =
+        include_str!("../tests/fixtures/nyaa_detail_information_mangabaka.html");
+
+    /// The "Info hash:" row every real post page carries. Synthetic snippets
+    /// append it so they read as a post page rather than an interstitial.
+    const POST_MARKER: &str = r#"
+        <div class="row">
+          <div class="col-md-1 col-md-offset-6">Info hash:</div>
+          <div class="col-md-5"><kbd>0123456789abcdef0123456789abcdef01234567</kbd></div>
+        </div>
+    "#;
+
+    fn post_page(body: &str) -> String {
+        format!("{body}{POST_MARKER}")
+    }
+
+    #[test]
+    fn rejects_a_page_that_is_not_a_post() {
+        // A 200 that isn't a post page (rate-limit interstitial, maintenance
+        // page, truncated body) used to parse as an all-empty success, so
+        // enrichment silently kept feed-only data with nothing logged.
+        let html = r#"<html><head><title>Just a moment...</title></head>
+            <body><p>Checking your browser before accessing nyaa.si</p></body></html>"#;
+        assert!(parse_detail(html, "https://nyaa.si").is_err());
+    }
+
+    #[test]
+    fn parses_information_link_files_and_markdown_description() {
+        let detail = parse_detail(INFORMATION_MANGABAKA, "https://nyaa.si").unwrap();
+        assert_eq!(
+            detail.information_url.as_deref(),
+            Some("https://mangabaka.org/manga/65050/A-Banished-Odd-jobber-Starts-a-New-Life")
+        );
+        assert_eq!(detail.files.len(), 10);
+        let desc = detail.description_html.unwrap();
+        assert!(desc.contains("| Volumes |"), "got {desc:?}");
+    }
 
     #[test]
     fn parses_single_file_detail_page() {
@@ -329,7 +376,7 @@ mod tests {
               </div>
             </div>
         "#;
-        let detail = parse_detail(html, "https://nyaa.si").unwrap();
+        let detail = parse_detail(&post_page(html), "https://nyaa.si").unwrap();
         assert_eq!(detail.information_url, None);
     }
 
@@ -348,7 +395,7 @@ mod tests {
               </div>
             </div>
         "#;
-        let detail = parse_detail(html, "https://nyaa.si").unwrap();
+        let detail = parse_detail(&post_page(html), "https://nyaa.si").unwrap();
         assert!(
             detail.external_links.is_empty(),
             "comment link leaked into uploader links: {:?}",
@@ -363,7 +410,7 @@ mod tests {
     #[test]
     fn comment_links_empty_when_no_comment_panel() {
         let html = r#"<div id="torrent-description">no comments section</div>"#;
-        let detail = parse_detail(html, "https://nyaa.si").unwrap();
+        let detail = parse_detail(&post_page(html), "https://nyaa.si").unwrap();
         assert!(detail.comment_suggested_links.is_empty());
     }
 
@@ -381,7 +428,7 @@ mod tests {
               </div>
             </div>
         "#;
-        let detail = parse_detail(html, "https://nyaa.si").unwrap();
+        let detail = parse_detail(&post_page(html), "https://nyaa.si").unwrap();
         assert!(
             detail.external_links.is_empty(),
             "comment link leaked into external_links: {:?}",
@@ -408,7 +455,7 @@ mod tests {
               </div>
             </div>
         "#;
-        let detail = parse_detail(html, "https://nyaa.si").unwrap();
+        let detail = parse_detail(&post_page(html), "https://nyaa.si").unwrap();
         assert_eq!(
             detail.external_links.anilist.as_deref(),
             Some("https://anilist.co/manga/123"),

@@ -6,7 +6,9 @@
 //! 3. Persist every release via
 //!    [`td_db::repos::releases_repo::persist_discovered`].
 //! 4. Run the resolution pipeline on each persisted release.
-//! 5. Upsert `source_state` with the new ETag/cursor and a short summary.
+//! 5. Retry the detail fetch for a few recent rows of this feed that still
+//!    lack detail data (see [`retry_missing_details`]).
+//! 6. Upsert `source_state` with the new ETag/cursor and a short summary.
 //!
 //! Errors at any step are logged and recorded on `source_state.last_error`
 //! but never propagate out of the tick — a failing source must not poison
@@ -330,10 +332,22 @@ pub async fn run_tick(
         }
     }
     progress.flush().await;
+
+    // Rows this tick already tried to enrich are left out of the retry so a
+    // failing post is not fetched twice in one tick.
+    let attempted: std::collections::HashSet<String> = outcome
+        .releases
+        .iter()
+        .map(|r| releases_repo::id_for(&r.source_kind, &r.external_id))
+        .collect();
+    let retry_started = Instant::now();
+    let retry = retry_missing_details(&source, &db, &resolver, &kind, &name, &attempted).await;
+    enrich_total_ms += retry_started.elapsed().as_millis();
+
     let enrich_duration_ms = enrich_total_ms.min(i64::MAX as u128) as i64;
     let resolve_duration_ms = resolve_total_ms.min(i64::MAX as u128) as i64;
 
-    let summary = build_summary(
+    let mut summary = build_summary(
         fetched,
         persisted,
         persist_errors,
@@ -342,6 +356,12 @@ pub async fn run_tick(
         resolve_skipped,
         outcome.not_modified,
     );
+    if retry.recovered > 0 {
+        summary.push_str(&format!(", {} details_recovered", retry.recovered));
+    }
+    if retry.errors > 0 {
+        summary.push_str(&format!(", {} detail_retry_errors", retry.errors));
+    }
     tracing::info!(source = %name, %summary, "poll tick complete");
     persist_success(&db, &kind, &name, &outcome, &summary, started_at).await;
 
@@ -367,6 +387,107 @@ pub async fn run_tick(
         None,
     )
     .await;
+}
+
+/// Maximum rows per tick whose detail fetch is retried. Keeps the extra load
+/// on the upstream small: with every feed ticking, this is the worst-case
+/// number of additional detail-page requests per feed per tick.
+pub const DETAIL_RETRY_PER_TICK: u64 = 5;
+
+/// How long after a row is first observed its detail fetch keeps being
+/// retried. Bounds the retry for posts that will never yield details
+/// (deleted, or a feed with `fetch_details = false`); older rows are the
+/// manual re-enrich's job.
+pub const DETAIL_RETRY_WINDOW_SECS: i64 = 72 * 3600;
+
+#[derive(Debug, Default)]
+struct DetailRetryOutcome {
+    recovered: usize,
+    errors: usize,
+}
+
+/// Re-run `enrich` on recent rows of this feed that still lack detail data,
+/// then re-resolve the ones that got it back.
+///
+/// Without this, a row whose enrich failed kept feed-only data for good: the
+/// feed's `recently_seen` filter drops it on every later tick, so only a
+/// manual re-enrich ever looked at it again. Re-resolving matters because
+/// the details are what the strong resolution paths need (an Information
+/// link or an uploader-pasted provider URL turns a fuzzy title match into
+/// a foreign-ID match). The resolve uses the automatic trigger, so operator
+/// decisions keep their status and link and only gain the details.
+///
+/// A row whose enrich returns without files (the source does not fetch
+/// details) is skipped without a write.
+async fn retry_missing_details(
+    source: &Arc<dyn DiscoverySource>,
+    db: &DatabaseConnection,
+    resolver: &Resolver,
+    kind: &str,
+    name: &str,
+    already_attempted: &std::collections::HashSet<String>,
+) -> DetailRetryOutcome {
+    let mut out = DetailRetryOutcome::default();
+    let since = Utc::now().timestamp() - DETAIL_RETRY_WINDOW_SECS;
+    let rows = match releases_repo::select_missing_details_for_source(
+        db,
+        kind,
+        name,
+        since,
+        DETAIL_RETRY_PER_TICK + already_attempted.len() as u64,
+    )
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!(error = ?e, source = %name, "failed to select rows for detail retry");
+            return out;
+        }
+    };
+    let rows = rows
+        .into_iter()
+        .filter(|m| !already_attempted.contains(&m.id))
+        .take(DETAIL_RETRY_PER_TICK as usize);
+
+    for model in rows {
+        let mut release = releases_repo::model_to_discovered(&model);
+        if let Err(e) = source.enrich(&mut release).await {
+            tracing::warn!(
+                error = ?e,
+                source = %name,
+                external_id = %release.external_id,
+                "detail retry failed; row keeps feed-only data"
+            );
+            out.errors += 1;
+            continue;
+        }
+        if release.files.is_empty() {
+            continue;
+        }
+        if let Err(e) = releases_repo::persist_discovered(db, &release, model.observed_at).await {
+            tracing::warn!(
+                error = ?e,
+                source = %name,
+                external_id = %release.external_id,
+                "detail retry persist failed"
+            );
+            out.errors += 1;
+            continue;
+        }
+        out.recovered += 1;
+        if let Err(e) = resolver.resolve_one(&model.id).await {
+            tracing::warn!(error = ?e, release_id = %model.id, "resolver failed after detail retry");
+        }
+    }
+    if out.recovered > 0 || out.errors > 0 {
+        tracing::info!(
+            source = %name,
+            recovered = out.recovered,
+            errors = out.errors,
+            "detail retry pass complete"
+        );
+    }
+    out
 }
 
 /// Outcome of `persist_chunk` when the commit succeeds. `ids` is the

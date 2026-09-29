@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use chrono::DateTime;
+use sea_orm::IdenStatic;
 use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, FromQueryResult, NotSet,
@@ -238,6 +239,34 @@ pub async fn select_for_reenrich(
         .await?)
 }
 
+/// Rows carried by `source_name` that still lack detail-page data
+/// (`files_json IS NULL`), first observed at or after `observed_since`,
+/// newest first, capped at `limit`. Feeds the poll tick's detail retry: a
+/// row whose enrich failed is otherwise never looked at again, because the
+/// feed's `recently_seen` filter drops it on every later tick.
+pub async fn select_missing_details_for_source(
+    db: &DatabaseConnection,
+    source_kind: &str,
+    source_name: &str,
+    observed_since: i64,
+    limit: u64,
+) -> Result<Vec<Model>> {
+    let carried = sea_orm::sea_query::Query::select()
+        .column(release_sources::Column::ReleaseId)
+        .from(release_sources::Entity)
+        .and_where(release_sources::Column::SourceKind.eq(source_kind))
+        .and_where(release_sources::Column::SourceName.eq(source_name))
+        .to_owned();
+    Ok(releases::Entity::find()
+        .filter(releases::Column::Id.in_subquery(carried))
+        .filter(releases::Column::FilesJson.is_null())
+        .filter(releases::Column::ObservedAt.gte(observed_since))
+        .order_by_desc(releases::Column::ObservedAt)
+        .limit(limit)
+        .all(db)
+        .await?)
+}
+
 /// Map a [`DiscoveredRelease`] into the sea-orm ActiveModel used for upsert.
 /// Kept private — callers go through [`persist_discovered`] so the formats
 /// attach step is not accidentally skipped.
@@ -305,29 +334,54 @@ fn to_active_model(
     })
 }
 
+/// Columns only a detail-page fetch fills in (or, for the spans, derives
+/// from the file list it brings). See [`upsert`] for why they are guarded.
+const DETAIL_COLUMNS: [releases::Column; 7] = [
+    releases::Column::FilesJson,
+    releases::Column::DescriptionHtml,
+    releases::Column::ExtractedLinksJson,
+    releases::Column::CommentSuggestedLinksJson,
+    releases::Column::InformationUrl,
+    releases::Column::VolumeSpanJson,
+    releases::Column::ChapterSpanJson,
+];
+
+/// Insert or refresh a release row keyed on `(source_kind, external_id)`.
+///
+/// Detail columns never downgrade: when the incoming copy carries no detail
+/// data but the stored row does, the stored values are kept. One post is
+/// one row shared by every feed that carries it, and a feed can write its
+/// RSS-only copy after a sibling already enriched the row (its enrich was
+/// off, or failed). Overwriting then replaced the file list, uploader body
+/// and Information link with the feed's summary line. `files_json` is the
+/// "has detail data" marker: only a detail page produces a file list,
+/// never the RSS feed or the HTML listing. An incoming enriched copy always
+/// wins, so re-enrich keeps refreshing the data.
 pub async fn upsert<C: ConnectionTrait>(db: &C, model: releases::ActiveModel) -> Result<()> {
+    let mut on_conflict =
+        OnConflict::columns([releases::Column::SourceKind, releases::Column::ExternalId]);
+    on_conflict.update_columns([
+        releases::Column::Title,
+        releases::Column::Link,
+        releases::Column::Magnet,
+        releases::Column::TorrentUrl,
+        releases::Column::DdlUrl,
+        releases::Column::InfoHash,
+        releases::Column::SizeBytes,
+        releases::Column::PostedAt,
+    ]);
+    for col in DETAIL_COLUMNS {
+        let name = col.as_str();
+        on_conflict.value(
+            col,
+            Expr::cust(format!(
+                "CASE WHEN excluded.files_json IS NULL AND releases.files_json IS NOT NULL \
+                 THEN releases.{name} ELSE excluded.{name} END"
+            )),
+        );
+    }
     releases::Entity::insert(model)
-        .on_conflict(
-            OnConflict::columns([releases::Column::SourceKind, releases::Column::ExternalId])
-                .update_columns([
-                    releases::Column::Title,
-                    releases::Column::Link,
-                    releases::Column::Magnet,
-                    releases::Column::TorrentUrl,
-                    releases::Column::DdlUrl,
-                    releases::Column::InfoHash,
-                    releases::Column::SizeBytes,
-                    releases::Column::FilesJson,
-                    releases::Column::DescriptionHtml,
-                    releases::Column::ExtractedLinksJson,
-                    releases::Column::CommentSuggestedLinksJson,
-                    releases::Column::InformationUrl,
-                    releases::Column::PostedAt,
-                    releases::Column::VolumeSpanJson,
-                    releases::Column::ChapterSpanJson,
-                ])
-                .to_owned(),
-        )
+        .on_conflict(on_conflict.to_owned())
         .exec(db)
         .await?;
     Ok(())
@@ -848,6 +902,149 @@ mod tests {
             information_url: None,
             posted_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
         }
+    }
+
+    /// The same post as a detail-page enrich leaves it: files, the uploader's
+    /// markdown body, the Information link, extracted provider links.
+    fn enriched(source_name: &str) -> DiscoveredRelease {
+        DiscoveredRelease {
+            files: vec!["Some Manga v01.cbz".into(), "Some Manga v02.cbz".into()],
+            description_html: Some("| Volumes | 1-2 |".into()),
+            information_url: Some("https://mangabaka.org/manga/65050".into()),
+            external_links: ExternalLinks {
+                mangabaka: Some("https://mangabaka.org/manga/65050".into()),
+                ..Default::default()
+            },
+            comment_suggested_links: ExternalLinks {
+                anilist: Some("https://anilist.co/manga/1".into()),
+                ..Default::default()
+            },
+            ..sample(source_name)
+        }
+    }
+
+    /// The same post as the RSS pass leaves it when enrichment is off or
+    /// failed: no files, the feed's summary line as description.
+    fn feed_only(source_name: &str) -> DiscoveredRelease {
+        DiscoveredRelease {
+            title: "Some Manga v01-02 (Digital) retitled".into(),
+            files: Vec::new(),
+            description_html: Some("#2095990 | rss summary".into()),
+            ..sample(source_name)
+        }
+    }
+
+    #[tokio::test]
+    async fn feed_only_write_does_not_downgrade_stored_detail_data() {
+        // A sibling feed writing the post after it was enriched used to
+        // replace files/description/links with its RSS-only copy.
+        let db = fresh_db().await;
+        let id = persist_discovered(&db, &enriched("feed-a"), 100)
+            .await
+            .unwrap();
+        let before = find_by_id(&db, &id).await.unwrap().unwrap();
+
+        persist_discovered(&db, &feed_only("feed-b"), 200)
+            .await
+            .unwrap();
+        let after = find_by_id(&db, &id).await.unwrap().unwrap();
+
+        assert_eq!(after.files_json, before.files_json);
+        assert_eq!(after.description_html, before.description_html);
+        assert_eq!(after.information_url, before.information_url);
+        assert_eq!(after.extracted_links_json, before.extracted_links_json);
+        assert_eq!(
+            after.comment_suggested_links_json,
+            before.comment_suggested_links_json
+        );
+        assert_eq!(after.volume_span_json, before.volume_span_json);
+        assert_eq!(after.chapter_span_json, before.chapter_span_json);
+        // Non-detail columns keep refreshing from the newer write.
+        assert_eq!(after.title, "Some Manga v01-02 (Digital) retitled");
+    }
+
+    #[tokio::test]
+    async fn enriched_write_fills_a_feed_only_row() {
+        let db = fresh_db().await;
+        let id = persist_discovered(&db, &feed_only("feed-a"), 100)
+            .await
+            .unwrap();
+        persist_discovered(&db, &enriched("feed-a"), 200)
+            .await
+            .unwrap();
+        let row = find_by_id(&db, &id).await.unwrap().unwrap();
+        assert!(row.files_json.is_some());
+        assert_eq!(row.description_html.as_deref(), Some("| Volumes | 1-2 |"));
+        assert_eq!(
+            row.information_url.as_deref(),
+            Some("https://mangabaka.org/manga/65050")
+        );
+        assert!(row.extracted_links_json.is_some());
+    }
+
+    #[tokio::test]
+    async fn newer_enriched_write_replaces_older_detail_data() {
+        let db = fresh_db().await;
+        let id = persist_discovered(&db, &enriched("feed-a"), 100)
+            .await
+            .unwrap();
+        let edited = DiscoveredRelease {
+            files: vec!["Some Manga v03.cbz".into()],
+            description_html: Some("edited body".into()),
+            information_url: None,
+            external_links: ExternalLinks::default(),
+            ..enriched("feed-a")
+        };
+        persist_discovered(&db, &edited, 200).await.unwrap();
+        let row = find_by_id(&db, &id).await.unwrap().unwrap();
+        assert_eq!(row.files_json.as_deref(), Some(r#"["Some Manga v03.cbz"]"#));
+        assert_eq!(row.description_html.as_deref(), Some("edited body"));
+        assert_eq!(row.information_url, None);
+        assert_eq!(row.extracted_links_json, None);
+    }
+
+    #[tokio::test]
+    async fn missing_details_selector_scopes_to_feed_window_and_file_less_rows() {
+        let db = fresh_db().await;
+        let post = |ext: &str, feed: &str, files: bool| DiscoveredRelease {
+            external_id: ext.into(),
+            link: format!("https://nyaa.si/view/{ext}"),
+            files: if files {
+                vec!["x.cbz".into()]
+            } else {
+                Vec::new()
+            },
+            ..sample(feed)
+        };
+        // In scope: this feed, no files, observed inside the window.
+        let recent = persist_discovered(&db, &post("1", "feed-a", false), 1_000)
+            .await
+            .unwrap();
+        let newest = persist_discovered(&db, &post("2", "feed-a", false), 2_000)
+            .await
+            .unwrap();
+        // Out of scope: already has files / only another feed / too old.
+        persist_discovered(&db, &post("3", "feed-a", true), 2_000)
+            .await
+            .unwrap();
+        persist_discovered(&db, &post("4", "feed-b", false), 2_000)
+            .await
+            .unwrap();
+        persist_discovered(&db, &post("5", "feed-a", false), 10)
+            .await
+            .unwrap();
+
+        let rows = select_missing_details_for_source(&db, "nyaa", "feed-a", 500, 10)
+            .await
+            .unwrap();
+        let ids: Vec<_> = rows.into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec![newest.clone(), recent]);
+
+        let capped = select_missing_details_for_source(&db, "nyaa", "feed-a", 500, 1)
+            .await
+            .unwrap();
+        assert_eq!(capped.len(), 1);
+        assert_eq!(capped[0].id, newest);
     }
 
     /// Regression: two uploader feeds (different `source_name`) can surface
