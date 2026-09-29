@@ -113,7 +113,11 @@ jobs:
           node-version: "22"
       - name: Install dependencies
         working-directory: web
+        # Node 22 bundles npm 10, whose peer-dependency resolver crashes
+        # ("Cannot read properties of null (reading 'edgesOut')") on this
+        # tree when resolving without a lockfile. npm 11 resolves it cleanly.
         run: |
+          npm install -g npm@11
           rm -rf node_modules package-lock.json
           npm install
       - name: Lint check
