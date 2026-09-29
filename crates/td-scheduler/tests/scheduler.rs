@@ -496,6 +496,236 @@ async fn poll_tick_handles_source_failure_without_panicking() {
 }
 
 // -----------------------------------------------------------------------------
+// poll_source::run_tick: detail retry for rows that missed their enrich
+// -----------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+enum EnrichMode {
+    /// Detail fetch succeeds: files + Information URL come back.
+    Fill,
+    /// Detail fetch fails.
+    Fail,
+    /// `fetch_details = false`: enrich returns without touching the row.
+    Noop,
+}
+
+/// Source whose feed is unchanged (304) and whose `enrich` is scripted, so a
+/// tick exercises only the detail retry. Records every enriched external_id.
+struct DetailRetrySource {
+    mode: EnrichMode,
+    enriched: StdMutex<Vec<String>>,
+}
+
+impl DetailRetrySource {
+    fn new(mode: EnrichMode) -> Self {
+        Self {
+            mode,
+            enriched: StdMutex::new(Vec::new()),
+        }
+    }
+
+    fn enriched(&self) -> Vec<String> {
+        self.enriched.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl DiscoverySource for DetailRetrySource {
+    fn name(&self) -> &str {
+        "trusted"
+    }
+    fn kind(&self) -> &str {
+        "fake"
+    }
+    async fn poll(&self, _ctx: &PollContext) -> SourceResult<PollOutcome> {
+        Ok(PollOutcome {
+            releases: Vec::new(),
+            new_etag: None,
+            new_cursor: None,
+            not_modified: true,
+        })
+    }
+    async fn enrich(&self, release: &mut DiscoveredRelease) -> SourceResult<()> {
+        self.enriched
+            .lock()
+            .unwrap()
+            .push(release.external_id.clone());
+        match self.mode {
+            EnrichMode::Fill => {
+                release.files = vec![format!("{}.cbz", release.title)];
+                release.information_url = Some("https://mangabaka.org/manga/1".into());
+                Ok(())
+            }
+            EnrichMode::Fail => Err(td_source::SourceError::Malformed {
+                source_kind: "fake".into(),
+                source_name: "trusted".into(),
+                message: "not a post page".into(),
+            }),
+            EnrichMode::Noop => Ok(()),
+        }
+    }
+}
+
+/// Persist a feed-only (file-less) copy of `external_id` as carried by
+/// `feed`, first observed `age_secs` ago.
+async fn seed_feed_only(db: &DatabaseConnection, feed: &str, external_id: &str, age_secs: i64) {
+    let release = DiscoveredRelease {
+        files: Vec::new(),
+        ..discovered_release(feed, external_id, &format!("Series {external_id}"))
+    };
+    td_db::repos::releases_repo::persist_discovered(
+        db,
+        &release,
+        Utc::now().timestamp() - age_secs,
+    )
+    .await
+    .unwrap();
+}
+
+async fn release_row(
+    db: &DatabaseConnection,
+    external_id: &str,
+) -> td_db::entities::releases::Model {
+    let id = td_db::repos::releases_repo::id_for("fake", external_id);
+    td_db::entities::releases::Entity::find_by_id(id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+async fn run_detail_retry_tick(db: &DatabaseConnection, source: Arc<DetailRetrySource>) {
+    let provider = Arc::new(FakeProvider::new("mangabaka", RefreshStatus::NotSupported));
+    jobs::poll_source::run_tick(
+        source as Arc<dyn DiscoverySource>,
+        db.clone(),
+        build_registry(provider),
+        IngestionConfig::default(),
+        Arc::new(td_resolution::query_builder::QueryBuilder::with_defaults()),
+        None,
+        detached_events(),
+        "cron",
+    )
+    .await;
+}
+
+async fn last_summary(db: &DatabaseConnection) -> String {
+    sources_repo::get(db, "fake", "trusted")
+        .await
+        .unwrap()
+        .expect("source_state row")
+        .last_summary
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn poll_tick_retries_recent_rows_missing_details_even_when_feed_is_unchanged() {
+    let db = fresh_db().await;
+    let hour = 3600;
+    // Seven file-less rows inside the window; only the newest few are
+    // retried per tick.
+    for i in 1..=7 {
+        seed_feed_only(&db, "trusted", &format!("recent-{i}"), i * hour).await;
+    }
+    // Out of scope: too old, another feed only, already enriched.
+    seed_feed_only(&db, "trusted", "stale", 5 * 24 * hour).await;
+    seed_feed_only(&db, "sibling", "other-feed", hour).await;
+    td_db::repos::releases_repo::persist_discovered(
+        &db,
+        &discovered_release("trusted", "has-files", "Has Files"),
+        Utc::now().timestamp(),
+    )
+    .await
+    .unwrap();
+
+    let source = Arc::new(DetailRetrySource::new(EnrichMode::Fill));
+    run_detail_retry_tick(&db, source.clone()).await;
+
+    let per_tick = jobs::poll_source::DETAIL_RETRY_PER_TICK;
+    let expected: Vec<String> = (1..=per_tick).map(|i| format!("recent-{i}")).collect();
+    assert_eq!(
+        source.enriched(),
+        expected,
+        "newest in-window rows first, capped"
+    );
+
+    for ext in &expected {
+        let row = release_row(&db, ext).await;
+        assert!(row.files_json.is_some(), "{ext} should have its files back");
+        assert_eq!(
+            row.information_url.as_deref(),
+            Some("https://mangabaka.org/manga/1")
+        );
+        assert!(
+            row.last_resolve_attempt_at.is_some(),
+            "{ext} should be re-resolved with its new details"
+        );
+    }
+    for ext in ["stale", "other-feed"] {
+        assert!(release_row(&db, ext).await.files_json.is_none());
+    }
+
+    let summary = last_summary(&db).await;
+    assert!(
+        summary.contains(&format!("{per_tick} details_recovered")),
+        "got {summary:?}"
+    );
+}
+
+#[tokio::test]
+async fn poll_tick_detail_retry_keeps_operator_decisions() {
+    use sea_orm::{ActiveModelTrait, Set};
+    let db = fresh_db().await;
+    seed_feed_only(&db, "trusted", "decided", 60).await;
+    td_db::entities::releases::ActiveModel {
+        id: Set(td_db::repos::releases_repo::id_for("fake", "decided")),
+        resolution_status: Set("rejected".into()),
+        resolution_path: Set(Some("rejected".into())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+
+    run_detail_retry_tick(&db, Arc::new(DetailRetrySource::new(EnrichMode::Fill))).await;
+
+    let row = release_row(&db, "decided").await;
+    assert!(row.files_json.is_some(), "details are still backfilled");
+    assert_eq!(row.resolution_status, "rejected");
+    assert_eq!(row.resolution_path.as_deref(), Some("rejected"));
+}
+
+#[tokio::test]
+async fn poll_tick_detail_retry_counts_failures_and_leaves_rows_alone() {
+    let db = fresh_db().await;
+    seed_feed_only(&db, "trusted", "flaky", 60).await;
+
+    run_detail_retry_tick(&db, Arc::new(DetailRetrySource::new(EnrichMode::Fail))).await;
+
+    let row = release_row(&db, "flaky").await;
+    assert!(row.files_json.is_none());
+    assert!(row.last_resolve_attempt_at.is_none());
+    let summary = last_summary(&db).await;
+    assert!(summary.contains("1 detail_retry_errors"), "got {summary:?}");
+}
+
+#[tokio::test]
+async fn poll_tick_detail_retry_skips_the_write_when_enrich_brings_nothing() {
+    let db = fresh_db().await;
+    seed_feed_only(&db, "trusted", "no-details", 60).await;
+
+    let source = Arc::new(DetailRetrySource::new(EnrichMode::Noop));
+    run_detail_retry_tick(&db, source.clone()).await;
+
+    assert_eq!(source.enriched(), vec!["no-details".to_string()]);
+    let row = release_row(&db, "no-details").await;
+    assert!(row.files_json.is_none());
+    assert!(row.last_resolve_attempt_at.is_none());
+    let summary = last_summary(&db).await;
+    assert!(!summary.contains("details_recovered"), "got {summary:?}");
+}
+
+// -----------------------------------------------------------------------------
 // refresh_provider_cache::run_tick
 // -----------------------------------------------------------------------------
 

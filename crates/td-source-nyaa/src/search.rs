@@ -114,8 +114,7 @@ impl SearchSource for NyaaSearch {
             &self.cfg.site_base_url,
             release,
         )
-        .await;
-        Ok(())
+        .await
     }
 
     fn as_url_ingestable(&self) -> Option<&dyn UrlIngestSource> {

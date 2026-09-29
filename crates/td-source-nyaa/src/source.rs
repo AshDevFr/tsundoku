@@ -143,8 +143,7 @@ impl DiscoverySource for NyaaSource {
             &self.cfg.site_base_url,
             release,
         )
-        .await;
-        Ok(())
+        .await
     }
 
     fn as_backfillable(&self) -> Option<&dyn Backfillable> {
@@ -178,48 +177,42 @@ impl Backfillable for NyaaSource {
 /// `release`. Shared by the poll path ([`NyaaSource::enrich`]) and the
 /// per-series search path ([`crate::search::NyaaSearch`]).
 ///
-/// Infallible by design: enrich failures are non-fatal by trait contract,
-/// so any fetch/parse problem is logged and the release keeps whatever
-/// data the feed/listing pass already provided. A flaky detail-page host
-/// shouldn't sink a poll or a search.
+/// On any failure `release` is left untouched, so the caller can persist it
+/// with whatever the feed/listing pass provided (enrich failures are
+/// non-fatal by trait contract). The failure is still returned so callers
+/// log and count it: a fetch that silently yields nothing is how releases
+/// ended up with feed-only data and no trace in the logs. A 404 is the one
+/// quiet outcome: the post was deleted, and there is nothing to retry.
 pub(crate) async fn enrich_from_detail(
     fetcher: &Fetcher,
     source_name: &str,
     site_base_url: &str,
     release: &mut DiscoveredRelease,
-) {
+) -> SourceResult<()> {
     let html = match fetcher.fetch_detail(&release.link).await {
         Ok(Some(html)) => html,
         Ok(None) => {
-            tracing::warn!(
+            tracing::info!(
                 source = %source_name,
                 link = %release.link,
                 "nyaa detail page is gone (404); keeping feed-only data"
             );
-            return;
+            return Ok(());
         }
         Err(e) => {
-            tracing::warn!(
-                source = %source_name,
-                link = %release.link,
-                error = ?e,
-                "failed to fetch nyaa detail page; keeping feed-only data"
-            );
-            return;
+            return Err(SourceError::Unavailable {
+                source_kind: SOURCE_KIND.into(),
+                source_name: source_name.to_string(),
+                source: e.context("fetching nyaa detail page"),
+            });
         }
     };
-    let detail = match crate::detail::parse_detail(&html, site_base_url) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::warn!(
-                source = %source_name,
-                link = %release.link,
-                error = %e,
-                "failed to parse nyaa detail page; keeping feed-only data"
-            );
-            return;
-        }
-    };
+    let detail =
+        crate::detail::parse_detail(&html, site_base_url).map_err(|e| SourceError::Malformed {
+            source_kind: SOURCE_KIND.into(),
+            source_name: source_name.to_string(),
+            message: format!("detail page {}: {e}", release.link),
+        })?;
     if !detail.files.is_empty() {
         release.files = detail.files;
     }
@@ -241,6 +234,7 @@ pub(crate) async fn enrich_from_detail(
     if let Some(desc) = detail.description_html {
         release.description_html = Some(desc);
     }
+    Ok(())
 }
 
 /// Derive the HTML listing URL for `page` from the configured RSS
