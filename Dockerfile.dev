@@ -73,7 +73,7 @@ CMD ["cargo", "watch", \
     "-w", "crates/", \
     "-w", "migration/", \
     "-i", "web/**", \
-    "-i", ".tsundoku/**", \
+    "-i", ".specs/**", \
     "-i", "*.md", \
     "-i", "Dockerfile*", \
     "-i", "docker-compose*.yml", \
