@@ -2,6 +2,16 @@
 
 All notable changes to tsundoku will be documented in this file.
 
+## [1.19.3] - 2026-10-26
+
+### Bug Fixes
+
+- Stop metadata refreshes faking a series' last release date
+
+### Miscellaneous Tasks
+
+- Pin the Rust toolchain so CI and local builds use one compiler
+
 ## [1.19.2] - 2026-09-29
 
 ### Bug Fixes
