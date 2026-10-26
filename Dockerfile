@@ -22,7 +22,7 @@ RUN npm run build
 # =============================================================================
 # Stage 2: Rust build environment
 # =============================================================================
-FROM rust:1.95-alpine AS chef
+FROM rust:1.99-alpine AS chef
 
 RUN apk add --no-cache \
     musl-dev \

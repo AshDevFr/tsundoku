@@ -1,6 +1,6 @@
 # Development Dockerfile with hot reload (cargo-watch)
 
-FROM rust:1.95-alpine
+FROM rust:1.99-alpine
 
 RUN apk add --no-cache \
     pkgconf \

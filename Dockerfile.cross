@@ -28,7 +28,7 @@ RUN npm run build
 # =============================================================================
 # Stage 2: Rust toolchain with musl cross-compilers (always x86_64)
 # =============================================================================
-FROM --platform=linux/amd64 rust:1.95-bookworm AS chef
+FROM --platform=linux/amd64 rust:1.99-bookworm AS chef
 
 RUN apt-get update && \
     apt-get install -y \
@@ -88,10 +88,10 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 COPY . .
 COPY --from=frontend-builder /web/dist ./web/dist
 
-# The project's rust-toolchain.toml selects the symbolic `stable` toolchain,
-# which rustup treats as distinct from the versioned toolchain that ships in
-# the base image. The musl targets installed in the `chef` stage live on the
-# versioned toolchain, so we re-add them here after the toolchain switch.
+# rust-toolchain.toml pins an exact version. If it ever drifts from the base
+# image's toolchain, rustup switches toolchains after `COPY . .` and the musl
+# targets installed in the `chef` stage are left behind on the old one; re-add
+# them so the build survives that (a no-op when the two agree).
 RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 
 RUN if [ "$TARGETARCH" = "arm64" ]; then \

@@ -80,9 +80,10 @@ jobs:
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+        # No args: installs exactly what rust-toolchain.toml pins (version and
+        # components), so CI and local builds cannot drift onto different
+        # compilers and pick up different clippy lints.
+        run: rustup toolchain install
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
       - name: Format check
