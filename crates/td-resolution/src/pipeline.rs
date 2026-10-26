@@ -750,16 +750,10 @@ impl Resolver {
     ) -> Result<ResolutionOutcome> {
         // Resolver upsert: a release event is not a signal to overwrite
         // operator-curated metadata, so manual rows stay sticky.
-        let UpsertResult { series_id, .. } = persist::upsert_series_from_metadata(
-            &self.db,
-            active_id,
-            &metadata,
-            release.posted_at,
-            now,
-            false,
-        )
-        .await
-        .with_context(|| format!("upserting series for release {}", release.id))?;
+        let UpsertResult { series_id, .. } =
+            persist::upsert_series_from_metadata(&self.db, active_id, &metadata, now, false)
+                .await
+                .with_context(|| format!("upserting series for release {}", release.id))?;
         // Clear prior candidates: confident match.
         review_repo::replace_for_release(&self.db, &release.id, Vec::new()).await?;
 
@@ -841,15 +835,9 @@ impl Resolver {
                     continue;
                 }
             };
-            let UpsertResult { series_id, .. } = persist::upsert_series_from_metadata(
-                &self.db,
-                active_id,
-                &metadata,
-                release.posted_at,
-                now,
-                false,
-            )
-            .await?;
+            let UpsertResult { series_id, .. } =
+                persist::upsert_series_from_metadata(&self.db, active_id, &metadata, now, false)
+                    .await?;
             let s = *score;
             candidate_rows.push(review_candidates::ActiveModel {
                 release_id: sea_orm::Set(release.id.clone()),
@@ -913,15 +901,9 @@ impl Resolver {
                     continue;
                 }
             };
-            let UpsertResult { series_id, .. } = persist::upsert_series_from_metadata(
-                &self.db,
-                active_id,
-                &metadata,
-                release.posted_at,
-                now,
-                false,
-            )
-            .await?;
+            let UpsertResult { series_id, .. } =
+                persist::upsert_series_from_metadata(&self.db, active_id, &metadata, now, false)
+                    .await?;
             let s = *score;
             candidate_rows.push(review_candidates::ActiveModel {
                 release_id: sea_orm::Set(release.id.clone()),

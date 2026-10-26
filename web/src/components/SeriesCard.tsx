@@ -248,7 +248,9 @@ export function SeriesCard({
               getting lost among the metadata badges below. */}
           <Group gap={4} justify="space-between" wrap="nowrap">
             <Text size="xs" c="dimmed">
-              {formatRelative(series.lastReleaseAt)}
+              {series.lastReleaseAt > 0
+                ? formatRelative(series.lastReleaseAt)
+                : "no releases"}
             </Text>
             {codexSynced && series.codex && <CodexBadge codex={series.codex} />}
           </Group>

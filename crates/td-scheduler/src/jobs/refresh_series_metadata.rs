@@ -252,16 +252,7 @@ async fn process_row(
     match outcome {
         Ok(Some(meta)) => {
             let now = Utc::now();
-            match persist::upsert_series_from_metadata(
-                db,
-                provider_id,
-                &meta,
-                row.metadata_fetched_at,
-                now,
-                false,
-            )
-            .await
-            {
+            match persist::upsert_series_from_metadata(db, provider_id, &meta, now, false).await {
                 Ok(result) => {
                     if result.unchanged {
                         tally.unchanged += 1;

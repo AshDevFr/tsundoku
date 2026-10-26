@@ -81,6 +81,12 @@ describe("SeriesCard", () => {
     expect(await screen.findByText("manual")).toBeInTheDocument();
   });
 
+  it("says 'no releases' instead of a 1970 date when nothing is linked", async () => {
+    renderCard(base({ lastReleaseAt: 0 }));
+    expect(await screen.findByText("no releases")).toBeInTheDocument();
+    expect(screen.queryByText(/y ago/)).not.toBeInTheDocument();
+  });
+
   it("omits the manual badge for provider-backed series", async () => {
     renderCard(base({ metadataSource: "offline_cache" }));
     // Wait for the card to mount, then assert the badge is absent.

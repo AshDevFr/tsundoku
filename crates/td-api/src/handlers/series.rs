@@ -1952,16 +1952,10 @@ pub async fn create_from_provider(
                             "provider {provider:?} has no record for {external_id:?}"
                         ))
                     })?;
-                // No release yet, so seed last_release_at from `now`. Conservative
-                // default (`false`): if the foreign-id chain lands on a pre-existing
-                // manual row, don't clobber it.
+                // Conservative default (`false`): if the foreign-id chain lands
+                // on a pre-existing manual row, don't clobber it.
                 let sid = persist::upsert_series_from_metadata(
-                    &state.db,
-                    provider,
-                    &metadata,
-                    now.timestamp(),
-                    now,
-                    false,
+                    &state.db, provider, &metadata, now, false,
                 )
                 .await
                 .map_err(ApiError::Internal)?
@@ -2084,16 +2078,9 @@ async fn refresh_metadata_core(state: &AppState, id: i32) -> ApiResult<RefreshOu
     // Explicit operator action: the refresh buttons are the one path that
     // opts in to overwriting a manual row.
     let now = Utc::now();
-    persist::upsert_series_from_metadata(
-        &state.db,
-        &active_id,
-        &metadata,
-        now.timestamp(),
-        now,
-        true,
-    )
-    .await
-    .map_err(ApiError::Internal)?;
+    persist::upsert_series_from_metadata(&state.db, &active_id, &metadata, now, true)
+        .await
+        .map_err(ApiError::Internal)?;
     Ok(RefreshOutcome::Refreshed)
 }
 

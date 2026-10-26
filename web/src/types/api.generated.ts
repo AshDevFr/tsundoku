@@ -508,12 +508,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Resolve a link request into the concrete `series.id` it targets, shared by
-         *     the single-release [`link`] handler and the [`bulk_link`] action. The
-         *     `posted_at` anchor is only consulted on the provider path, where it seeds
-         *     the freshly-upserted series' first-seen timestamp; callers pass the
-         *     release's own `posted_at` (single link) or the anchor release's (bulk).
-         *     Bulk-link a set of releases to one series. The body's `ids` select the
+         * Bulk-link a set of releases to one series. The body's `ids` select the
          *     releases (unknown ids are ignored); the series is named exactly as in the
          *     single-release [`link`] handler. Any status is eligible, not just the
          *     review-queue ones: the series page uses this endpoint to *move* already

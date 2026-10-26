@@ -233,8 +233,11 @@ export function SeriesListRow({
               </Group>
             )}
             <Text size="xs" c="dimmed">
-              last release {formatRelative(series.lastReleaseAt)} • first seen{" "}
-              {formatRelative(series.firstSeenAt)}
+              last release{" "}
+              {series.lastReleaseAt > 0
+                ? formatRelative(series.lastReleaseAt)
+                : "never"}{" "}
+              • first seen {formatRelative(series.firstSeenAt)}
             </Text>
           </Stack>
         </Group>

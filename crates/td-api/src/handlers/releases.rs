@@ -1124,7 +1124,7 @@ pub async fn link(
 
     let now = Utc::now();
     let attempted_at = now.timestamp();
-    let series_id = resolve_link_target(&state, release.posted_at, req, now).await?;
+    let series_id = resolve_link_target(&state, req, now).await?;
 
     // Clear any stale review candidates for this release: the operator
     // just made a decision.
@@ -1624,11 +1624,6 @@ pub async fn bulk_retry(
     }))
 }
 
-/// Resolve a link request into the concrete `series.id` it targets, shared by
-/// the single-release [`link`] handler and the [`bulk_link`] action. The
-/// `posted_at` anchor is only consulted on the provider path, where it seeds
-/// the freshly-upserted series' first-seen timestamp; callers pass the
-/// release's own `posted_at` (single link) or the anchor release's (bulk).
 /// Bulk-link a set of releases to one series. The body's `ids` select the
 /// releases (unknown ids are ignored); the series is named exactly as in the
 /// single-release [`link`] handler. Any status is eligible, not just the
@@ -1671,23 +1666,12 @@ pub async fn bulk_link(
 
     let now = Utc::now();
     let attempted_at = now.timestamp();
-    // The anchor only matters for the provider path (it seeds a freshly
-    // upserted series' first-seen time). Use the first targeted release's
-    // `posted_at`; fall back to now when nothing matched.
-    let anchor_posted_at = match ids.first() {
-        Some(first) => releases_repo::find_by_id(&state.db, first)
-            .await
-            .map_err(anyhow_err)?
-            .map(|r| r.posted_at)
-            .unwrap_or(attempted_at),
-        None => attempted_at,
-    };
     let link_req = LinkRequest {
         series_id: req.series_id,
         provider: req.provider,
         external_id: req.external_id,
     };
-    let series_id = resolve_link_target(&state, anchor_posted_at, link_req, now).await?;
+    let series_id = resolve_link_target(&state, link_req, now).await?;
 
     let mut linked = 0u64;
     for id in &ids {
@@ -1711,9 +1695,10 @@ pub async fn bulk_link(
     Ok(Json(BulkLinkResponse { linked, series_id }))
 }
 
+/// Resolve a link request into the concrete `series.id` it targets, shared by
+/// the single-release [`link`] handler and the [`bulk_link`] action.
 async fn resolve_link_target(
     state: &AppState,
-    posted_at: i64,
     req: LinkRequest,
     now: chrono::DateTime<Utc>,
 ) -> ApiResult<i32> {
@@ -1752,12 +1737,12 @@ async fn resolve_link_target(
             // didn't have a local series yet. Use the conservative default:
             // if the foreign-id chain happens to land on a pre-existing
             // manual row, don't clobber it.
-            Ok(persist::upsert_series_from_metadata(
-                &state.db, &provider, &metadata, posted_at, now, false,
+            Ok(
+                persist::upsert_series_from_metadata(&state.db, &provider, &metadata, now, false)
+                    .await
+                    .map_err(ApiError::Internal)?
+                    .series_id,
             )
-            .await
-            .map_err(ApiError::Internal)?
-            .series_id)
         }
         _ => Err(ApiError::BadRequest(
             "body must set either `seriesId` or both `provider` and `externalId`".into(),

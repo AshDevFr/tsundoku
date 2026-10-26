@@ -627,8 +627,8 @@ fn coverage_unchanged(row: &series::Model, cov: &Coverage) -> bool {
         && row.highest_chapter == cov.highest_chapter
 }
 
-/// Recompute one series' merged volume/chapter coverage, `highest_*`, and
-/// `last_discovered_at` from its currently-linked releases, bumping
+/// Recompute one series' merged volume/chapter coverage, `highest_*`,
+/// `last_discovered_at` and `last_release_at` from its currently-linked releases, bumping
 /// `updated_at` to `now` **only when coverage actually changed**. Returns
 /// whether *coverage* moved — a discovery-only change still rewrites the row
 /// but reports `false`, because the release feed keys off coverage.
@@ -678,9 +678,14 @@ pub async fn recompute_series_coverage<C: ConnectionTrait>(
     // currently-linked set rather than bumped, so it falls back correctly when
     // the newest release is unlinked. `None` when nothing is linked.
     let last_discovered_at = linked.iter().map(|r| r.observed_at).max();
+    // The newest linked release's upstream post date. Derived here and nowhere
+    // else, so a metadata refresh can never stamp its own fetch time into it.
+    // The column is NOT NULL; 0 is the "nothing linked" sentinel.
+    let last_release_at = linked.iter().map(|r| r.posted_at).max().unwrap_or(0);
 
     let coverage_changed = !coverage_unchanged(&row, &cov);
-    let discovery_changed = row.last_discovered_at != last_discovered_at;
+    let discovery_changed =
+        row.last_discovered_at != last_discovered_at || row.last_release_at != last_release_at;
     if !coverage_changed && !discovery_changed {
         return Ok(false);
     }
@@ -691,6 +696,7 @@ pub async fn recompute_series_coverage<C: ConnectionTrait>(
         highest_volume: Set(cov.highest_volume),
         highest_chapter: Set(cov.highest_chapter),
         last_discovered_at: Set(last_discovered_at),
+        last_release_at: Set(last_release_at),
         // `updated_at` stays coverage-owned. A newly discovered release that
         // adds no coverage (a duplicate span, a re-upload) must not bump it, or
         // the incremental release feed re-emits the series for a change its
@@ -1816,6 +1822,83 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(series_row(&db, sid).await.last_discovered_at, None);
+    }
+
+    /// `last_release_at` is the newest linked release's upstream post date and
+    /// nothing else. A stale stamp (a metadata refresh used to write its own
+    /// fetch time here) must be corrected, the value must fall back when the
+    /// newest release unlinks, and a series with nothing linked reads 0.
+    #[tokio::test]
+    async fn recompute_series_coverage_derives_last_release_at_from_posted_at() {
+        use sea_orm::{ActiveModelTrait, Set};
+        let db = fresh_db().await;
+        let sid = crate::entities::series::ActiveModel {
+            canonical_title: Set("Old".into()),
+            metadata_source: Set("test".into()),
+            metadata_fetched_at: Set(1),
+            first_seen_at: Set(1),
+            last_release_at: Set(1_800_000_000),
+            owned: Set(0),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap()
+        .id;
+
+        let mut older = sample("feed");
+        older.external_id = "p1".into();
+        older.link = "https://nyaa.si/view/p1".into();
+        older.files = vec!["Series v01.cbz".into()];
+        older.posted_at = Utc.timestamp_opt(1_500_000_000, 0).unwrap();
+        let id1 = persist_discovered(&db, &older, 1_000).await.unwrap();
+
+        let mut newer = sample("feed");
+        newer.external_id = "p2".into();
+        newer.link = "https://nyaa.si/view/p2".into();
+        newer.files = vec!["Series v02.cbz".into()];
+        newer.posted_at = Utc.timestamp_opt(1_600_000_000, 0).unwrap();
+        let id2 = persist_discovered(&db, &newer, 2_000).await.unwrap();
+
+        for id in [&id1, &id2] {
+            set_resolution(&db, id, Some(sid), Some("test".into()), None, "resolved", 1)
+                .await
+                .unwrap();
+        }
+        recompute_series_coverage(&db, sid, 1_700_000_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            series_row(&db, sid).await.last_release_at,
+            1_600_000_000,
+            "a stale non-release stamp is replaced by the newest post date",
+        );
+
+        releases::ActiveModel {
+            id: Set(id2.clone()),
+            series_id: Set(None),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
+        recompute_series_coverage(&db, sid, 1_700_000_500)
+            .await
+            .unwrap();
+        assert_eq!(series_row(&db, sid).await.last_release_at, 1_500_000_000);
+
+        releases::ActiveModel {
+            id: Set(id1),
+            series_id: Set(None),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
+        recompute_series_coverage(&db, sid, 1_700_000_900)
+            .await
+            .unwrap();
+        assert_eq!(series_row(&db, sid).await.last_release_at, 0);
     }
 
     #[tokio::test]

@@ -12,7 +12,7 @@
 //!   row (series_id, path, confidence, status, attempts++).
 //!
 //! Kept in this crate rather than `td-db` because the orchestration logic
-//! (lookup-by-external-id, fan out foreign IDs, recompute last_release_at)
+//! (lookup-by-external-id, fan out foreign IDs, recompute coverage on link)
 //! is resolver-specific, not a generic CRUD primitive.
 
 use anyhow::Result;
@@ -64,7 +64,6 @@ pub async fn upsert_series_from_metadata(
     db: &DatabaseConnection,
     provider_id: &str,
     metadata: &SeriesMetadata,
-    release_posted_at: i64,
     now: DateTime<Utc>,
     allow_manual_overwrite: bool,
 ) -> Result<UpsertResult> {
@@ -132,10 +131,6 @@ pub async fn upsert_series_from_metadata(
             }
             let unchanged = hash_unchanged || manual_lock;
             if !unchanged {
-                let mut last_release_at = release_posted_at;
-                if let Some(e) = existing.as_ref() {
-                    last_release_at = last_release_at.max(e.last_release_at);
-                }
                 let model = series::ActiveModel {
                     id: Set(id),
                     canonical_title: Set(metadata.canonical_title.clone()),
@@ -156,10 +151,11 @@ pub async fn upsert_series_from_metadata(
                     metadata_fetched_at: Set(fetched_at),
                     // first_seen_at is immutable after insert
                     first_seen_at: NotSet,
-                    last_release_at: Set(last_release_at),
+                    last_release_at: NotSet,
                     highest_volume: NotSet,
                     highest_chapter: NotSet,
-                    // Release-derived coverage + its change timestamp are owned
+                    // Release-derived coverage, `last_release_at`, and the
+                    // coverage change timestamp are owned
                     // by `recompute_series_coverage`, not metadata: a refresh
                     // must never bump `updated_at` or the feed would re-emit
                     // every series each provider-cache cycle.
@@ -200,7 +196,9 @@ pub async fn upsert_series_from_metadata(
                 metadata_hash: Set(Some(metadata.content_hash.clone())),
                 metadata_fetched_at: Set(fetched_at),
                 first_seen_at: Set(fetched_at),
-                last_release_at: Set(release_posted_at),
+                // 0 = nothing linked; `recompute_series_coverage` derives the
+                // real value from linked releases' post dates.
+                last_release_at: Set(0),
                 highest_volume: Set(None),
                 highest_chapter: Set(None),
                 // Empty until a release links and `recompute_series_coverage`
@@ -538,16 +536,9 @@ mod tests {
     async fn upsert_creates_series_and_fans_out_foreign_ids() {
         let db = fresh_db().await;
         let now = Utc::now();
-        let result = upsert_series_from_metadata(
-            &db,
-            "mangabaka",
-            &sample_metadata(),
-            1_700_000_000,
-            now,
-            false,
-        )
-        .await
-        .unwrap();
+        let result = upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), now, false)
+            .await
+            .unwrap();
         assert!(result.series_id > 0);
         assert!(!result.unchanged);
 
@@ -567,10 +558,10 @@ mod tests {
         let db = fresh_db().await;
         let now = Utc::now();
         let m = sample_metadata();
-        let first = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now, false)
+        let first = upsert_series_from_metadata(&db, "mangabaka", &m, now, false)
             .await
             .unwrap();
-        let second = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now, false)
+        let second = upsert_series_from_metadata(&db, "mangabaka", &m, now, false)
             .await
             .unwrap();
         assert_eq!(first.series_id, second.series_id);
@@ -578,20 +569,46 @@ mod tests {
         assert!(second.unchanged);
     }
 
+    /// A metadata refresh is not a release. A re-upsert whose hash changed must
+    /// leave `last_release_at` alone; it used to be bumped to the fetch time,
+    /// which surfaced years-dormant series as "updated 3 weeks ago".
+    #[tokio::test]
+    async fn metadata_refresh_does_not_touch_last_release_at() {
+        let db = fresh_db().await;
+        let m = sample_metadata();
+        let first = upsert_series_from_metadata(&db, "mangabaka", &m, Utc::now(), false)
+            .await
+            .unwrap();
+        let row = series::Entity::find_by_id(first.series_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.last_release_at, 0, "nothing linked yet");
+
+        let refreshed = SeriesMetadata {
+            content_hash: "hash-v2".into(),
+            ..m
+        };
+        let second = upsert_series_from_metadata(&db, "mangabaka", &refreshed, Utc::now(), false)
+            .await
+            .unwrap();
+        assert!(!second.unchanged, "hash changed, so the row was rewritten");
+        let row = series::Entity::find_by_id(first.series_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.last_release_at, 0);
+    }
+
     #[tokio::test]
     async fn upsert_writes_normalized_genre_and_tag_tables() {
         let db = fresh_db().await;
         let now = Utc::now();
-        let res = upsert_series_from_metadata(
-            &db,
-            "mangabaka",
-            &sample_metadata(),
-            1_700_000_000,
-            now,
-            false,
-        )
-        .await
-        .unwrap();
+        let res = upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), now, false)
+            .await
+            .unwrap();
 
         let genres = td_db::repos::tagging_repo::list_genres_for_series(&db, res.series_id)
             .await
@@ -620,7 +637,7 @@ mod tests {
             content_hash: "hash-anilist".into(),
             ..sample_metadata()
         };
-        let first = upsert_series_from_metadata(&db, "anilist", &pseudo, 1_700_000_000, now, false)
+        let first = upsert_series_from_metadata(&db, "anilist", &pseudo, now, false)
             .await
             .unwrap();
 
@@ -629,7 +646,7 @@ mod tests {
         // the second call should reuse `first.series_id` instead of
         // making a brand new row.
         let mb = sample_metadata();
-        let second = upsert_series_from_metadata(&db, "mangabaka", &mb, 1_700_000_000, now, false)
+        let second = upsert_series_from_metadata(&db, "mangabaka", &mb, now, false)
             .await
             .unwrap();
         assert_eq!(first.series_id, second.series_id);
@@ -662,7 +679,7 @@ mod tests {
             }],
             ..sample_metadata()
         };
-        let first = upsert_series_from_metadata(&db, "mangabaka", &aaa, 1_700_000_000, now, false)
+        let first = upsert_series_from_metadata(&db, "mangabaka", &aaa, now, false)
             .await
             .unwrap();
 
@@ -679,7 +696,7 @@ mod tests {
             }],
             ..sample_metadata()
         };
-        let second = upsert_series_from_metadata(&db, "mangabaka", &bbb, 1_700_000_000, now, false)
+        let second = upsert_series_from_metadata(&db, "mangabaka", &bbb, now, false)
             .await
             .unwrap();
 
@@ -743,7 +760,7 @@ mod tests {
         let db = fresh_db().await;
         let now = Utc::now();
         let m = sample_metadata();
-        let first = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now, false)
+        let first = upsert_series_from_metadata(&db, "mangabaka", &m, now, false)
             .await
             .unwrap();
 
@@ -761,7 +778,7 @@ mod tests {
             content_hash: "new-hash".into(),
             ..m.clone()
         };
-        let result = upsert_series_from_metadata(&db, "mangabaka", &m2, 1_700_000_001, now, false)
+        let result = upsert_series_from_metadata(&db, "mangabaka", &m2, now, false)
             .await
             .unwrap();
         assert_eq!(result.series_id, first.series_id);
@@ -789,7 +806,7 @@ mod tests {
         let db = fresh_db().await;
         let now = Utc::now();
         let m = sample_metadata();
-        let first = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now, false)
+        let first = upsert_series_from_metadata(&db, "mangabaka", &m, now, false)
             .await
             .unwrap();
         mark_manual(&db, first.series_id, "Operator Title").await;
@@ -803,7 +820,7 @@ mod tests {
             content_hash: "new-hash".into(),
             ..m.clone()
         };
-        let result = upsert_series_from_metadata(&db, "mangabaka", &m2, 1_700_000_001, now, true)
+        let result = upsert_series_from_metadata(&db, "mangabaka", &m2, now, true)
             .await
             .unwrap();
         assert_eq!(result.series_id, first.series_id);
@@ -823,7 +840,7 @@ mod tests {
         let db = fresh_db().await;
         let now = Utc::now();
         let m = sample_metadata();
-        let first = upsert_series_from_metadata(&db, "mangabaka", &m, 1_700_000_000, now, false)
+        let first = upsert_series_from_metadata(&db, "mangabaka", &m, now, false)
             .await
             .unwrap();
 
@@ -847,10 +864,9 @@ mod tests {
             content_hash: "refreshed-hash".into(),
             ..m.clone()
         };
-        let second =
-            upsert_series_from_metadata(&db, "mangabaka", &refreshed, 1_700_000_100, now, false)
-                .await
-                .unwrap();
+        let second = upsert_series_from_metadata(&db, "mangabaka", &refreshed, now, false)
+            .await
+            .unwrap();
         assert_eq!(second.series_id, first.series_id);
         assert!(!second.unchanged, "changed hash must hit the UPDATE branch");
 
@@ -873,16 +889,10 @@ mod tests {
     async fn link_release_writes_resolution_columns_and_increments_attempts() {
         let db = fresh_db().await;
         // Need a series row to satisfy the FK on releases.series_id.
-        let upsert = upsert_series_from_metadata(
-            &db,
-            "mangabaka",
-            &sample_metadata(),
-            1_700_000_000,
-            Utc::now(),
-            false,
-        )
-        .await
-        .unwrap();
+        let upsert =
+            upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), Utc::now(), false)
+                .await
+                .unwrap();
         // Insert a minimal releases row first.
         let row = releases::ActiveModel {
             id: Set("nyaa:test:1".into()),
@@ -1010,16 +1020,10 @@ mod tests {
     #[tokio::test]
     async fn link_release_bumps_series_highest_volume_and_chapter() {
         let db = fresh_db().await;
-        let upsert = upsert_series_from_metadata(
-            &db,
-            "mangabaka",
-            &sample_metadata(),
-            1_700_000_000,
-            Utc::now(),
-            false,
-        )
-        .await
-        .unwrap();
+        let upsert =
+            upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), Utc::now(), false)
+                .await
+                .unwrap();
 
         insert_release_with_spans(
             &db,
@@ -1058,16 +1062,10 @@ mod tests {
     #[tokio::test]
     async fn link_release_does_not_lower_existing_series_highest() {
         let db = fresh_db().await;
-        let upsert = upsert_series_from_metadata(
-            &db,
-            "mangabaka",
-            &sample_metadata(),
-            1_700_000_000,
-            Utc::now(),
-            false,
-        )
-        .await
-        .unwrap();
+        let upsert =
+            upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), Utc::now(), false)
+                .await
+                .unwrap();
 
         // First release reaches volume 10 / chapter 90.
         insert_release_with_spans(
@@ -1134,16 +1132,10 @@ mod tests {
     #[tokio::test]
     async fn link_release_backfills_span_from_files_when_json_absent() {
         let db = fresh_db().await;
-        let upsert = upsert_series_from_metadata(
-            &db,
-            "mangabaka",
-            &sample_metadata(),
-            1_700_000_000,
-            Utc::now(),
-            false,
-        )
-        .await
-        .unwrap();
+        let upsert =
+            upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), Utc::now(), false)
+                .await
+                .unwrap();
 
         // Legacy-shaped row: no span JSON, but a file list to parse from.
         let row = releases::ActiveModel {
@@ -1251,28 +1243,15 @@ mod tests {
     #[tokio::test]
     async fn relink_moves_coverage_between_series() {
         let db = fresh_db().await;
-        let a = upsert_series_from_metadata(
-            &db,
-            "mangabaka",
-            &sample_metadata(),
-            1_700_000_000,
-            Utc::now(),
-            false,
-        )
-        .await
-        .unwrap()
-        .series_id;
-        let b = upsert_series_from_metadata(
-            &db,
-            "mangabaka",
-            &other_metadata(),
-            1_700_000_000,
-            Utc::now(),
-            false,
-        )
-        .await
-        .unwrap()
-        .series_id;
+        let a =
+            upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), Utc::now(), false)
+                .await
+                .unwrap()
+                .series_id;
+        let b = upsert_series_from_metadata(&db, "mangabaka", &other_metadata(), Utc::now(), false)
+            .await
+            .unwrap()
+            .series_id;
         assert_ne!(a, b);
 
         insert_release_with_spans(
@@ -1342,17 +1321,11 @@ mod tests {
     #[tokio::test]
     async fn metadata_refresh_does_not_bump_updated_at() {
         let db = fresh_db().await;
-        let sid = upsert_series_from_metadata(
-            &db,
-            "mangabaka",
-            &sample_metadata(),
-            1_700_000_000,
-            Utc::now(),
-            false,
-        )
-        .await
-        .unwrap()
-        .series_id;
+        let sid =
+            upsert_series_from_metadata(&db, "mangabaka", &sample_metadata(), Utc::now(), false)
+                .await
+                .unwrap()
+                .series_id;
 
         // A linked release stamps coverage + updated_at.
         insert_release_with_spans(
@@ -1396,16 +1369,9 @@ mod tests {
             content_hash: "hash-v2".into(),
             ..sample_metadata()
         };
-        upsert_series_from_metadata(
-            &db,
-            "mangabaka",
-            &refreshed,
-            1_700_000_500,
-            Utc::now(),
-            false,
-        )
-        .await
-        .unwrap();
+        upsert_series_from_metadata(&db, "mangabaka", &refreshed, Utc::now(), false)
+            .await
+            .unwrap();
         let row = series::Entity::find_by_id(sid)
             .one(&db)
             .await

@@ -473,8 +473,11 @@ export function SeriesDetailPage() {
               <Group gap="xs" wrap="wrap" align="center">
                 <Text size="sm" c="dimmed">
                   First seen {formatRelative(s.firstSeenAt)} · last release{" "}
-                  {formatRelative(s.lastReleaseAt)} · metadata{" "}
-                  {s.metadataSource} ({formatRelative(s.metadataFetchedAt)})
+                  {s.lastReleaseAt > 0
+                    ? formatRelative(s.lastReleaseAt)
+                    : "never"}{" "}
+                  · metadata {s.metadataSource} (
+                  {formatRelative(s.metadataFetchedAt)})
                 </Text>
                 <Tooltip label="Search Nyaa (English-translated manga) for this title.">
                   <Button
